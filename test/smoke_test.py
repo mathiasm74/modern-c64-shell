@@ -23,6 +23,11 @@ BASIC = os.path.join(ROOT, "build", "basic.bin")
 
 SCREEN_RAM = 0x0400
 SCREEN_COLS = 40
+SCREEN_ROWS = 25
+SCREEN_CELLS = SCREEN_ROWS * SCREEN_COLS  # 1000
+
+# Text the Phase 1 banner must place on screen.
+EXPECTED_BANNER = ["C64 SHELL ROM", "READY"]
 
 
 def find_free_port():
@@ -77,17 +82,26 @@ def drain(sock, settle=0.5):
 
 
 def read_screen(sock):
-    """Return the first screen line ($0400-$0427) as a list of byte values."""
-    start, end = SCREEN_RAM, SCREEN_RAM + SCREEN_COLS - 1
+    """Return all 1000 screen cells ($0400-$07E7) as a list of byte values."""
+    start, end = SCREEN_RAM, SCREEN_RAM + SCREEN_CELLS - 1
     sock.sendall(("m %04x %04x\n" % (start, end)).encode("ascii"))
-    text = drain(sock)
+    text = drain(sock, settle=0.8)
     values = []
     # Monitor memory dumps look like: ">C:0400  08 05 0c 0c 0f 20 ...   :....."
     for line in text.splitlines():
         m = re.search(r"[Cc]:[0-9a-fA-F]{4}\s+((?:[0-9a-fA-F]{2}[ \t]+)+)", line)
         if m:
             values.extend(int(b, 16) for b in m.group(1).split())
-    return values
+    return values[:SCREEN_CELLS]
+
+
+def decode_rows(screen):
+    """Split flat screen cells into a list of decoded 40-column text rows."""
+    rows = []
+    for r in range(SCREEN_ROWS):
+        cells = screen[r * SCREEN_COLS:(r + 1) * SCREEN_COLS]
+        rows.append("".join(screencode_to_ascii(b) for b in cells))
+    return rows
 
 
 def read_byte(sock, addr):
@@ -134,8 +148,12 @@ def main():
         drain(sock)  # consume the monitor banner / prompt
 
         screen = read_screen(sock)
-        decoded = "".join(screencode_to_ascii(b) for b in screen)
-        print("screen $0400: %r" % decoded)
+        rows = decode_rows(screen)
+        flat = "\n".join(rows)
+        print("screen contents:")
+        for r, line in enumerate(rows):
+            if line.strip():
+                print("  row %2d: %r" % (r, line))
 
         # The VIC-II must actually be displaying $0400, or the screen is blank
         # regardless of what's in RAM (DEN off / wrong screen pointer).
@@ -150,10 +168,11 @@ def main():
             "$0400" if screen_at_0400 else "elsewhere"))
 
         ok = True
-        if "HELLO" not in decoded:
-            print("FAIL: HELLO not in screen RAM; got %r" % decoded, file=sys.stderr)
-            print("raw bytes: %r" % screen, file=sys.stderr)
-            ok = False
+        for needle in EXPECTED_BANNER:
+            if needle not in flat:
+                print("FAIL: banner text %r not found on screen" % needle,
+                      file=sys.stderr)
+                ok = False
         if not display_on:
             print("FAIL: VIC display disabled (DEN clear) - screen would be blank",
                   file=sys.stderr)
@@ -164,7 +183,7 @@ def main():
             ok = False
 
         if ok:
-            print("PASS: HELLO is on a visible screen")
+            print("PASS: banner is on a visible screen")
             return 0
         return 1
     finally:

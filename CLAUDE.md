@@ -125,7 +125,7 @@ These are JMPs to implementations elsewhere in the ROM. Defined in `src/kernal_s
 
 The C64 normally reserves $00-$8F for BASIC and $90-$FF for KERNAL. Since we have no BASIC, $00-$8F is available to the shell. cc65 uses $02-$1F by default for its pseudo-registers; configure this in `cfg/rom.cfg`.
 
-Reserve $90-$FF for KERNAL working storage and keep it compatible with documented usage so loaded programs that poke around in zero page don't break.
+Reserve $90-$FF for KERNAL working storage and keep it compatible with documented usage so loaded programs that poke around in zero page don't break. The reset code uses $FB-$FE (the stock C64's documented-free zero-page bytes) as scratch pointers for its string-drawing helper.
 
 ### Naming
 
@@ -164,7 +164,9 @@ When adding a new feature, add a test that exercises it. The test suite is the s
 
 ## Current phase
 
-Phase 0: Toolchain setup. Goal is to produce two 8KB binaries from a trivial source tree, verify VICE boots them without crashing, and have `make test` pass a smoke test.
+Phase 1 complete: deterministic boot to a static banner screen. Reset sets the processor port ($01=$37), quiets both CIAs (timers stopped, interrupts masked), initializes the VIC-II, clears the screen, and draws a startup banner. `make test` boots the ROM in VICE and asserts the banner is on a visible screen (display enabled, screen base $0400).
+
+Next: Phase 2 (refactor the smoke test into a reusable test-harness library).
 
 See `PLAN.md` for the full phased plan.
 
