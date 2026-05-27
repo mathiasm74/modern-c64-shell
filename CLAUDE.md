@@ -180,15 +180,15 @@ When adding a new feature, add a test that exercises it. The test suite is the s
 
 ## Current phase
 
-Phase 4 complete: the shell is C. `src/shell.c`'s `main()` prints a `> ` prompt, reads a line (its `readline` echoes printable PETSCII, handles RETURN / DELETE, and passes other control codes straight to CHROUT), reports `COMMAND NOT FOUND: <line>`, and loops — no command table yet (Phase 5). The C reaches the KERNAL through the C-callable `_chrout`/`_getin` shims in `src/c_io.s`, not cc65's conio (which assumes the stock KERNAL we replaced).
+Phase 5 complete: the shell parses and dispatches. `src/parser.c`'s `parse_line` tokenizes the input buffer in place (whitespace-split, with `"double quotes"` grouping a run into one token) into a `struct command_line` (`argc` + `argv[MAX_ARGS]`, `MAX_ARGS` = 8). `src/shell.c` holds the dispatch table `shell_commands[]` — `{name, handler}` pairs, `const` so it lives in ROM (RODATA) — and `main()` now reads a line, parses it, and runs the matching handler; an unrecognized command reports `COMMAND NOT FOUND: <cmd>`, an empty/all-whitespace line just reprompts. Command names are UPPERCASE to match the uppercase PETSCII the keyboard delivers, so a plain byte compare (`streq`) dispatches them.
 
-Build/link split by authorship: hand-written assembly (reset, IRQ, screen, stubs, the c_io shims) moved to a `KCODE` segment in the KERNAL ROM ($E000); everything cc65 emits keeps its default segments (CODE/RODATA/DATA/BSS/ZEROPAGE) and lands in the BASIC ROM ($A000) / RAM / zero page. `cfg/rom.cfg` defines a `ZP` area for cc65's pseudo-registers and a `RAM` area ($C000-$CFFF) for BSS/DATA and the downward-growing C stack. `reset.s` now initializes the cc65 stack pointer, runs `zerobss`/`copydata`, and `jsr _main` in place of the old echo loop; the Makefile compiles C with cc65 and links `none.lib` for the runtime helpers. Both binaries are still exactly 8KB.
+The five built-ins live in `src/commands/builtins.c`: `help` (walks `shell_commands[]`, so it needs no separate list), `clear` (CHROUT $93), `echo` (args space-joined), `ver` (`C64 SHELL ROM V0.1`, kept in step with the boot banner), `exit` (`NOTHING TO EXIT TO`). Shared declarations are split across `src/shell.h` (the `command` struct, the extern table, the I/O helpers) and `src/commands/builtins.h` (the handler prototypes). The Makefile compiles the two new C modules, adds `-I src` so headers resolve by their path under `src/`, and `mkdir -p $(@D)` so `build/commands/` is created for the subdirectory source.
 
-20 checks pass in ~15s. New `test_shell.py` exercises the prompt, unknown-command response, empty-line reprompt, backspace editing, and scrolling under the shell; the echo-loop-specific tests (RETURN starts a new line, raw scroll) moved out of `test_echo.py` since the shell now mediates RETURN.
+26 checks pass in ~21s. New `test_builtins.py` exercises all five built-ins plus leading-whitespace dispatch; to tell a command's output from readline echoing the typed input, the echo tests count occurrences.
 
-Caveat (unchanged): tests drive the GETIN -> CHROUT pipeline by writing the keyboard buffer directly. The keyboard *matrix* decode (physical keypress -> PETSCII) can only be verified by typing in the GUI (`make run`).
+Caveats: tests drive the GETIN -> CHROUT pipeline by writing the keyboard buffer directly, so the keyboard *matrix* decode (physical keypress -> PETSCII) still needs the GUI (`make run`) to verify. The buffer is only 10 bytes, which caps an injected line — too short to exercise the parser's quoted-string handling or long-line truncation, so those rest on code review rather than an integration test.
 
-Next: Phase 5 (command parser and built-ins: a dispatch table in `shell.c`, `cmd_*` handlers in `src/commands/`).
+Next: Phase 6 (disk I/O — SETLFS/SETNAM/OPEN/CLOSE/CHKIN/CHKOUT/CLRCHN and the `ls`/`load`/`run` commands over IEC).
 
 See `PLAN.md` for the full phased plan.
 

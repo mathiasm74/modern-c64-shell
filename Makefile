@@ -16,7 +16,9 @@ BUILD  := build
 CFG    := cfg/rom.cfg
 
 ASFLAGS   := --cpu 6502
-CC65FLAGS := -t none -O --cpu 6502
+# -I src so a C file can include a header by its path under src/, e.g.
+# "commands/builtins.h", from anywhere in the tree.
+CC65FLAGS := -t none -O --cpu 6502 -I src
 
 # cc65 runtime library: the `none` target carries the runtime helpers (stack,
 # zerobss, copydata, ...) without any platform startup or conio. Located
@@ -26,7 +28,7 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s
-SRC_C := src/shell.c
+SRC_C := src/shell.c src/parser.c src/commands/builtins.c
 OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S)) \
          $(patsubst src/%.c,$(BUILD)/%.o,$(SRC_C))
 
@@ -41,16 +43,21 @@ all: $(ROM16K)
 $(BUILD):
 	mkdir -p $(BUILD)
 
+# mkdir -p $(@D): sources under a subdirectory (e.g. src/commands/) mirror
+# their path into build/, so the output directory may not exist yet.
 $(BUILD)/%.o: src/%.s | $(BUILD)
+	@mkdir -p $(@D)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 # C is compiled to assembly by cc65, then assembled by ca65 (keep the .s so a
 # build leaves the generated assembly around for inspection).
 .PRECIOUS: $(BUILD)/%.s
 $(BUILD)/%.s: src/%.c | $(BUILD)
+	@mkdir -p $(@D)
 	$(CC) $(CC65FLAGS) -o $@ $<
 
 $(BUILD)/%.o: $(BUILD)/%.s | $(BUILD)
+	@mkdir -p $(@D)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 # One ld65 invocation writes both binaries (file= is set per memory area in
