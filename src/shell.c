@@ -42,6 +42,7 @@ const struct command shell_commands[] = {
     { "load",   cmd_load   },
     { "run",    cmd_run    },
     { "device", cmd_device },
+    { "rm",     cmd_rm     },
     { "peek",   cmd_peek   },
     { "poke",   cmd_poke   },
     { "reset",  cmd_reset  },

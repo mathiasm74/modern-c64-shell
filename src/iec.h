@@ -16,6 +16,7 @@ void iec_set_sa(unsigned char sa);      /* secondary address / channel     */
 void iec_setname(const char *name);     /* NUL-terminated, length measured */
 
 void iec_open(void);            /* LISTEN, send open-secondary + name, UNLISTEN */
+void iec_command(void);         /* LISTEN, write the name to the command channel*/
 void iec_chkin(void);           /* TALK + secondary, turn the bus around        */
 unsigned char iec_getbyte(void);/* receive one byte (ACPTR); sets EOI in status */
 void iec_close(void);           /* LISTEN, send close-secondary, UNLISTEN       */

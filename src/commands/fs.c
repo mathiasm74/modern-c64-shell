@@ -186,6 +186,36 @@ void cmd_run(int argc, char *argv[])
     run_program(load_start);
 }
 
+/* rm <name> - scratch a file: write "S0:<name>" to the drive command channel
+   (channel 15). The IEC layer folds the name to uppercase PETSCII to match
+   the directory. */
+void cmd_rm(int argc, char *argv[])
+{
+    static char cmd[24];
+    unsigned char i, j;
+
+    if (argc < 2) {
+        puts_raw("usage: rm <name>");
+        chrout(CR);
+        return;
+    }
+    cmd[0] = 's';               /* folded to 'S' on the way out */
+    cmd[1] = '0';
+    cmd[2] = ':';
+    i = 3;
+    for (j = 0; argv[1][j] && i < sizeof(cmd) - 1; ++j)
+        cmd[i++] = argv[1][j];
+    cmd[i] = 0;
+
+    iec_set_fa(default_device);
+    iec_setname(cmd);
+    iec_command();
+    if (iec_status() & ST_NODEV) {
+        puts_raw("device not present");
+        chrout(CR);
+    }
+}
+
 /* device <n> - set the device ls/load/run talk to (default 8). */
 void cmd_device(int argc, char *argv[])
 {

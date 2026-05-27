@@ -20,7 +20,7 @@
 
 .export iec_init
 .export _iec_set_fa, _iec_set_sa, _iec_setname
-.export _iec_open, _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
+.export _iec_open, _iec_command, _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
 .export _iec_status
 
 DD00   = $DD00
@@ -42,6 +42,7 @@ COUNT  = $A3            ; bit counter (used inside iec_sendbyte)
 NAMEIDX = $A4           ; filename index (survives iec_sendbyte)
 EOIBUF = $A5            ; EOI flag for the byte being sent
 TMOUT  = $A6            ; receive-wait timeout countdown
+SECADR = $A9            ; secondary address held across the LISTEN command send
 
 .segment "KCODE"
 
@@ -169,11 +170,11 @@ _iec_set_sa:                    ; void iec_set_sa(unsigned char sa)
 _iec_setname:                   ; void iec_setname(const char *name)  A=lo X=hi
         sta FNADR
         stx FNADR+1
-        ldy #$00                ; measure length up to the NUL (cap 16)
-@scan:  lda (FNADR),y
+        ldy #$00                ; measure length up to the NUL (cap 30: room
+@scan:  lda (FNADR),y           ; for a 16-char name plus a command prefix)
         beq @done
         iny
-        cpy #16
+        cpy #30
         bne @scan
 @done:  sty FNLEN
         rts
@@ -239,33 +240,38 @@ send_cmd:
         jmp iec_sendbyte
 
 ; -------------------------------------------------------------------------
-; _iec_open - LISTEN FA, send open-secondary, the filename, then UNLISTEN.
-; void iec_open(void); uses FA/SA/FNADR/FNLEN. Masks IRQs across the transfer.
+; _iec_open / _iec_command - LISTEN FA, send a secondary, then the name held
+; in FNADR/FNLEN (folded to uppercase PETSCII), then UNLISTEN. open uses the
+; open secondary ($F0 | channel); command writes the command channel ($6F =
+; channel 15), e.g. "S0:NAME" to scratch a file. Both mask IRQs and set ST.
+; void iec_open(void); void iec_command(void);
 ; -------------------------------------------------------------------------
 _iec_open:
+        lda SA
+        and #$0F
+        ora #$F0                ; open secondary address
+        jmp send_listen
+_iec_command:
+        lda #$6F                ; command channel (15), write
+send_listen:
+        sta SECADR
         php
         sei
         lda #$00
         sta ST
-        ; LISTEN
         jsr atn_lo
         jsr clk_lo
         jsr data_hi
         jsr iec_settle
         jsr iec_wait_dev        ; anyone on the bus?
-        bcc @present
-        jmp @nodev              ; no device: flag it and bail out
-@present:
+        bcs @nodev              ; no device: flag it and bail out
         lda FA
         ora #$20                ; LISTEN command
         jsr send_cmd
-        ; open secondary address ($F0 | channel)
-        lda SA
-        and #$0F
-        ora #$F0
-        jsr send_cmd
-        jsr atn_hi              ; command phase done; filename is data
-        ; send the filename, EOI on the last byte (NAMEIDX survives the send).
+        lda SECADR
+        jsr send_cmd            ; the secondary
+        jsr atn_hi              ; command phase done; the name is data
+        ; send FNADR/FNLEN, EOI on the last byte (NAMEIDX survives the send).
         lda #$00
         sta NAMEIDX
 @name:
@@ -274,7 +280,7 @@ _iec_open:
         bcs @unlisten           ; index >= length -> whole name sent
         ldy NAMEIDX
         lda (FNADR),y
-        ; disk filenames are uppercase PETSCII; our shell types lowercase
+        ; disk names/commands are uppercase PETSCII; our shell types lowercase
         ; ASCII, so fold 'a'-'z' ($61-$7A) up to 'A'-'Z' ($41-$5A).
         cmp #$61
         bcc @putname
