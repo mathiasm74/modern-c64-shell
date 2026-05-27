@@ -24,7 +24,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test
+.PHONY: all clean check-tools run test test-verbose
 
 all: $(ROM16K)
 
@@ -62,7 +62,11 @@ run: all
 	SKIP_BUILD=1 VICE=$(VICE) ./run.sh $(VICEFLAGS)
 
 test: all
-	$(PYTHON) test/smoke_test.py
+	$(PYTHON) test/run_tests.py
+
+# Same suite, but show the launch command, monitor traffic, and tracebacks.
+test-verbose: all
+	VICE_VERBOSE=1 $(PYTHON) test/run_tests.py
 
 clean:
 	rm -rf $(BUILD)

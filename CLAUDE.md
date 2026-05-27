@@ -70,8 +70,9 @@ cfg/
   rom.cfg          - ld65 linker config
 
 test/
-  smoke_test.py    - VICE remote monitor test harness
-  test_*.py        - Per-feature tests
+  lib/vice.py      - VICE remote-monitor harness library (Vice class)
+  run_tests.py     - Discovers and runs test_*.py, prints a pass/fail summary
+  test_*.py        - Per-feature tests (functions named test_*(v))
 
 build/             - Build output (gitignored)
 ```
@@ -140,16 +141,22 @@ Commit after every passing test. Each commit should leave `make test` green. Use
 
 ## Testing
 
-The test harness in `test/` drives VICE via the remote monitor protocol. Each test:
+The test harness lives in `test/lib/vice.py`. The `Vice` class is a context manager that launches `x64sc` (headless via `-console`), connects to the text remote monitor on a free TCP port, and exposes the machine:
 
-1. Builds the ROM.
-2. Launches `x64sc` headless with `-remotemonitor -kernal build/kernal.bin -basic build/basic.bin`.
-3. Connects to the monitor TCP socket (default port 6502).
-4. Performs test actions: inject keystrokes, read memory, check screen contents.
-5. Cleanly shuts down VICE.
-6. Exits 0 on success, nonzero on failure.
+- `read_memory(addr, count)` / `read_byte` / `write_memory(addr, data)` / `write_byte`
+- `screen_text()` / `screen_rows()` / `screen_cells()` (screen codes decoded to ASCII)
+- `registers()` / `pc()`
+- `inject_keys(text)` (writes the keyboard buffer at $0277 and the count at $C6)
+- assertions: `assert_screen_contains`, `assert_memory_equals`, `assert_pc_at`, `assert_display_enabled`
 
-Screen memory at $0400-$07E7 contains C64 *screen codes* (display codes), which are not the same as PETSCII (e.g. 'A' is PETSCII $41 but screen code $01). Test helpers should decode screen codes to ASCII for assertions; see `screencode_to_ascii` in `test/smoke_test.py`.
+A test is a function `test_<name>(v)` in a `test_*.py` module that asserts on the
+passed-in `Vice`. `test/run_tests.py` discovers the modules, runs every test
+function (one fresh VICE per module, for isolation), and prints a pass/fail
+summary. `make test` runs it headless; `make test-verbose` (or `VICE_VERBOSE=1`)
+shows the launch command, monitor traffic, and tracebacks. `VICE_HEADLESS=0`
+opens the GUI window for debugging.
+
+Screen memory at $0400-$07E7 contains C64 *screen codes* (display codes), which are not the same as PETSCII (e.g. 'A' is PETSCII $41 but screen code $01). Use `screen_text()` / `screencode_to_ascii` in `test/lib/vice.py` for assertions. Note: `screenshot()` only works with a real video device, not in headless `-console` mode.
 
 When adding a new feature, add a test that exercises it. The test suite is the safety net that lets us refactor confidently.
 
@@ -164,9 +171,11 @@ When adding a new feature, add a test that exercises it. The test suite is the s
 
 ## Current phase
 
-Phase 1 complete: deterministic boot to a static banner screen. Reset sets the processor port ($01=$37), quiets both CIAs (timers stopped, interrupts masked), initializes the VIC-II, clears the screen, and draws a startup banner. `make test` boots the ROM in VICE and asserts the banner is on a visible screen (display enabled, screen base $0400).
+Phase 2 complete: the smoke test is now a reusable harness library (`test/lib/vice.py`) driven by a discovery runner (`test/run_tests.py`). Tests run headless via `-console`. The suite covers boot (memory map, reset vector, PC in ROM), the banner, known register/memory values, and harness plumbing (memory write, keyboard injection) — 11 checks, well under the 30s budget.
 
-Next: Phase 2 (refactor the smoke test into a reusable test-harness library).
+The deterministic Phase 1 boot still stands: processor port ($01=$37), both CIAs quieted, VIC-II initialized, screen cleared, banner drawn.
+
+Next: Phase 3 (keyboard input and basic I/O — IRQ handler, keyboard scan, CHROUT/GETIN, echo loop).
 
 See `PLAN.md` for the full phased plan.
 
