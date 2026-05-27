@@ -65,6 +65,8 @@ src/
     mem.c          - peek, poke, mon
   fastload.s       - Epyx-compatible fast loader
   screen.s         - CHROUT, scroll, cursor management
+  c_io.s           - C-callable shims over CHROUT/GETIN
+  iec.s            - IEC serial bus (controller side: LISTEN/TALK/ACPTR/...)
 
 cfg/
   rom.cfg          - ld65 linker config
@@ -128,7 +130,10 @@ The C64 normally reserves $00-$8F for BASIC and $90-$FF for KERNAL. Since we hav
 
 Reserve $90-$FF for KERNAL working storage and keep it compatible with documented usage so loaded programs that poke around in zero page don't break. Locations in use, all at their standard KERNAL addresses:
 
+- `$90` I/O status (ST), set by the IEC routines (EOI $40, device-not-present $80)
 - `$A0-$A2` jiffy clock (TIME), advanced by the IRQ handler
+- `$94/$95` IEC byte buffer (BSOUR), `$A3-$A5` IEC bit count / filename index / EOI scratch
+- `$B7` filename length (FNLEN), `$B9` secondary address (SA), `$BA` device (FA), `$BB/$BC` filename pointer (FNADR)
 - `$C5` last key matrix code (LSTX), `$C6` keyboard buffer count (NDX)
 - `$D1/$D2` current screen line pointer (PNT), `$D3` cursor column (PNTR), `$D6` cursor row (TBLX)
 - `$F3/$F4` current color line pointer (USER), `$F5/$F6` CHROUT register save
@@ -180,17 +185,19 @@ When adding a new feature, add a test that exercises it. The test suite is the s
 
 ## Current phase
 
-Phase 5 complete: the shell parses and dispatches. `src/parser.c`'s `parse_line` tokenizes the input buffer in place (whitespace-split, with `"double quotes"` grouping a run into one token) into a `struct command_line` (`argc` + `argv[MAX_ARGS]`, `MAX_ARGS` = 8). `src/shell.c` holds the dispatch table `shell_commands[]` — `{name, handler}` pairs, `const` so it lives in ROM (RODATA) — and `main()` now reads a line, parses it, and runs the matching handler; an unrecognized command reports `Command not found: <cmd>`, an empty/all-whitespace line just reprompts. Command names are lowercase to match the lowercase ASCII the keyboard delivers, so a plain byte compare (`streq`) dispatches them.
+Phase 6 in progress: disk I/O over the IEC serial bus. `src/iec.s` implements the controller side of the bus by bit-banging CIA #2 port A ($DD00): LISTEN/TALK/secondary-address/UNLISTEN/UNTALK, a byte sender (`iec_sendbyte`, with EOI), and a receiver (`iec_getbyte`/ACPTR, which sets the EOI bit in ST=$90). Transfers mask IRQs so the ~60 Hz keyboard scan can't jitter a byte. The C side talks to it through a deliberately one-argument-at-a-time interface in `src/iec.h` (`iec_set_fa`/`iec_set_sa`/`iec_setname`/`iec_open`/`iec_chkin`/`iec_getbyte`/`iec_close`/`iec_clrchn`/`iec_status`), matching cc65's A/X convention. `reset.s` calls `iec_init` to make ATN/CLK/DATA outputs and release the bus.
 
-The five built-ins live in `src/commands/builtins.c`: `help` (walks `shell_commands[]`, so it needs no separate list), `clear` (CHROUT $93), `echo` (args space-joined), `ver` (`C64 Shell ROM v0.1`, kept in step with the boot banner), `exit` (`Nothing to exit to`). Shared declarations are split across `src/shell.h` (the `command` struct, the extern table, the I/O helpers) and `src/commands/builtins.h` (the handler prototypes). The Makefile compiles the two new C modules, adds `-I src` so headers resolve by their path under `src/`, and `mkdir -p $(@D)` so `build/commands/` is created for the subdirectory source.
+`cmd_ls` in `src/commands/fs.c` opens the `"$"` directory on device 8, switches the drive to talk, and decodes the BASIC-program-shaped listing (load address, then per entry: 2-byte link, 2-byte line number = block count, NUL-terminated PETSCII text), printing it like a 1541 directory. If no device answers ATN within a timeout, `iec_open` sets the device-not-present bit ($80) and `ls` prints "device not present" instead of wedging.
 
-Lowercase by default: the machine boots into the lowercase/text charset ($D018 = $16) with an ASCII-consistent encoding. `keytab` in `src/irq.s` delivers lowercase ASCII for letter keys; `pet2scr` in `src/screen.s` (shared with the banner via `puts_at` in `reset.s`) maps lowercase 'a'-'z' to screen codes $01-$1A and leaves uppercase 'A'-'Z' at $41-$5A, so source strings are plain ASCII and render as written (uppercase still prints; typing it needs SHIFT, a later TODO).
+Tested against true drive emulation: `test/data/test.d64` (regenerate with `make_test_disk.sh`) mounts on device 8 (`Vice(disk=...)`, `-drive8truedrive`); a module opts in via `VICE_DISK`. **True drive is mandatory** — we replaced the KERNAL, so VICE's virtual-device traps never fire. `test_disk.py` polls until the listing completes (disk transfers take real, variable 1541 time under warp). 28 checks pass.
 
-26 checks pass in ~21s. New `test_builtins.py` exercises all five built-ins plus leading-whitespace dispatch; to tell a command's output from readline echoing the typed input, the echo tests count occurrences.
+Still pending in Phase 6: the formal KERNAL file entry points at their fixed addresses (SETLFS $FFBA, SETNAM $FFBD, OPEN $FFC0, CHKIN $FFC6, CHRIN $FFCF, CLOSE $FFC3, CLRCHN $FFCC, LOAD $FFD5) — for now disk I/O uses the internal `iec_*` API directly; and the `load`, `run`, and `cd` commands.
 
-Caveats: tests drive the GETIN -> CHROUT pipeline by writing the keyboard buffer directly, so the keyboard *matrix* decode (physical keypress -> PETSCII) still needs the GUI (`make run`) to verify. The buffer is only 10 bytes, which caps an injected line — too short to exercise the parser's quoted-string handling or long-line truncation, so those rest on code review rather than an integration test.
+Earlier phases (see git history): Phase 4 moved the shell into C; Phase 5 added the parser, dispatch table, and built-ins (`help`/`clear`/`echo`/`ver`/`exit`); the shell then switched to a lowercase-by-default, ASCII-consistent encoding (lowercase/text charset $D018 = $16; `keytab` in `irq.s` delivers lowercase ASCII; `pet2scr` in `screen.s` maps lowercase to $01-$1A and leaves uppercase at $41-$5A).
 
-Next: Phase 6 (disk I/O — SETLFS/SETNAM/OPEN/CLOSE/CHKIN/CHKOUT/CLRCHN and the `ls`/`load`/`run` commands over IEC).
+Caveats: tests drive GETIN -> CHROUT by writing the 10-byte keyboard buffer directly, so the keyboard *matrix* decode and inputs longer than 10 chars (the parser's quoted-string / long-line paths) still need the GUI (`make run`) or code review. Typing uppercase letters needs SHIFT, still a TODO.
+
+Next: the KERNAL file entry points and `load`/`run`, then `cd`.
 
 See `PLAN.md` for the full phased plan.
 

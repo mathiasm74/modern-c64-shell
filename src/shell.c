@@ -14,6 +14,7 @@
 #include "shell.h"
 #include "parser.h"
 #include "commands/builtins.h"
+#include "commands/fs.h"
 
 #define CR       0x0D            /* RETURN: submit the line                 */
 #define DEL      0x14            /* DELETE: backspace                       */
@@ -30,6 +31,7 @@ const struct command shell_commands[] = {
     { "echo",  cmd_echo  },
     { "ver",   cmd_ver   },
     { "exit",  cmd_exit  },
+    { "ls",    cmd_ls    },
 };
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);

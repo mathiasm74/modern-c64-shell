@@ -10,6 +10,7 @@
 .import nmi_stub
 .import set_line_ptrs
 .import pet2scr                 ; ASCII -> screen code (shared with CHROUT)
+.import iec_init                ; serial bus port setup
 
 ; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
 .import _main                   ; the C shell (src/shell.c)
@@ -201,6 +202,9 @@ reset:
         lda #$05
         sta TBLX
         jsr set_line_ptrs
+
+        ; --- Serial bus: drive ATN/CLK/DATA, release the lines -----------
+        jsr iec_init
 
         ; --- Enable the display now that the screen is ready -------------
         lda #CTRL1_ON

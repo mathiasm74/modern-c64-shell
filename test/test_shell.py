@@ -28,9 +28,9 @@ def test_boot_shows_prompt(v):
 
 
 def test_unknown_command_reports(v):
-    # "ls" + RETURN -> the shell echoes it back as an unknown command.
-    _send(v, [CLEAR, 0x6C, 0x73, CR])      # l s RETURN
-    v.assert_screen_contains("Command not found: ls")
+    # "foo" + RETURN -> the shell reports it as an unknown command.
+    _send(v, [CLEAR, 0x66, 0x6F, 0x6F, CR])   # f o o RETURN
+    v.assert_screen_contains("Command not found: foo")
 
 
 def test_empty_line_reprompts(v):
@@ -44,10 +44,10 @@ def test_empty_line_reprompts(v):
 
 
 def test_line_editing_backspace(v):
-    # Type "lz", delete the 'z', type 's' -> the dispatched command is "ls".
-    _send(v, [CLEAR, 0x6C, 0x7A, DEL, 0x73, CR])   # l z <DEL> s RETURN
-    v.assert_screen_contains("Command not found: ls")
-    assert "Command not found: lzs" not in v.screen_text(), \
+    # Type "az", delete the 'z', type 'b' -> the dispatched command is "ab".
+    _send(v, [CLEAR, 0x61, 0x7A, DEL, 0x62, CR])   # a z <DEL> b RETURN
+    v.assert_screen_contains("Command not found: ab")
+    assert "Command not found: azb" not in v.screen_text(), \
         "backspace did not remove 'z' from the command line"
 
 
