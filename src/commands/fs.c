@@ -216,6 +216,76 @@ void cmd_rm(int argc, char *argv[])
     }
 }
 
+/* cp <src> <dst> - copy a file. Reads all of src into user RAM at $0800, then
+   writes it to a new PRG dst. Limited to what fits below the I/O area; large
+   files are capped. */
+void cmd_cp(int argc, char *argv[])
+{
+    unsigned char *buf = (unsigned char *)0x0800;
+    unsigned int len = 0;
+    unsigned int i;
+    static char dst[24];
+    unsigned char j, k;
+
+    if (argc < 3) {
+        puts_raw("usage: cp <src> <dst>");
+        chrout(CR);
+        return;
+    }
+
+    /* read src (channel 0, load semantics: load address then data) */
+    iec_set_fa(default_device);
+    iec_set_sa(0);
+    iec_setname(argv[1]);
+    iec_open();
+    if (iec_status() & ST_NODEV) {
+        puts_raw("device not present");
+        chrout(CR);
+        return;
+    }
+    iec_chkin();
+    for (;;) {
+        if (len >= 0x9000)              /* don't overrun $0800.. into I/O */
+            break;
+        buf[len++] = iec_getbyte();
+        if (iec_status() & (ST_EOI | ST_TIMEOUT))
+            break;
+    }
+    iec_close();
+    iec_clrchn();
+    if (iec_status() & ST_TIMEOUT) {
+        puts_raw("read error");
+        chrout(CR);
+        return;
+    }
+
+    /* build "<dst>,p,w" (folded to uppercase on the way out) */
+    k = 0;
+    for (j = 0; argv[2][j] && k < 16; ++j)
+        dst[k++] = argv[2][j];
+    dst[k++] = ',';
+    dst[k++] = 'p';
+    dst[k++] = ',';
+    dst[k++] = 'w';
+    dst[k] = 0;
+
+    /* write dst (channel 2, a write data channel) */
+    iec_set_sa(2);
+    iec_setname(dst);
+    iec_open();
+    iec_chkout();
+    for (i = 0; i < len; ++i)
+        iec_putbyte(buf[i]);
+    iec_unlisten();
+    iec_close();
+    iec_clrchn();
+
+    puts_raw("copied ");
+    print_uint(len);
+    puts_raw(" bytes");
+    chrout(CR);
+}
+
 /* device <n> - set the device ls/load/run talk to (default 8). */
 void cmd_device(int argc, char *argv[])
 {

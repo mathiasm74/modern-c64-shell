@@ -21,6 +21,9 @@ void iec_chkin(void);           /* TALK + secondary, turn the bus around        
 unsigned char iec_getbyte(void);/* receive one byte (ACPTR); sets EOI in status */
 void iec_close(void);           /* LISTEN, send close-secondary, UNLISTEN       */
 void iec_clrchn(void);          /* UNTALK and release the bus                   */
+void iec_chkout(void);          /* LISTEN + data secondary: ready to send data  */
+void iec_putbyte(unsigned char b); /* send one data byte to the open file       */
+void iec_unlisten(void);        /* end the data write (UNLISTEN)                */
 unsigned char iec_status(void); /* the I/O status byte (ST)                     */
 
 #endif /* IEC_H */

@@ -21,6 +21,7 @@
 .export iec_init
 .export _iec_set_fa, _iec_set_sa, _iec_setname
 .export _iec_open, _iec_command, _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
+.export _iec_chkout, _iec_putbyte, _iec_unlisten
 .export _iec_status
 
 DD00   = $DD00
@@ -459,5 +460,63 @@ _iec_clrchn:
         jsr atn_hi
         jsr clk_hi
         jsr data_hi
+        plp
+        rts
+
+; -------------------------------------------------------------------------
+; _iec_chkout - LISTEN FA and send the data secondary ($60 | channel), then
+; release ATN so the drive listens for the bytes we CIOUT next. The file must
+; already be open for writing (iec_open with a "NAME,P,W" name).
+; void iec_chkout(void).
+; -------------------------------------------------------------------------
+_iec_chkout:
+        php
+        sei
+        jsr atn_lo
+        jsr clk_lo
+        jsr data_hi
+        jsr iec_settle
+        jsr iec_wait_dev
+        bcs @nodev
+        lda FA
+        ora #$20                ; LISTEN
+        jsr send_cmd
+        lda SA
+        and #$0F
+        ora #$60                ; data secondary (write)
+        jsr send_cmd
+        jsr atn_hi              ; drive now listens for data bytes
+        plp
+        rts
+@nodev:
+        lda #$80
+        sta ST
+        jsr atn_hi
+        jsr clk_hi
+        plp
+        rts
+
+; _iec_putbyte - send one data byte (in A) to the listening drive (CIOUT, no
+; EOI). void iec_putbyte(unsigned char b).
+_iec_putbyte:
+        php
+        sei
+        sta BSOUR
+        clc                     ; no EOI: the file ends at CLOSE, not here
+        jsr iec_sendbyte
+        plp
+        rts
+
+; _iec_unlisten - send UNLISTEN, ending the data write. void iec_unlisten(void).
+_iec_unlisten:
+        php
+        sei
+        jsr atn_lo
+        jsr clk_lo
+        jsr iec_settle
+        lda #$3F
+        jsr send_cmd
+        jsr atn_hi
+        jsr clk_hi
         plp
         rts
