@@ -90,6 +90,15 @@ def read_screen(sock):
     return values
 
 
+def read_byte(sock, addr):
+    sock.sendall(("m %04x %04x\n" % (addr, addr)).encode("ascii"))
+    for line in drain(sock).splitlines():
+        m = re.search(r"[Cc]:[0-9a-fA-F]{4}\s+([0-9a-fA-F]{2})", line)
+        if m:
+            return int(m.group(1), 16)
+    return None
+
+
 def main():
     for path in (KERNAL, BASIC):
         if not os.path.exists(path):
@@ -128,11 +137,35 @@ def main():
         decoded = "".join(screencode_to_ascii(b) for b in screen)
         print("screen $0400: %r" % decoded)
 
-        if "HELLO" in decoded:
-            print("PASS: HELLO found on screen")
+        # The VIC-II must actually be displaying $0400, or the screen is blank
+        # regardless of what's in RAM (DEN off / wrong screen pointer).
+        ctrl1 = read_byte(sock, 0xD011)
+        memptr = read_byte(sock, 0xD018)
+        display_on = ctrl1 is not None and (ctrl1 & 0x10) != 0
+        screen_at_0400 = memptr is not None and (memptr & 0xF0) == 0x10
+        print("VIC $D011=%s $D018=%s -> display %s, screen base %s" % (
+            "$%02X" % ctrl1 if ctrl1 is not None else "?",
+            "$%02X" % memptr if memptr is not None else "?",
+            "ON" if display_on else "OFF",
+            "$0400" if screen_at_0400 else "elsewhere"))
+
+        ok = True
+        if "HELLO" not in decoded:
+            print("FAIL: HELLO not in screen RAM; got %r" % decoded, file=sys.stderr)
+            print("raw bytes: %r" % screen, file=sys.stderr)
+            ok = False
+        if not display_on:
+            print("FAIL: VIC display disabled (DEN clear) - screen would be blank",
+                  file=sys.stderr)
+            ok = False
+        if not screen_at_0400:
+            print("FAIL: VIC screen base is not $0400 ($D018=%r)" % memptr,
+                  file=sys.stderr)
+            ok = False
+
+        if ok:
+            print("PASS: HELLO is on a visible screen")
             return 0
-        print("FAIL: HELLO not on screen; got %r" % decoded, file=sys.stderr)
-        print("raw bytes: %r" % screen, file=sys.stderr)
         return 1
     finally:
         if sock is not None:
