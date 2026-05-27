@@ -70,6 +70,7 @@ COLOR      = $0286              ; current text color
 
 ; --- Constants -----------------------------------------------------------
 COLOR_BLACK  = $00
+COLOR_WHITE  = $01              ; text and cursor color
 COLOR_BLUE   = $06
 COLOR_LTBLUE = $0E              ; classic C64 default text color
 SPACE        = $20              ; screen code for a blank cell
@@ -164,7 +165,7 @@ reset:
         bne @clrscr
 
         ldx #$00
-        lda #COLOR_LTBLUE
+        lda #COLOR_WHITE
 @clrcol:
         sta COLOR_RAM + $000,x
         sta COLOR_RAM + $100,x
@@ -195,7 +196,7 @@ reset:
         sta CIA1_CRA            ; start, continuous mode, force-load latch
 
         ; --- Cursor: a couple of lines below the banner ------------------
-        lda #COLOR_LTBLUE
+        lda #COLOR_WHITE
         sta COLOR
         lda #$00
         sta PNTR

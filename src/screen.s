@@ -19,6 +19,7 @@ COLOR  = $0286          ; current text color
 
 SAVE_X = $F5            ; CHROUT register save slots (not touched by the IRQ)
 SAVE_Y = $F6
+SAVE_A = $FA
 
 SCREEN = $0400
 CSCREEN = $D800
@@ -31,10 +32,19 @@ COLOR_OFFSET = $D4      ; high-byte delta from screen RAM to color RAM ($D400)
 ; chrout_impl - print the PETSCII character in A. Preserves A, X, Y.
 ; -------------------------------------------------------------------------
 chrout_impl:
-        pha                     ; save the character (restored on exit)
+        sta SAVE_A              ; save the character (restored on exit)
         stx SAVE_X
         sty SAVE_Y
 
+        ; Lift the cursor: the current cell is shown in reverse video (the
+        ; block), so clear that bit to get the real character back before we
+        ; draw onto or past it.
+        ldy PNTR
+        lda (PNT),y
+        and #$7F
+        sta (PNT),y
+
+        lda SAVE_A
         cmp #$0D
         beq @cr
         cmp #$14
@@ -64,9 +74,17 @@ chrout_impl:
         bcc @done
         jsr do_newline          ; wrapped past column 39
 @done:
+        ; Draw the cursor: show the cell at the (possibly moved) cursor in
+        ; reverse video -- a solid block. With white text on a blue screen
+        ; that reads as a white block, and any character under it as blue.
+        ldy PNTR
+        lda (PNT),y
+        ora #$80
+        sta (PNT),y
+
         ldx SAVE_X
         ldy SAVE_Y
-        pla                     ; restore original character into A
+        lda SAVE_A              ; restore original character into A
         rts
 
 @cr:

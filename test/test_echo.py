@@ -38,9 +38,11 @@ def test_echo_typed_text(v):
 
 def test_echo_backspace_erases(v):
     # "ab" then DEL ($14): b is erased, leaving 'a' then a space. 'a' is
-    # ASCII $61 -> screen code $01 in the lowercase charset.
+    # ASCII $61 -> screen code $01 in the lowercase charset. The cursor now
+    # sits on the cleared cell as a reverse-video block, so mask bit 7.
     _send(v, [CLEAR, 0x61, 0x62, 0x14])
-    assert v.read_memory(0x0400, 2) == [0x01, 0x20], "backspace did not erase 'b'"
+    cells = [b & 0x7F for b in v.read_memory(0x0400, 2)]
+    assert cells == [0x01, 0x20], "backspace did not erase 'b'"
 
 
 def test_clear_wipes_screen(v):

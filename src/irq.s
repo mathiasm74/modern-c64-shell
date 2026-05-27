@@ -22,6 +22,7 @@ KEYBUF_MAX = 10
 COLMASK   = $F7         ; scan scratch (not used by the main thread / CHROUT)
 ROWBITS   = $F8
 found_key = $F9         ; matrix code found this scan ($FF = none)
+SHFLAG    = $028D       ; nonzero while a SHIFT key is held this scan
 
 ; Hand-written core lives in the KERNAL ROM ($E000); the cc65-emitted shell
 ; owns the default CODE segment in the BASIC ROM ($A000). See cfg/rom.cfg.
@@ -65,6 +66,8 @@ nmi_stub:
 scan_keyboard:
         lda #$FF
         sta found_key           ; assume nothing pressed
+        lda #$00
+        sta SHFLAG              ; assume no shift this scan
         ldx #$00                ; matrix code 0..63
         lda #$FE                ; walking-zero column select, starting PA0
         sta COLMASK
@@ -78,10 +81,14 @@ scan_keyboard:
         lsr ROWBITS             ; next row bit -> carry
         bcs @next               ; 1 = not pressed
         cpx #15
-        beq @next               ; left shift  - skip
+        beq @shift              ; left shift
         cpx #52
-        beq @next               ; right shift - skip
+        beq @shift              ; right shift
         stx found_key           ; remember this key (last pressed wins)
+        jmp @next
+@shift:
+        lda #$01
+        sta SHFLAG
 @next:
         inx
         dey
@@ -99,6 +106,25 @@ scan_keyboard:
         stx LSTX                ; new key
         lda keytab,x
         beq @ret                ; non-emitting key (ctrl, cbm, ...)
+        ; apply SHIFT: letters -> uppercase; cursor right/down -> left/up.
+        ldy SHFLAG
+        beq @emit
+        cmp #$61
+        bcc @notletter
+        cmp #$7B
+        bcs @notletter
+        and #$DF                ; 'a'-'z' -> 'A'-'Z' (clear bit 5)
+        jmp @emit
+@notletter:
+        cmp #$1D                ; cursor right -> cursor left
+        bne @notcrsr
+        lda #$9D
+        jmp @emit
+@notcrsr:
+        cmp #$11                ; cursor down -> cursor up
+        bne @emit
+        lda #$91
+@emit:
         ldx NDX
         cpx #KEYBUF_MAX
         bcs @ret                ; buffer full
