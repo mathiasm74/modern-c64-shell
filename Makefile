@@ -59,7 +59,7 @@ check-tools:
 		echo "Missing tools; see CLAUDE.md Toolchain section."; exit 1; fi
 
 run: all
-	$(VICE) -kernal $(KERNAL) -basic $(BASIC) $(VICEFLAGS)
+	SKIP_BUILD=1 VICE=$(VICE) ./run.sh $(VICEFLAGS)
 
 test: all
 	$(PYTHON) test/smoke_test.py

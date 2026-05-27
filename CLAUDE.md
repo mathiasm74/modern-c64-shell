@@ -48,6 +48,8 @@ The build produces two 8KB binaries that together form the 16KB ROM:
 
 For OneROM flashing, the two are concatenated: `cat build/basic.bin build/kernal.bin > build/rom16k.bin`.
 
+`make run` delegates to `./run.sh`, which builds the ROM (unless `SKIP_BUILD=1`) and launches `x64sc -kernal build/kernal.bin -basic build/basic.bin`. Run `./run.sh` directly to forward extra VICE arguments, e.g. `./run.sh -warp`.
+
 ## Project layout
 
 ```
