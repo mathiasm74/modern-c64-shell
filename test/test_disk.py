@@ -44,8 +44,20 @@ def test_ls_lists_directory(v):
     done = _wait_for(v, "BLOCKS FREE")
     txt = v.screen_text()
     assert done, "ls never finished (no blocks-free line)\n%s" % txt
-    assert "HELLO" in txt, "ls did not list HELLO\n%s" % txt
+    assert "PROG" in txt, "ls did not list PROG\n%s" % txt
     assert "README" in txt, "ls did not list README"
     # The shell must survive the transfer and return to a prompt.
     assert v.pc() is not None and 0xA000 <= v.pc() <= 0xFFFF, \
         "shell not back in ROM after ls"
+
+
+def test_load_into_memory(v):
+    # "load prog" reads the PRG to its load address ($2000) and reports the
+    # range, but does not start it (non-destructive: shell stays at a prompt).
+    _type(v, "load prog")
+    done = _wait_for(v, "loaded $")
+    txt = v.screen_text()
+    assert done, "load did not report success\n%s" % txt
+    assert "$2000-$2007" in txt, "load reported the wrong range\n%s" % txt
+    assert v.read_memory(0x2000, 8) == [0xA9, 0x42, 0x8D, 0x40, 0x03, 0x4C, 0x05, 0x20], \
+        "loaded program bytes wrong at $2000"

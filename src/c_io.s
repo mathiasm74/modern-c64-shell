@@ -10,9 +10,12 @@
 
 .export _chrout
 .export _getin
+.export _run_program
 
 CHROUT = $FFD2
 GETIN  = $FFE4
+
+RUNVEC = $A7            ; free zero-page pair for the run_program indirect jump
 
 .segment "KCODE"
 
@@ -26,3 +29,10 @@ _getin:
         jsr GETIN
         ldx #$00
         rts
+
+; void run_program(unsigned addr);  -- jump to a loaded program (A=lo, X=hi).
+; Does not return; the program takes over the machine.
+_run_program:
+        sta RUNVEC
+        stx RUNVEC+1
+        jmp (RUNVEC)

@@ -32,6 +32,8 @@ const struct command shell_commands[] = {
     { "ver",   cmd_ver   },
     { "exit",  cmd_exit  },
     { "ls",    cmd_ls    },
+    { "load",  cmd_load  },
+    { "run",   cmd_run   },
 };
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);

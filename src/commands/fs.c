@@ -12,6 +12,13 @@
 
 #define CR 0x0D
 
+/* in c_io.s: jump to a loaded program; does not return. */
+void run_program(unsigned int addr);
+
+/* Start address of the most recently loaded program, or 0 if none. Lives in
+   BSS, so it is zero at boot. */
+static unsigned int load_start;
+
 /* Print an unsigned int in decimal (block counts are small, but the
    blocks-free line can reach a few hundred). */
 static void print_uint(unsigned int n)
@@ -29,6 +36,21 @@ static void print_uint(unsigned int n)
     }
     while (i)
         chrout(buf[--i]);
+}
+
+static void print_hex_nybble(unsigned char n)
+{
+    n &= 0x0F;
+    chrout(n < 10 ? '0' + n : 'a' + (n - 10));
+}
+
+/* Print a 16-bit value as four hex digits. */
+static void print_hex16(unsigned int v)
+{
+    print_hex_nybble(v >> 12);
+    print_hex_nybble(v >> 8);
+    print_hex_nybble(v >> 4);
+    print_hex_nybble(v);
 }
 
 void cmd_ls(int argc, char *argv[])
@@ -76,4 +98,63 @@ void cmd_ls(int argc, char *argv[])
 
     iec_close();
     iec_clrchn();
+}
+
+/* load <name> - read a PRG into memory at the load address stored in its
+   first two bytes, and report the range. The program is not started. */
+void cmd_load(int argc, char *argv[])
+{
+    unsigned char lo, hi;
+    unsigned char *p;
+
+    if (argc < 2) {
+        puts_raw("usage: load <name>");
+        chrout(CR);
+        return;
+    }
+
+    iec_set_fa(8);
+    iec_set_sa(0);              /* channel 0: a program load */
+    iec_setname(argv[1]);
+    iec_open();
+    if (iec_status() & ST_NODEV) {
+        puts_raw("device not present");
+        chrout(CR);
+        return;
+    }
+    iec_chkin();
+
+    lo = iec_getbyte();         /* the file's load address */
+    hi = iec_getbyte();
+    p = (unsigned char *)(lo | ((unsigned int)hi << 8));
+    load_start = (unsigned int)p;
+
+    for (;;) {                  /* the last byte arrives with EOI set */
+        *p++ = iec_getbyte();
+        if (iec_status() & ST_EOI)
+            break;
+    }
+
+    iec_close();
+    iec_clrchn();
+
+    puts_raw("loaded $");
+    print_hex16(load_start);
+    puts_raw("-$");
+    print_hex16((unsigned int)(p - 1));
+    chrout(CR);
+}
+
+/* run - jump to the most recently loaded program. Does not return on
+   success; the program takes over the machine. */
+void cmd_run(int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+
+    if (load_start == 0) {
+        puts_raw("nothing loaded");
+        chrout(CR);
+        return;
+    }
+    run_program(load_start);
 }

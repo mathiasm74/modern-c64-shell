@@ -164,10 +164,10 @@ iec_sendbyte:
         bpl @noeoi              ; EOI flag clear -> no EOI handshake
 @eoiack:                        ; EOI: listener pulses DATA low, then releases
         bit DD00
-        bpl @eoiack             ; wait DATA low
+        bmi @eoiack             ; wait for DATA low (listener's EOI acknowledge)
 @eoirel:
         bit DD00
-        bmi @eoirel             ; wait DATA high
+        bpl @eoirel             ; wait for DATA high (listener releases)
 @noeoi:
         jsr clk_lo              ; pull CLK low to start clocking bits
         lda #$08
@@ -189,7 +189,7 @@ iec_sendbyte:
         bne @bit
 @ack:
         bit DD00
-        bpl @ack                ; wait for the listener's byte acknowledge
+        bmi @ack                ; wait for DATA low = the listener's byte ack
         rts
 
 ; Send a command byte (in A) under ATN -- no EOI, ATN already asserted.
@@ -234,6 +234,14 @@ _iec_open:
         bcs @unlisten           ; index >= length -> whole name sent
         ldy NAMEIDX
         lda (FNADR),y
+        ; disk filenames are uppercase PETSCII; our shell types lowercase
+        ; ASCII, so fold 'a'-'z' ($61-$7A) up to 'A'-'Z' ($41-$5A).
+        cmp #$61
+        bcc @putname
+        cmp #$7B
+        bcs @putname
+        and #$DF                ; clear bit 5: lowercase -> uppercase
+@putname:
         sta BSOUR               ; the byte to send
         inc NAMEIDX
         lda NAMEIDX
