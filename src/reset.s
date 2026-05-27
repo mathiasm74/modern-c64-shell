@@ -68,6 +68,10 @@ PNTR       = $D3                ; cursor column
 TBLX       = $D6                ; cursor row
 COLOR      = $0286              ; current text color
 
+; --- Keyboard state (shared with irq.s) ----------------------------------
+LSTX       = $C5                ; matrix code of the last key ($FF = none)
+NDX        = $C6                ; keyboard buffer count
+
 ; --- Constants -----------------------------------------------------------
 COLOR_BLACK  = $00
 COLOR_WHITE  = $01              ; text and cursor color
@@ -184,6 +188,12 @@ reset:
         sta CIA1_PRA            ; no column driven yet
         lda #$00
         sta CIA1_DDRB
+
+        ; --- Keyboard state: empty buffer, no key held -------------------
+        lda #$00
+        sta NDX
+        lda #$FF
+        sta LSTX
 
         ; --- CIA #1 timer A: continuous, ~60 Hz, IRQ on underflow --------
         lda #<TIMER_PERIOD

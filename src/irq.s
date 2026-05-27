@@ -23,6 +23,10 @@ COLMASK   = $F7         ; scan scratch (not used by the main thread / CHROUT)
 ROWBITS   = $F8
 found_key = $F9         ; matrix code found this scan ($FF = none)
 SHFLAG    = $028D       ; nonzero while a SHIFT key is held this scan
+RPTCNT    = $028C       ; key-repeat countdown: initial delay, then rate
+
+KEY_DELAY = 30          ; ticks a key is held before it starts repeating (~0.5s)
+KEY_RATE  = 4           ; ticks between repeats once repeating (~15/s)
 
 ; Hand-written core lives in the KERNAL ROM ($E000); the cc65-emitted shell
 ; owns the default CODE segment in the BASIC ROM ($A000). See cfg/rom.cfg.
@@ -102,8 +106,17 @@ scan_keyboard:
         cpx #$FF
         beq @none               ; nothing pressed this scan
         cpx LSTX
-        beq @ret                ; same key still held -> no repeat
-        stx LSTX                ; new key
+        beq @held               ; same key still held -> maybe auto-repeat
+        stx LSTX                ; new key: emit it and arm the initial delay
+        lda #KEY_DELAY
+        sta RPTCNT
+        jmp @lookup
+@held:
+        dec RPTCNT
+        bne @ret                ; not time to repeat yet
+        lda #KEY_RATE           ; repeat now, then again after the rate
+        sta RPTCNT
+@lookup:
         lda keytab,x
         beq @ret                ; non-emitting key (ctrl, cbm, ...)
         ; apply SHIFT: letters -> uppercase; cursor right/down -> left/up.
