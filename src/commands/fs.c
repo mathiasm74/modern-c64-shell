@@ -98,6 +98,10 @@ void cmd_ls(int argc, char *argv[])
 
     iec_close();
     iec_clrchn();
+    if (iec_status() & ST_TIMEOUT) {
+        puts_raw("read error");     /* drive present but no disk / no data */
+        chrout(CR);
+    }
 }
 
 /* load <name> - read a PRG into memory at the load address stored in its
@@ -137,6 +141,12 @@ void cmd_load(int argc, char *argv[])
 
     iec_close();
     iec_clrchn();
+
+    if (iec_status() & ST_TIMEOUT) {
+        puts_raw("read error");     /* no disk / file not found / no data */
+        chrout(CR);
+        return;
+    }
 
     puts_raw("loaded $");
     print_hex16(load_start);

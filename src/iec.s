@@ -41,6 +41,7 @@ BSOUR  = $95            ; the byte being sent / received
 COUNT  = $A3            ; bit counter (used inside iec_sendbyte)
 NAMEIDX = $A4           ; filename index (survives iec_sendbyte)
 EOIBUF = $A5            ; EOI flag for the byte being sent
+TMOUT  = $A6            ; receive-wait timeout countdown
 
 .segment "KCODE"
 
@@ -113,6 +114,45 @@ iec_wait_dev:
         rts
 @present:
         clc
+        rts
+
+; Wait until CLK in is high / low, with a ~1.4s timeout. Carry clear once the
+; line reaches the wanted state, carry set on timeout. The bound is generous
+; because the talker may pause to read a disk sector; it exists only so a
+; dead or disk-less drive can't wedge the shell. Clobbers A, X, Y, TMOUT.
+wait_clk_hi:
+        lda #$02
+        sta TMOUT
+@z:     ldx #$00
+@x:     ldy #$00
+@y:     bit DD00
+        bvs @ok                 ; CLK high
+        dey
+        bne @y
+        dex
+        bne @x
+        dec TMOUT
+        bne @z
+        sec                     ; timed out
+        rts
+@ok:    clc
+        rts
+wait_clk_lo:
+        lda #$02
+        sta TMOUT
+@z:     ldx #$00
+@x:     ldy #$00
+@y:     bit DD00
+        bvc @ok                 ; CLK low
+        dey
+        bne @y
+        dex
+        bne @x
+        dec TMOUT
+        bne @z
+        sec
+        rts
+@ok:    clc
         rts
 
 ; -------------------------------------------------------------------------
@@ -292,9 +332,14 @@ _iec_chkin:
         jsr data_lo             ; hold DATA low (listener present)
         jsr atn_hi              ; release ATN
         jsr clk_hi              ; release CLK (drive takes it)
-@wclk:
-        bit DD00
-        bvs @wclk               ; wait for the drive to pull CLK low
+        jsr wait_clk_lo         ; wait for the drive to pull CLK low (timeout)
+        bcs @stuck
+        plp
+        rts
+@stuck:
+        lda ST                  ; turnaround failed: read timeout
+        ora #$02
+        sta ST
         plp
         rts
 @nodev:
@@ -312,46 +357,55 @@ _iec_chkin:
 _iec_getbyte:
         php
         sei
-        ; 1. wait for the talker to release CLK = "ready to send". Unbounded:
-        ;    the drive holds CLK low while it reads the directory off disk.
-@wready:
-        bit DD00
-        bvc @wready             ; loop while CLK low
+        lda ST                  ; once a read has timed out, don't retry (and
+        and #$02                ; pay the timeout again) for every later byte
+        bne @giveup
+        ; 1. wait for the talker to release CLK = "ready to send". Times out so
+        ;    a dead or disk-less drive can't wedge the shell.
+        jsr wait_clk_hi
+        bcs @timeout
         ; 2. release DATA = "listener ready for data"
         jsr data_hi
         ; 3. wait for CLK to go low (talker starts clocking bits). If it stays
-        ;    high past the timeout, this is EOI (the last byte).
-        ldy #$00                ; ~256-iteration EOI timeout
+        ;    high past the short window, this is EOI (the last byte).
+        ldy #$00                ; ~256-iteration EOI window
 @eoi:
         bit DD00
         bvc @gotclk             ; CLK low -> bits coming, no EOI
         dey
         bne @eoi
-        lda ST                  ; timeout -> EOI: flag it and acknowledge
+        lda ST                  ; window elapsed -> EOI: flag and acknowledge
         ora #$40
         sta ST
         jsr data_lo             ; pulse DATA low ...
         jsr iec_settle
         jsr data_hi             ; ... then release; the talker now proceeds
-@waitlow:
-        bit DD00
-        bvs @waitlow            ; wait for CLK low (the last byte's bits)
+        jsr wait_clk_lo         ; wait for CLK low (the last byte's bits)
+        bcs @timeout
 @gotclk:
         lda #$08
         sta COUNT
 @bit:
-        bit DD00
-        bvc @bit                ; wait CLK high (bit valid on the rising edge)
+        jsr wait_clk_hi         ; bit valid on the rising edge
+        bcs @timeout
         lda DD00
         asl a                   ; DATA in (bit7) -> carry
         ror BSOUR               ; shift in, LSB first
-@lo:
-        bit DD00
-        bvs @lo                 ; wait CLK low (talker prepping the next bit)
+        jsr wait_clk_lo         ; talker prepping the next bit
+        bcs @timeout
         dec COUNT
         bne @bit
         jsr data_lo             ; acknowledge the byte (listener pulls DATA low)
         lda BSOUR
+        ldx #$00
+        plp
+        rts
+@timeout:
+        lda ST                  ; read timeout ($02) + EOI ($40) so the caller's
+        ora #$42                ; read loop stops cleanly
+        sta ST
+@giveup:
+        lda #$00
         ldx #$00
         plp
         rts

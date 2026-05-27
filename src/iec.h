@@ -7,8 +7,9 @@
 #ifndef IEC_H
 #define IEC_H
 
-#define ST_EOI   0x40           /* iec_status() bit: end of file/transfer  */
-#define ST_NODEV 0x80           /* iec_status() bit: no device responded   */
+#define ST_TIMEOUT 0x02         /* iec_status() bit: read timed out (no data) */
+#define ST_EOI     0x40         /* iec_status() bit: end of file/transfer     */
+#define ST_NODEV   0x80         /* iec_status() bit: no device responded      */
 
 void iec_set_fa(unsigned char dev);     /* device number (e.g. 8)          */
 void iec_set_sa(unsigned char sa);      /* secondary address / channel     */

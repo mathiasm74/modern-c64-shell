@@ -86,8 +86,10 @@ check-tools:
 	if [ $$ok -eq 1 ]; then echo "All required tools present."; else \
 		echo "Missing tools; see CLAUDE.md Toolchain section."; exit 1; fi
 
+# Pass DISK=path to attach a disk image on device 8 (needed for ls/load),
+# e.g. `make run DISK=test/data/test.d64`.
 run: all
-	SKIP_BUILD=1 VICE=$(VICE) ./run.sh $(VICEFLAGS)
+	SKIP_BUILD=1 VICE=$(VICE) DISK=$(DISK) ./run.sh $(VICEFLAGS)
 
 test: all
 	$(PYTHON) test/run_tests.py

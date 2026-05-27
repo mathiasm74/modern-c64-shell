@@ -8,8 +8,14 @@
 # Examples:
 #   ./run.sh                  # build, then boot the shell ROM in VICE
 #   ./run.sh -warp            # ...with warp mode enabled
+#   DISK=test/data/test.d64 ./run.sh   # ...with a disk on device 8 (for ls/load)
 #   SKIP_BUILD=1 ./run.sh     # launch the existing build without rebuilding
 #   VICE=/path/to/x64sc ./run.sh
+#
+# Disk commands (ls/load) need a real image attached AND true drive emulation
+# (we replaced the KERNAL, so VICE's virtual-device traps never fire). Set
+# DISK= to attach one; without it, typing `ls` talks to an empty drive that
+# blinks but never returns a directory, hanging the shell.
 #
 set -euo pipefail
 
@@ -38,4 +44,15 @@ fi
 echo "launching $VICE with the shell ROM:"
 echo "  -kernal $KERNAL"
 echo "  -basic  $BASIC"
-exec "$VICE" -kernal "$KERNAL" -basic "$BASIC" "$@"
+
+ARGS=(-kernal "$KERNAL" -basic "$BASIC")
+if [[ -n "${DISK:-}" ]]; then
+    if [[ ! -f "$DISK" ]]; then
+        echo "error: disk image '$DISK' not found" >&2
+        exit 1
+    fi
+    # True drive emulation is required for the ROM's IEC routines to work.
+    ARGS+=(-drive8truedrive -8 "$DISK")
+    echo "  -8      $DISK (device 8, true drive)"
+fi
+exec "$VICE" "${ARGS[@]}" "$@"
