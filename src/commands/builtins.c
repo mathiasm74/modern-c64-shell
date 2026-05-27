@@ -11,6 +11,9 @@
 #define CR    0x0D             /* RETURN / newline */
 #define CLEAR 0x93             /* CHROUT clear-screen control code */
 
+/* in c_io.s: reboot through the reset vector; does not return. */
+void soft_reset(void);
+
 /* List every registered command, read straight from the dispatch table so
    there is no separate list to keep in sync as commands are added. */
 void cmd_help(int argc, char *argv[])
@@ -60,4 +63,10 @@ void cmd_exit(int argc, char *argv[])
     /* No OS underneath and no BASIC to fall back to; say so plainly. */
     puts_raw("Nothing to exit to");
     chrout(CR);
+}
+
+void cmd_reset(int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+    soft_reset();               /* reboot the shell; does not return */
 }

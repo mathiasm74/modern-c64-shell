@@ -19,6 +19,22 @@ void run_program(unsigned int addr);
    BSS, so it is zero at boot. */
 static unsigned int load_start;
 
+/* The device ls/load/run talk to; `device <n>` changes it. Initialized (DATA,
+   restored on reset), not BSS, so it boots as 8. */
+static unsigned char default_device = 8;
+
+/* Parse a small decimal number (the device number). */
+static unsigned char parse_dec(const char *s)
+{
+    unsigned char v = 0;
+
+    while (*s >= '0' && *s <= '9') {
+        v = v * 10 + (*s - '0');
+        ++s;
+    }
+    return v;
+}
+
 /* Print an unsigned int in decimal (block counts are small, but the
    blocks-free line can reach a few hundred). */
 static void print_uint(unsigned int n)
@@ -58,7 +74,7 @@ void cmd_ls(int argc, char *argv[])
     unsigned char lo, hi, b;
     (void)argc; (void)argv;
 
-    iec_set_fa(8);              /* device 8 */
+    iec_set_fa(default_device);
     iec_set_sa(0);              /* channel 0 */
     iec_setname("$");           /* the directory */
     iec_open();
@@ -117,7 +133,7 @@ void cmd_load(int argc, char *argv[])
         return;
     }
 
-    iec_set_fa(8);
+    iec_set_fa(default_device);
     iec_set_sa(0);              /* channel 0: a program load */
     iec_setname(argv[1]);
     iec_open();
@@ -168,4 +184,18 @@ void cmd_run(int argc, char *argv[])
         return;
     }
     run_program(load_start);
+}
+
+/* device <n> - set the device ls/load/run talk to (default 8). */
+void cmd_device(int argc, char *argv[])
+{
+    if (argc < 2) {
+        puts_raw("usage: device <n>");
+        chrout(CR);
+        return;
+    }
+    default_device = parse_dec(argv[1]);
+    puts_raw("device ");
+    print_uint(default_device);
+    chrout(CR);
 }

@@ -15,6 +15,7 @@
 #include "parser.h"
 #include "commands/builtins.h"
 #include "commands/fs.h"
+#include "commands/mem.h"
 
 #define CR       0x0D            /* RETURN: submit the line                 */
 #define TAB      0x09            /* complete the command word               */
@@ -37,9 +38,13 @@ const struct command shell_commands[] = {
     { "echo",  cmd_echo  },
     { "ver",   cmd_ver   },
     { "exit",  cmd_exit  },
-    { "ls",    cmd_ls    },
-    { "load",  cmd_load  },
-    { "run",   cmd_run   },
+    { "ls",     cmd_ls     },
+    { "load",   cmd_load   },
+    { "run",    cmd_run    },
+    { "device", cmd_device },
+    { "peek",   cmd_peek   },
+    { "poke",   cmd_poke   },
+    { "reset",  cmd_reset  },
 };
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);

@@ -11,6 +11,7 @@
 .export _chrout
 .export _getin
 .export _run_program
+.export _soft_reset
 
 CHROUT = $FFD2
 GETIN  = $FFE4
@@ -42,3 +43,7 @@ _run_program:
         rts
 @enter:
         jmp (RUNVEC)
+
+; void soft_reset(void);  -- reboot through the reset vector. Does not return.
+_soft_reset:
+        jmp ($FFFC)
