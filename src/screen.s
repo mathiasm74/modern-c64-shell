@@ -8,6 +8,7 @@
 .export chrout_impl
 .export set_line_ptrs
 .export screen_clear
+.export pet2scr
 
 ; --- cursor state (KERNAL-compatible zero page) --------------------------
 PNT    = $D1            ; $D1/$D2: pointer to start of the current screen line
@@ -202,20 +203,36 @@ do_scroll:
         rts
 
 ; -------------------------------------------------------------------------
-; pet2scr - convert the PETSCII code in A ($20-$7F) to a screen code.
+; pet2scr - convert the ASCII/PETSCII code in A ($20-$7F) to a screen code.
+;
+; The encoding is ASCII-consistent against the lowercase/text charset (VIC
+; charset @ $1800): lowercase letters draw as lowercase, uppercase as
+; uppercase. Concretely:
+;   $20-$3F  space/digits/punctuation -> unchanged
+;   $40 '@'                           -> $00
+;   $41-$5A 'A'-'Z'                   -> unchanged ($41-$5A = uppercase glyphs)
+;   $5B-$5F  [ \ ] ^ _                -> -$40 ($1B-$1F)
+;   $60-$7F  'a'-'z' and friends      -> -$60 ($61-$7A 'a'-'z' -> $01-$1A)
+; Preserves X and Y; clobbers A only.
 ; -------------------------------------------------------------------------
 pet2scr:
         cmp #$40
-        bcc @done               ; $20-$3F: unchanged
+        bcc @keep               ; $20-$3F: screen code == byte
+        beq @at                 ; $40 '@' -> $00
+        cmp #$5B
+        bcc @keep               ; $41-$5A 'A'-'Z': uppercase glyphs, unchanged
         cmp #$60
-        bcc @sub40              ; $40-$5F ('@','A'-'Z',...): -$40
-        sec                     ; $60-$7F: -$20
-        sbc #$20
+        bcc @sub40              ; $5B-$5F -> -$40
+        sec                     ; $60-$7F (lowercase a-z and friends) -> -$60
+        sbc #$60
+        rts
+@at:
+        lda #$00
         rts
 @sub40:
         sec
         sbc #$40
-@done:
+@keep:
         rts
 
 ; --- per-row screen-line address tables (low/high bytes) -----------------

@@ -32,16 +32,17 @@ def test_jiffy_clock_advances(v):
 
 
 def test_echo_typed_text(v):
-    _send(v, [CLEAR] + [ord(c) for c in "HELLO"])
-    v.assert_screen_contains("HELLO")
+    _send(v, [CLEAR] + [ord(c) for c in "hello"])
+    v.assert_screen_contains("hello")
 
 
 def test_echo_backspace_erases(v):
-    # "AB" then DEL ($14): B is erased, leaving 'A' then a space.
-    _send(v, [CLEAR, 0x41, 0x42, 0x14])
-    assert v.read_memory(0x0400, 2) == [0x01, 0x20], "backspace did not erase 'B'"
+    # "ab" then DEL ($14): b is erased, leaving 'a' then a space. 'a' is
+    # ASCII $61 -> screen code $01 in the lowercase charset.
+    _send(v, [CLEAR, 0x61, 0x62, 0x14])
+    assert v.read_memory(0x0400, 2) == [0x01, 0x20], "backspace did not erase 'b'"
 
 
 def test_clear_wipes_screen(v):
-    _send(v, [ord(c) for c in "JUNK"] + [CLEAR])
-    assert "JUNK" not in v.screen_text(), "clear ($93) did not wipe the screen"
+    _send(v, [ord(c) for c in "junk"] + [CLEAR])
+    assert "junk" not in v.screen_text(), "clear ($93) did not wipe the screen"

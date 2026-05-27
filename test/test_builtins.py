@@ -39,43 +39,43 @@ def _type_no_clear(v, text):
 
 def test_help_lists_every_command(v):
     # help reads the dispatch table, so it names every registered command.
-    _type(v, "HELP")
+    _type(v, "help")
     txt = v.screen_text()
-    assert "COMMANDS" in txt, "help did not print its header"
-    for name in ("HELP", "CLEAR", "ECHO", "VER", "EXIT"):
+    assert "Commands" in txt, "help did not print its header"
+    for name in ("help", "clear", "echo", "ver", "exit"):
         assert name in txt, "help did not list %s" % name
 
 
 def test_ver_prints_version(v):
-    _type(v, "VER")
-    v.assert_screen_contains("C64 SHELL ROM V0.1")
+    _type(v, "ver")
+    v.assert_screen_contains("C64 Shell ROM v0.1")
 
 
 def test_echo_prints_arguments(v):
-    # "ECHO A B" -> the args print as "A B" (single-spaced). The typed line is
-    # echoed too, so "A B" should appear at least twice; once would mean echo
+    # "echo a b" -> the args print as "a b" (single-spaced). The typed line is
+    # echoed too, so "a b" should appear at least twice; once would mean echo
     # produced nothing.
-    _type(v, "ECHO A B")
-    assert v.screen_text().count("A B") >= 2, "echo did not print its arguments"
+    _type(v, "echo a b")
+    assert v.screen_text().count("a b") >= 2, "echo did not print its arguments"
 
 
 def test_exit_says_nowhere_to_go(v):
-    _type(v, "EXIT")
-    v.assert_screen_contains("NOTHING TO EXIT TO")
+    _type(v, "exit")
+    v.assert_screen_contains("Nothing to exit to")
 
 
 def test_clear_command_wipes_screen(v):
-    # First put something on screen, then let the CLEAR *command* (not a clear
+    # First put something on screen, then let the clear *command* (not a clear
     # keystroke) wipe it.
-    _type(v, "ECHO ZAP")
-    assert "ZAP" in v.screen_text(), "echo output should be on screen first"
-    _type_no_clear(v, "CLEAR")
-    assert "ZAP" not in v.screen_text(), "CLEAR command did not wipe the screen"
+    _type(v, "echo zap")
+    assert "zap" in v.screen_text(), "echo output should be on screen first"
+    _type_no_clear(v, "clear")
+    assert "zap" not in v.screen_text(), "clear command did not wipe the screen"
 
 
 def test_leading_whitespace_still_dispatches(v):
-    # The parser skips leading whitespace, so " VER" still finds VER.
-    _type(v, " VER")
-    v.assert_screen_contains("C64 SHELL ROM V0.1")
-    assert "COMMAND NOT FOUND" not in v.screen_text(), \
+    # The parser skips leading whitespace, so " ver" still finds ver.
+    _type(v, " ver")
+    v.assert_screen_contains("C64 Shell ROM v0.1")
+    assert "Command not found" not in v.screen_text(), \
         "leading space should not turn a known command into an unknown one"

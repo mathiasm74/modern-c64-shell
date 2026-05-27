@@ -9,6 +9,7 @@
 .import irq_handler
 .import nmi_stub
 .import set_line_ptrs
+.import pet2scr                 ; ASCII -> screen code (shared with CHROUT)
 
 ; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
 .import _main                   ; the C shell (src/shell.c)
@@ -78,7 +79,7 @@ CPU_PORT_STD = $37              ; shell ROM ($A000) + KERNAL ROM ($E000) + I/O
 CTRL1_BLANK  = $0B              ; 25 rows, text mode, display OFF
 CTRL1_ON     = $1B              ; same, display ON
 CTRL2_40COL  = $C8              ; 40 columns
-MEMPTR_0400  = $14              ; screen @ $0400, charset @ $1000 (char ROM)
+MEMPTR_0400  = $16              ; screen @ $0400, lowercase/text charset @ $1800
 TIMER_PERIOD = $4025            ; CIA #1 timer A latch (~60 Hz IRQ tick)
 
 ; Write a zero-terminated ASCII string `str` to screen address `dst`.
@@ -223,18 +224,16 @@ reset:
 
 ; -------------------------------------------------------------------------
 ; puts_at: copy the zero-terminated ASCII string at (zp_src) to screen RAM
-; at (zp_dst), converting ASCII to C64 screen codes as it goes. Handles the
-; printable range used by the banner ($20-$5F). Clobbers A and Y.
+; at (zp_dst), converting ASCII to C64 screen codes via pet2scr (the same
+; mapping CHROUT uses), so mixed-case banners render correctly. Clobbers A
+; and Y; pet2scr preserves Y across the call.
 ; -------------------------------------------------------------------------
 puts_at:
         ldy #$00
 @loop:
         lda (zp_src),y
         beq @done               ; NUL terminator
-        cmp #$40
-        bcc @store              ; $20-$3F: screen code == ASCII
-        and #$3f                ; $40-$5F ('@', 'A'-'Z', ...) -> $00-$1F
-@store:
+        jsr pet2scr
         sta (zp_dst),y
         iny
         bne @loop
@@ -242,9 +241,9 @@ puts_at:
         rts
 
 banner1:
-        .byte "C64 SHELL ROM V0.1", 0
+        .byte "C64 Shell ROM v0.1", 0
 banner2:
-        .byte "READY.", 0
+        .byte "Ready.", 0
 
 ; --- 6502 hardware vectors ($FFFA-$FFFF) ---------------------------------
 .segment "VECTORS"

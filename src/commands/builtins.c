@@ -1,9 +1,9 @@
 /* builtins.c - the trivial built-in commands.
  *
- * Output is UPPERCASE because the C64 boots in uppercase/graphics mode: the
- * keyboard delivers uppercase PETSCII and the default charset only draws
- * uppercase glyphs, so command names and messages match what the user types
- * and sees. See shell.c for the dispatch table that wires these up.
+ * The shell boots in the lowercase/text charset with an ASCII-consistent
+ * encoding, so string literals here are plain ASCII: lowercase prose with
+ * proper capitalization for headers and proper nouns. See shell.c for the
+ * dispatch table that wires these up.
  */
 #include "shell.h"
 #include "commands/builtins.h"
@@ -18,7 +18,7 @@ void cmd_help(int argc, char *argv[])
     unsigned char i;
     (void)argc; (void)argv;
 
-    puts_raw("COMMANDS:");
+    puts_raw("Commands:");
     chrout(CR);
     for (i = 0; i < shell_command_count; ++i) {
         puts_raw("  ");
@@ -50,7 +50,7 @@ void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Kept in step with the boot banner in reset.s. */
-    puts_raw("C64 SHELL ROM V0.1");
+    puts_raw("C64 Shell ROM v0.1");
     chrout(CR);
 }
 
@@ -58,6 +58,6 @@ void cmd_exit(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* No OS underneath and no BASIC to fall back to; say so plainly. */
-    puts_raw("NOTHING TO EXIT TO");
+    puts_raw("Nothing to exit to");
     chrout(CR);
 }

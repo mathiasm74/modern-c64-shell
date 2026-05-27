@@ -112,15 +112,17 @@ scan_keyboard:
         rts
 
 ; -------------------------------------------------------------------------
-; keytab - matrix code (0-63) -> PETSCII. $00 = key produces no character.
-; Standard C64 matrix order; unshifted only (shifted symbols come later).
+; keytab - matrix code (0-63) -> ASCII/PETSCII. $00 = key produces no char.
+; Standard C64 matrix order; unshifted only (shift handling comes later).
+; Letter keys deliver LOWERCASE (the boot default is the lowercase charset);
+; uppercase will arrive via SHIFT once that is implemented.
 ; -------------------------------------------------------------------------
 keytab:
         .byte $14,$0D,$1D,$88,$85,$86,$87,$11   ; DEL RET CR> F7 F1 F3 F5 CR\/
-        .byte $33,$57,$41,$34,$5A,$53,$45,$00   ; 3 W A 4 Z S E LSHIFT
-        .byte $35,$52,$44,$36,$43,$46,$54,$58   ; 5 R D 6 C F T X
-        .byte $37,$59,$47,$38,$42,$48,$55,$56   ; 7 Y G 8 B H U V
-        .byte $39,$49,$4A,$30,$4D,$4B,$4F,$4E   ; 9 I J 0 M K O N
-        .byte $2B,$50,$4C,$2D,$2E,$3A,$40,$2C   ; + P L - . : @ ,
+        .byte $33,$77,$61,$34,$7A,$73,$65,$00   ; 3 w a 4 z s e LSHIFT
+        .byte $35,$72,$64,$36,$63,$66,$74,$78   ; 5 r d 6 c f t x
+        .byte $37,$79,$67,$38,$62,$68,$75,$76   ; 7 y g 8 b h u v
+        .byte $39,$69,$6A,$30,$6D,$6B,$6F,$6E   ; 9 i j 0 m k o n
+        .byte $2B,$70,$6C,$2D,$2E,$3A,$40,$2C   ; + p l - . : @ ,
         .byte $5C,$2A,$3B,$13,$00,$3D,$5E,$2F   ; POUND * ; HOME RSHIFT = ^ /
-        .byte $31,$5F,$00,$32,$20,$00,$51,$03   ; 1 <- CTRL 2 SPACE CBM Q STOP
+        .byte $31,$5F,$00,$32,$20,$00,$71,$03   ; 1 <- CTRL 2 SPACE CBM q STOP

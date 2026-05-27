@@ -2,8 +2,8 @@
 
 
 def test_banner_text(v):
-    v.assert_screen_contains("C64 SHELL ROM")
-    v.assert_screen_contains("READY")
+    v.assert_screen_contains("C64 Shell ROM")
+    v.assert_screen_contains("Ready")
 
 
 def test_display_enabled(v):

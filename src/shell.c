@@ -2,15 +2,14 @@
  *
  * main() prints a prompt, reads a line, tokenizes it, and dispatches to a
  * handler from the command table below; an unrecognized command reports
- * "COMMAND NOT FOUND". I/O goes through the KERNAL entry points via the thin
+ * "Command not found". I/O goes through the KERNAL entry points via the thin
  * asm shims in c_io.s -- we deliberately avoid cc65's conio, which assumes the
  * stock C64 KERNAL we replaced.
  *
- * Characters are PETSCII on the way in (what the keyboard scan delivers) and
- * on the way out (what CHROUT expects). Letter keys arrive as uppercase
- * PETSCII, which matches the uppercase ASCII in our string literals byte for
- * byte -- so command names in the table below are uppercase to match what the
- * user types, and no translation is needed for the printable range we use.
+ * The encoding is ASCII-consistent: letter keys arrive as lowercase ASCII
+ * (the boot default is the lowercase charset), CHROUT draws them lowercase,
+ * and our string literals are plain ASCII -- so command names below are
+ * lowercase to match what the user types, and no translation is needed.
  */
 #include "shell.h"
 #include "parser.h"
@@ -26,11 +25,11 @@
    by `help`. It is const, so it lives in ROM (RODATA). Add a command here and
    help picks it up automatically. */
 const struct command shell_commands[] = {
-    { "HELP",  cmd_help  },
-    { "CLEAR", cmd_clear },
-    { "ECHO",  cmd_echo  },
-    { "VER",   cmd_ver   },
-    { "EXIT",  cmd_exit  },
+    { "help",  cmd_help  },
+    { "clear", cmd_clear },
+    { "echo",  cmd_echo  },
+    { "ver",   cmd_ver   },
+    { "exit",  cmd_exit  },
 };
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);
@@ -39,9 +38,9 @@ const unsigned char shell_command_count =
    tokens in place by parse_line(). */
 static char line[LINEMAX + 1];
 
-/* Compare two NUL-terminated strings for equality. Input arrives as uppercase
-   PETSCII and the table names are uppercase, so a plain byte compare suffices
-   -- no case folding needed. */
+/* Compare two NUL-terminated strings for equality. Input and the table names
+   are both lowercase ASCII, so a plain byte compare suffices -- no case
+   folding needed. */
 static unsigned char streq(const char *a, const char *b)
 {
     while (*a && *a == *b) {
@@ -110,7 +109,7 @@ static void dispatch(struct command_line *cl)
         }
     }
 
-    puts_raw("COMMAND NOT FOUND: ");
+    puts_raw("Command not found: ");
     puts_raw(cl->argv[0]);
     chrout(CR);
 }

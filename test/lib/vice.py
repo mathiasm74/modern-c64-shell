@@ -44,27 +44,35 @@ class ViceError(Exception):
 
 
 def screencode_to_ascii(code):
-    """Decode a C64 screen code (uppercase/graphics charset) to ASCII."""
+    """Decode a C64 screen code (lowercase/text charset) to ASCII.
+
+    The ROM boots in the lowercase charset with an ASCII-consistent encoding
+    (see src/screen.s pet2scr): lowercase letters sit at screen codes $01-$1A
+    and uppercase at $41-$5A.
+    """
     code &= 0x7F  # ignore the reverse-video bit
     if code == 0:
         return "@"
     if 1 <= code <= 26:
-        return chr(64 + code)             # 1->A .. 26->Z
+        return chr(96 + code)             # 1->a .. 26->z
     if 27 <= code <= 31:
         return "[\\]^_"[code - 27]
     if 32 <= code <= 63:
         return chr(code)                  # space, punctuation, digits map 1:1
+    if 65 <= code <= 90:
+        return chr(code)                  # 65->A .. 90->Z (uppercase glyphs)
     return "."
 
 
 def ascii_to_petscii(ch):
-    """Map an ASCII character to the PETSCII code the keyboard would deliver."""
-    o = ord(ch)
+    """Map an ASCII character to the code the keyboard would deliver.
+
+    The encoding is ASCII-consistent, so this is the identity for the printable
+    range; only RETURN needs translating.
+    """
     if ch == "\n":
         return 0x0D                       # RETURN
-    if 0x61 <= o <= 0x7A:                 # a-z -> PETSCII A-Z
-        return o - 0x20
-    return o                              # space, digits, A-Z, punctuation 1:1
+    return ord(ch)
 
 
 class Vice:
