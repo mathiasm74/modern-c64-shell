@@ -1,0 +1,11 @@
+# Build output
+build/
+
+# Delivery archive (its contents — CLAUDE.md, PLAN.md — are tracked directly)
+files.zip
+
+# Claude Code personal/local settings (shared config would be .claude/settings.json)
+.claude/settings.local.json
+
+# macOS
+.DS_Store
