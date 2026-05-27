@@ -155,8 +155,9 @@ void cmd_load(int argc, char *argv[])
     chrout(CR);
 }
 
-/* run - jump to the most recently loaded program. Does not return on
-   success; the program takes over the machine. */
+/* run - call the most recently loaded program like SYS. It returns here (and
+   the shell reprompts) if the program ends in RTS; a program that loops or
+   takes over the machine never returns. */
 void cmd_run(int argc, char *argv[])
 {
     (void)argc; (void)argv;

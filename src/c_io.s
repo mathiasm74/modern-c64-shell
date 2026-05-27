@@ -30,9 +30,15 @@ _getin:
         ldx #$00
         rts
 
-; void run_program(unsigned addr);  -- jump to a loaded program (A=lo, X=hi).
-; Does not return; the program takes over the machine.
+; void run_program(unsigned addr);  -- call a loaded program (A=lo, X=hi) like
+; SYS: as a subroutine, so a program that ends in RTS returns to the shell.
+; (6502 has no JSR-indirect: jsr to a trampoline that jmp()s into the program;
+; the program's RTS pops back to the rts below, which returns to the caller.)
+; A program that loops forever or resets the stack simply never returns.
 _run_program:
         sta RUNVEC
         stx RUNVEC+1
+        jsr @enter
+        rts
+@enter:
         jmp (RUNVEC)

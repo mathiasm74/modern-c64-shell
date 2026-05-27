@@ -58,6 +58,6 @@ def test_load_into_memory(v):
     done = _wait_for(v, "loaded $")
     txt = v.screen_text()
     assert done, "load did not report success\n%s" % txt
-    assert "$2000-$2007" in txt, "load reported the wrong range\n%s" % txt
-    assert v.read_memory(0x2000, 8) == [0xA9, 0x42, 0x8D, 0x40, 0x03, 0x4C, 0x05, 0x20], \
+    assert "$2000-$201e" in txt, "load reported the wrong range\n%s" % txt
+    assert v.read_memory(0x2000, 8) == [0xA2, 0x00, 0xBD, 0x0E, 0x20, 0xF0, 0x06, 0x20], \
         "loaded program bytes wrong at $2000"
