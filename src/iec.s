@@ -157,6 +157,25 @@ wait_clk_lo:
 @ok:    clc
         rts
 
+; Wait for DATA in to go low (~0.7s timeout). Carry clear once it does, carry
+; set on timeout. iec_sendbyte's first handshake uses this so an absent or
+; unaddressed device (which never pulls DATA low) can't wedge the send; once a
+; listener answers, the rest of the byte is sent with unbounded waits so a
+; busy-but-present drive isn't falsely abandoned. Clobbers A, X, Y.
+wait_data_lo:
+        ldx #$00
+@x:     ldy #$00
+@y:     bit DD00
+        bpl @ok                 ; DATA low (N clear)
+        dey
+        bne @y
+        dex
+        bne @x
+        sec
+        rts
+@ok:    clc
+        rts
+
 ; -------------------------------------------------------------------------
 ; C-callable setters (one argument, in A / A:X per cc65 fastcall).
 ; -------------------------------------------------------------------------
@@ -192,11 +211,17 @@ _iec_status:                    ; unsigned char iec_status(void)
 ; -------------------------------------------------------------------------
 iec_sendbyte:
         ror EOIBUF              ; stash carry (EOI) in bit 7
+        lda ST
+        and #$80                ; device already gone? skip (don't re-wait)
+        bne @abort
         jsr data_hi             ; talker releases DATA
         jsr clk_lo              ; we hold the clock low
-@wlisten:
-        bit DD00
-        bmi @wlisten            ; wait for a listener to pull DATA low
+        jsr wait_data_lo        ; bounded: is a listener there to pull DATA low?
+        bcs @nodev              ; nobody answered -> device not present
+        ; A listener answered. The remaining waits are UNBOUNDED on purpose: a
+        ; present-but-busy drive (e.g. seeking track 18 to start a directory)
+        ; can stall the byte-ack well past a timeout, and we must not abandon a
+        ; device we've already confirmed is there.
         jsr clk_hi              ; release CLK = "ready to send"
 @wready:
         bit DD00
@@ -204,7 +229,7 @@ iec_sendbyte:
 
         bit EOIBUF
         bpl @noeoi              ; EOI flag clear -> no EOI handshake
-@eoiack:                        ; EOI: listener pulses DATA low, then releases
+@eoiack:
         bit DD00
         bmi @eoiack             ; wait for DATA low (listener's EOI acknowledge)
 @eoirel:
@@ -232,6 +257,12 @@ iec_sendbyte:
 @ack:
         bit DD00
         bmi @ack                ; wait for DATA low = the listener's byte ack
+        rts
+@nodev:
+        lda ST                  ; nobody acknowledged: device not present
+        ora #$80
+        sta ST
+@abort:
         rts
 
 ; Send a command byte (in A) under ATN -- no EOI, ATN already asserted.
@@ -271,6 +302,9 @@ send_listen:
         jsr send_cmd
         lda SECADR
         jsr send_cmd            ; the secondary
+        lda ST                  ; addressed device absent (a send timed out)?
+        and #$80
+        bne @fail               ; yes: release the bus cleanly, don't toggle ATN
         jsr atn_hi              ; command phase done; the name is data
         ; send FNADR/FNLEN, EOI on the last byte (NAMEIDX survives the send).
         lda #$00
@@ -296,6 +330,9 @@ send_listen:
         jsr iec_sendbyte
         jmp @name
 @unlisten:
+        lda ST
+        and #$80                ; device vanished mid-name?
+        bne @fail               ; yes: just release, don't re-assert ATN
         jsr atn_lo
         jsr clk_lo
         jsr iec_settle
@@ -305,11 +342,32 @@ send_listen:
         jsr clk_hi              ; release the bus
         plp
         rts
-@nodev:
-        lda #$80                ; ST = device not present
+@nodev:                         ; nobody answered ATN at all: just release
+        lda #$80
         sta ST
         jsr atn_hi
         jsr clk_hi
+        jsr data_hi
+        plp
+        rts
+@fail:                          ; the addressed device is absent but others may
+        ; be on the bus and saw our partial command -- broadcast UNLISTEN and
+        ; UNTALK (which a present device acknowledges) so it returns to idle.
+        lda #$00
+        sta ST                  ; clear the flag so the sends run
+        jsr atn_lo
+        jsr clk_lo
+        jsr data_hi
+        jsr iec_settle
+        lda #$3F                ; UNLISTEN
+        jsr send_cmd
+        lda #$5F                ; UNTALK
+        jsr send_cmd
+        jsr atn_hi
+        jsr clk_hi
+        jsr data_hi
+        lda #$80                ; restore the device-not-present status
+        sta ST
         plp
         rts
 
