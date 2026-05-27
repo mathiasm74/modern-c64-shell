@@ -138,6 +138,14 @@ class Vice:
 
     def stop(self):
         if self.sock is not None:
+            # Detach the disk first so VICE flushes the drive's writes back to
+            # the image; a bare quit can leave a just-written file unclosed (a
+            # "splat") in the saved .d64.
+            if self.disk is not None:
+                try:
+                    self.sock.sendall(b"detach 8\n")
+                except OSError:
+                    pass
             try:
                 self.sock.sendall(b"quit\n")
             except OSError:

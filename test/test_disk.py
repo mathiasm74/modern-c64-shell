@@ -16,11 +16,11 @@ def _type(v, text):
     v.write_byte(0x00C6, len(text) + 1)
 
 
-def _wait_for(v, needle, tries=10, chunk=0.8):
+def _wait_for(v, needle, tries=20, chunk=0.8):
     """Run in short bursts until `needle` appears on screen, or give up.
 
-    Disk transfers take real (emulated) 1541 time that varies under warp, so
-    poll rather than race a fixed sleep."""
+    Disk transfers take real (emulated) 1541 time that varies under warp (and
+    with host load), so poll generously rather than race a fixed sleep."""
     for _ in range(tries):
         v.run_for(chunk)
         if needle in v.screen_text():

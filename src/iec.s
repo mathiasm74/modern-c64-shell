@@ -21,7 +21,7 @@
 .export iec_init
 .export _iec_set_fa, _iec_set_sa, _iec_setname
 .export _iec_open, _iec_command, _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
-.export _iec_chkout, _iec_putbyte, _iec_unlisten
+.export _iec_chkout, _iec_putbyte, _iec_puteoi, _iec_unlisten
 .export _iec_status
 
 DD00   = $DD00
@@ -502,7 +502,19 @@ _iec_putbyte:
         php
         sei
         sta BSOUR
-        clc                     ; no EOI: the file ends at CLOSE, not here
+        clc                     ; no EOI: more data follows
+        jsr iec_sendbyte
+        plp
+        rts
+
+; _iec_puteoi - send the FINAL data byte (in A) with EOI, so the drive marks
+; the end of the file; CLOSE then finalizes it (without this the file is left
+; as a "splat", unclosed). void iec_puteoi(unsigned char b).
+_iec_puteoi:
+        php
+        sei
+        sta BSOUR
+        sec                     ; EOI: this is the last byte
         jsr iec_sendbyte
         plp
         rts

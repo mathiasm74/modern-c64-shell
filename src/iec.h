@@ -23,6 +23,7 @@ void iec_close(void);           /* LISTEN, send close-secondary, UNLISTEN       
 void iec_clrchn(void);          /* UNTALK and release the bus                   */
 void iec_chkout(void);          /* LISTEN + data secondary: ready to send data  */
 void iec_putbyte(unsigned char b); /* send one data byte to the open file       */
+void iec_puteoi(unsigned char b);  /* send the final data byte, with EOI        */
 void iec_unlisten(void);        /* end the data write (UNLISTEN)                */
 unsigned char iec_status(void); /* the I/O status byte (ST)                     */
 

@@ -274,8 +274,12 @@ void cmd_cp(int argc, char *argv[])
     iec_setname(dst);
     iec_open();
     iec_chkout();
-    for (i = 0; i < len; ++i)
-        iec_putbyte(buf[i]);
+    for (i = 0; i < len; ++i) {
+        if (i + 1 == len)
+            iec_puteoi(buf[i]);     /* last byte with EOI so CLOSE finalizes */
+        else
+            iec_putbyte(buf[i]);
+    }
     iec_unlisten();
     iec_close();
     iec_clrchn();
