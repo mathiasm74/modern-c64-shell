@@ -201,55 +201,76 @@ screen_clear:
 ; Moves 960 bytes up by 40, then clears the bottom row.
 ; -------------------------------------------------------------------------
 do_scroll:
+        ; Shift rows 1-24 up into rows 0-23 (960 bytes), one page at a time in
+        ; strict address order. A single loop that interleaved the page copies
+        ; would let a later page's early stores ($05xx/$06xx) overwrite an
+        ; earlier page's source bytes before they were read -- which left two
+        ; rows showing duplicated content after a scroll.
+        ldx #$00
+@s0:
+        lda SCREEN + $028,x     ; page 0: $0428.. -> $0400..
+        sta SCREEN + $000,x
+        inx
+        bne @s0
         ldx #$00
 @s1:
-        lda SCREEN + $028,x     ; rows 1.. -> rows 0.. (first 768 bytes)
-        sta SCREEN + $000,x
-        lda SCREEN + $128,x
+        lda SCREEN + $128,x     ; page 1: $0528.. -> $0500..
         sta SCREEN + $100,x
-        lda SCREEN + $228,x
-        sta SCREEN + $200,x
         inx
         bne @s1
         ldx #$00
 @s2:
-        lda SCREEN + $328,x     ; remaining 192 bytes
+        lda SCREEN + $228,x     ; page 2: $0628.. -> $0600..
+        sta SCREEN + $200,x
+        inx
+        bne @s2
+        ldx #$00
+@s3:
+        lda SCREEN + $328,x     ; page 3: remaining 192 bytes
         sta SCREEN + $300,x
         inx
         cpx #192
-        bne @s2
+        bne @s3
         ldx #$00
         lda #SPACE
-@s3:
+@s4:
         sta SCREEN + $3C0,x     ; blank the new bottom row ($07C0-$07E7)
         inx
         cpx #40
-        bne @s3
+        bne @s4
 
         ldx #$00
-@c1:
-        lda CSCREEN + $028,x
+@c0:
+        lda CSCREEN + $028,x    ; color RAM: same page-by-page shift
         sta CSCREEN + $000,x
+        inx
+        bne @c0
+        ldx #$00
+@c1:
         lda CSCREEN + $128,x
         sta CSCREEN + $100,x
-        lda CSCREEN + $228,x
-        sta CSCREEN + $200,x
         inx
         bne @c1
         ldx #$00
 @c2:
+        lda CSCREEN + $228,x
+        sta CSCREEN + $200,x
+        inx
+        bne @c2
+        ldx #$00
+@c3:
         lda CSCREEN + $328,x
         sta CSCREEN + $300,x
         inx
         cpx #192
-        bne @c2
+        bne @c3
         ldx #$00
         lda COLOR
-@c3:
+@c4:
         sta CSCREEN + $3C0,x
         inx
         cpx #40
-        bne @c3
+        bne @c4
         rts
 
 ; -------------------------------------------------------------------------

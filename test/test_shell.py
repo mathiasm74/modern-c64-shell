@@ -61,3 +61,20 @@ def test_screen_scrolls_under_shell(v):
     assert "zzz" not in v.screen_text(), \
         "screen did not scroll the marker command off the top"
     v.assert_screen_contains("Command not found: x")   # shell still running
+
+
+def test_scroll_does_not_duplicate_lines(v):
+    # Issue 20 distinct one-letter commands so the screen scrolls several
+    # times; each prints "Command not found: <letter>". Read top-to-bottom,
+    # the visible letters must be strictly ascending -- a scroll that
+    # duplicated a row (the page-boundary bug) would repeat or reorder one.
+    _send(v, [CLEAR])
+    seq = []
+    for ch in "abcdefghijklmnopqrst":
+        seq += [ord(ch), CR]
+    for i in range(0, len(seq), 10):
+        _send(v, seq[i:i + 10])
+    seen = [r.rstrip()[-1] for r in v.screen_rows()
+            if r.lstrip().startswith("Command not found:")]
+    assert seen == sorted(seen) and len(seen) == len(set(seen)), \
+        "scroll duplicated or reordered lines; letters seen: %r" % "".join(seen)
