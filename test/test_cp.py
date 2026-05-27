@@ -24,9 +24,9 @@ def _ch(s):
 
 
 def _ls(v):
-    v.write_memory(0x0277, [CLEAR] + _ch("ls") + [CR])
-    v.write_byte(0x00C6, 4)
-    for _ in range(10):
+    v.write_memory(0x0277, [CLEAR] + _ch("dir") + [CR])     # full listing
+    v.write_byte(0x00C6, 5)
+    for _ in range(20):
         v.run_for(0.6)
         if "BLOCKS FREE" in v.screen_text():
             return v.screen_text()

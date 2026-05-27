@@ -2,7 +2,9 @@
 #ifndef FS_H
 #define FS_H
 
-void cmd_ls(int argc, char *argv[]);     /* list the directory              */
+void cmd_dir(int argc, char *argv[]);    /* full 1541-style directory       */
+void cmd_ls(int argc, char *argv[]);     /* file names, colored by type     */
+void cmd_pwd(int argc, char *argv[]);    /* print the disk name             */
 void cmd_load(int argc, char *argv[]);   /* read a PRG into memory          */
 void cmd_run(int argc, char *argv[]);    /* run the loaded program          */
 void cmd_device(int argc, char *argv[]); /* set the default IEC device      */

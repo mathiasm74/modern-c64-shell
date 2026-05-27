@@ -1,19 +1,23 @@
-"""Disk I/O over the IEC serial bus (Phase 6).
+"""Disk I/O over the IEC serial bus (Phase 6/8).
 
 These run with test/data/test.d64 mounted on device 8 under true drive
 emulation -- the only path that works once we've replaced the KERNAL, since
 VICE's virtual-device traps hook KERNAL addresses that no longer exist. See
-test/data/make_test_disk.sh for the fixture's contents (files "hello" and
-"readme").
+test/data/make_test_disk.sh for the fixture (prog, readme, doc).
 
+Directory commands clear the screen first so a `in screen` assertion can't
+match a previous command's output still on screen.
 """
 
 VICE_DISK = "data/test.d64"
 
+CLEAR = 0x93
 
-def _type(v, text):
-    v.write_memory(0x0277, [ord(c) for c in text] + [0x0D])
-    v.write_byte(0x00C6, len(text) + 1)
+
+def _type(v, text, clear=False):
+    codes = ([CLEAR] if clear else []) + [ord(c) for c in text] + [0x0D]
+    v.write_memory(0x0277, codes)
+    v.write_byte(0x00C6, len(codes))
 
 
 def _wait_for(v, needle, tries=20, chunk=0.8):
@@ -38,17 +42,39 @@ def test_boots_clean_with_drive_attached(v):
         "$%04X" % pc if pc is not None else "?")
 
 
-def test_ls_lists_directory(v):
-    # "ls" reads the directory over the IEC bus and prints it.
-    _type(v, "ls")
+def test_dir_lists_directory(v):
+    # "dir" is the full 1541-style listing: block counts, names, types, free.
+    _type(v, "dir", clear=True)
     done = _wait_for(v, "BLOCKS FREE")
     txt = v.screen_text()
-    assert done, "ls never finished (no blocks-free line)\n%s" % txt
-    assert "PROG" in txt, "ls did not list PROG\n%s" % txt
-    assert "README" in txt, "ls did not list README"
-    # The shell must survive the transfer and return to a prompt.
+    assert done, "dir never finished (no blocks-free line)\n%s" % txt
+    assert "PROG" in txt and "README" in txt, "dir missing files\n%s" % txt
     assert v.pc() is not None and 0xA000 <= v.pc() <= 0xFFFF, \
-        "shell not back in ROM after ls"
+        "shell not back in ROM after dir"
+
+
+def test_ls_colors_names_by_type(v):
+    # "ls" lists just the names, each colored by type. PROG/README are PRG and
+    # DOC is SEQ, so the PRG and SEQ names get different text colors.
+    _type(v, "ls", clear=True)
+    assert _wait_for(v, "DOC"), "ls did not list the files"
+    rows = v.screen_rows()
+
+    def color_at(name):
+        for i, r in enumerate(rows):
+            if r.strip() == name:               # ls prints the bare name
+                return v.read_byte(0xD800 + i * 40) & 0x0F
+        return None
+
+    prg = color_at("PROG")
+    seq = color_at("DOC")
+    assert prg is not None and seq is not None, "ls names not found as bare lines"
+    assert prg != seq, "PRG and SEQ names share a color (%d vs %d)" % (prg, seq)
+
+
+def test_pwd_prints_disk_name(v):
+    _type(v, "pwd", clear=True)
+    assert _wait_for(v, "TEST DISK"), "pwd did not print the disk name"
 
 
 def test_load_into_memory(v):

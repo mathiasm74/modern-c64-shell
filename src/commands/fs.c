@@ -1,10 +1,11 @@
 /* fs.c - filesystem commands over the IEC serial bus.
  *
- * cmd_ls reads the directory by opening the magic "$" file on the drive and
- * decoding the BASIC-program-shaped listing it returns: a load address, then
- * one "line" per entry (a 2-byte link, a 2-byte line number that doubles as
- * the block count, and PETSCII text ending in NUL), terminated by a $00,$00
- * link. The drive sends filenames and the type as PETSCII text, which our
+ * The directory commands (dir/ls/pwd) read the magic "$" file on the drive and
+ * decode the BASIC-program-shaped listing it returns: a load address, then one
+ * "line" per entry (a 2-byte link, a 2-byte line number that doubles as the
+ * block count, and PETSCII text ending in NUL), terminated by a $00,$00 link.
+ * dir_begin/dir_line/dir_end below stream that, and each command interprets the
+ * per-line text its own way. The drive sends names/types as PETSCII, which our
  * ASCII-consistent CHROUT renders as-is (uppercase names show uppercase).
  */
 #include "shell.h"
@@ -12,6 +13,8 @@
 
 #define CR    0x0D
 #define CLEAR 0x93
+#define TEXT_COLOR ((unsigned char *)0x0286)    /* KERNAL current text color */
+#define WHITE      0x01
 
 /* in c_io.s: jump to a loaded program; does not return. */
 void run_program(unsigned int addr);
@@ -70,55 +73,153 @@ static void print_hex16(unsigned int v)
     print_hex_nybble(v);
 }
 
-void cmd_ls(int argc, char *argv[])
-{
-    unsigned char lo, hi, b;
-    (void)argc; (void)argv;
+/* Scratch buffer for one directory line's text (dir/ls/pwd run one at a
+   time, so they can share it). */
+static char dir_buf[42];
 
+/* Open the directory of the default device and skip its 2-byte load address.
+   Returns 1 if the drive answered, 0 (after reporting it) if no device. */
+static unsigned char dir_begin(void)
+{
     iec_set_fa(default_device);
-    iec_set_sa(0);              /* channel 0 */
-    iec_setname("$");           /* the directory */
+    iec_set_sa(0);
+    iec_setname("$");
     iec_open();
     if (iec_status() & ST_NODEV) {
         puts_raw("device not present");
         chrout(CR);
-        return;                 /* iec_open already released the bus */
+        return 0;
     }
-    iec_chkin();                /* turn the drive into the talker */
-
-    iec_getbyte();              /* load address (2 bytes) -- discard */
+    iec_chkin();
+    iec_getbyte();              /* load address */
     iec_getbyte();
+    return 1;
+}
 
+/* Read the next directory line into dir_buf (NUL-terminated) and its block
+   count into *blocks. Returns 1 for a line, 0 at the end of the directory. */
+static unsigned char dir_line(unsigned int *blocks)
+{
+    unsigned char lo, hi, b, n;
+
+    lo = iec_getbyte();         /* link pointer */
+    if (iec_status() & (ST_EOI | ST_TIMEOUT))
+        return 0;
+    hi = iec_getbyte();
+    if (lo == 0 && hi == 0)
+        return 0;               /* $00,$00 link -> end of directory */
+
+    lo = iec_getbyte();         /* line number = block count */
+    hi = iec_getbyte();
+    *blocks = lo | ((unsigned int)hi << 8);
+
+    n = 0;
     for (;;) {
-        lo = iec_getbyte();     /* line link pointer */
-        if (iec_status() & ST_EOI)
+        b = iec_getbyte();
+        if (b == 0 || (iec_status() & (ST_EOI | ST_TIMEOUT)))
             break;
-        hi = iec_getbyte();
-        if (lo == 0 && hi == 0)
-            break;              /* $00,$00 link -> end of directory */
-
-        lo = iec_getbyte();     /* line number = block count */
-        hi = iec_getbyte();
-        print_uint(lo | ((unsigned int)hi << 8));
-        chrout(' ');
-
-        for (;;) {              /* the line text, up to its NUL terminator */
-            b = iec_getbyte();
-            if (b == 0 || (iec_status() & ST_EOI))
-                break;
-            chrout(b);
-        }
-        chrout(CR);
-        if (iec_status() & ST_EOI)
-            break;
+        if (n < sizeof(dir_buf) - 1)
+            dir_buf[n++] = b;
     }
+    dir_buf[n] = 0;
+    return 1;
+}
 
+static void dir_end(void)
+{
     iec_close();
     iec_clrchn();
     if (iec_status() & ST_TIMEOUT) {
         puts_raw("read error");     /* drive present but no disk / no data */
         chrout(CR);
     }
+}
+
+/* dir - the full 1541-style listing: block count, name, type, blocks free. */
+void cmd_dir(int argc, char *argv[])
+{
+    unsigned int blocks;
+    (void)argc; (void)argv;
+
+    if (!dir_begin())
+        return;
+    while (dir_line(&blocks)) {
+        print_uint(blocks);
+        chrout(' ');
+        puts_raw(dir_buf);
+        chrout(CR);
+    }
+    dir_end();
+}
+
+/* The text color for a directory entry of the given type, keyed on the first
+   letter of its 3-letter type word; 0 = not a file line (skip it). */
+static unsigned char type_color(char t)
+{
+    switch (t) {
+    case 'P': return 0x0D;      /* PRG - light green */
+    case 'S': return 0x03;      /* SEQ - cyan */
+    case 'U': return 0x07;      /* USR - yellow */
+    case 'R': return 0x0A;      /* REL - light red */
+    case 'D': return 0x0C;      /* DEL - grey */
+    default:  return 0x00;      /* header / blocks-free: not a file */
+    }
+}
+
+/* ls - just the file names, each colored by its type. */
+void cmd_ls(int argc, char *argv[])
+{
+    unsigned int blocks;
+    unsigned char i, q2, t, color, saved;
+    (void)argc; (void)argv;
+
+    if (!dir_begin())
+        return;
+    saved = *TEXT_COLOR;
+    while (dir_line(&blocks)) {
+        for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
+            ;
+        if (dir_buf[i] != '"')          /* no quoted name -> blocks-free line */
+            continue;
+        ++i;                            /* name runs from i to the next quote */
+        for (q2 = i; dir_buf[q2] && dir_buf[q2] != '"'; ++q2)
+            ;
+        if (dir_buf[q2] != '"')
+            continue;
+        for (t = q2 + 1; dir_buf[t] == ' '; ++t)  /* type follows the quote */
+            ;
+        color = type_color(dir_buf[t]);
+        if (color == 0)                 /* header line (id/dostype): skip */
+            continue;
+        *TEXT_COLOR = color;
+        while (i < q2)
+            chrout(dir_buf[i++]);       /* the name */
+        chrout(CR);
+    }
+    *TEXT_COLOR = saved;                /* restore so the prompt is white */
+    dir_end();
+}
+
+/* pwd - print the disk's name (the quoted title in the directory header). */
+void cmd_pwd(int argc, char *argv[])
+{
+    unsigned int blocks;
+    unsigned char i;
+    (void)argc; (void)argv;
+
+    if (!dir_begin())
+        return;
+    if (dir_line(&blocks)) {            /* first line is the header */
+        for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
+            ;
+        if (dir_buf[i] == '"') {
+            ++i;
+            while (dir_buf[i] && dir_buf[i] != '"')
+                chrout(dir_buf[i++]);
+            chrout(CR);
+        }
+    }
+    dir_end();
 }
 
 /* load <name> - read a PRG into memory at the load address stored in its

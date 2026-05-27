@@ -21,10 +21,10 @@ def _type(v, text):
 
 
 def _ls(v):
-    """Clear the screen, run ls, and wait for it to finish."""
-    v.write_memory(0x0277, [0x93] + [ord("l"), ord("s")] + [0x0D])
-    v.write_byte(0x00C6, 4)
-    for _ in range(10):
+    """Clear the screen, run dir (the full listing), wait for it to finish."""
+    v.write_memory(0x0277, [0x93] + [ord(c) for c in "dir"] + [0x0D])
+    v.write_byte(0x00C6, 5)
+    for _ in range(20):
         v.run_for(0.6)
         if "BLOCKS FREE" in v.screen_text():
             return True
