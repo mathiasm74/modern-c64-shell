@@ -43,6 +43,10 @@ chrout_impl:
         beq @clr
         cmp #$13
         beq @home
+        cmp #$1D
+        beq @cright             ; cursor right
+        cmp #$9D
+        beq @cleft              ; cursor left
         cmp #$20
         bcc @done               ; other $00-$1F control codes: ignore
         cmp #$80
@@ -84,6 +88,17 @@ chrout_impl:
         sta PNTR
         sta TBLX
         jsr set_line_ptrs
+        jmp @done
+@cright:                        ; move the cursor one column right (no wrap)
+        lda PNTR
+        cmp #39
+        bcs @done               ; already at the last column
+        inc PNTR
+        jmp @done
+@cleft:                         ; move the cursor one column left (no wrap)
+        lda PNTR
+        beq @done               ; already at column 0
+        dec PNTR
         jmp @done
 
 ; -------------------------------------------------------------------------
