@@ -61,8 +61,13 @@ def main():
         fns = test_functions(mod)
         if not fns:
             continue
+        # A module may request a disk image (mounted on device 8, true drive)
+        # by setting VICE_DISK to a path relative to the test directory.
+        disk = getattr(mod, "VICE_DISK", None)
+        if disk is not None:
+            disk = os.path.join(TEST_DIR, disk)
         try:
-            with Vice() as v:
+            with Vice(disk=disk) as v:
                 for name, fn in fns:
                     label = "%s::%s" % (modname, name)
                     try:

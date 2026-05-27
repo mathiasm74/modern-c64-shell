@@ -77,11 +77,16 @@ def ascii_to_petscii(ch):
 
 class Vice:
     def __init__(self, kernal=DEFAULT_KERNAL, basic=DEFAULT_BASIC,
-                 headless=None, verbose=None):
+                 headless=None, verbose=None, disk=None):
         self.kernal = kernal
         self.basic = basic
         self.headless = HEADLESS if headless is None else headless
         self.verbose = VERBOSE if verbose is None else verbose
+        # Path to a .d64 to attach on device 8 with true drive emulation, or
+        # None. True drive (not the virtual-device traps) is required: we
+        # replaced the KERNAL, so VICE's KERNAL-trap-based fastpath never fires
+        # and the ROM must drive the real IEC serial protocol.
+        self.disk = disk
         self.proc = None
         self.sock = None
         self.port = None
@@ -99,6 +104,8 @@ class Vice:
         for path in (self.kernal, self.basic):
             if not os.path.exists(path):
                 raise ViceError("missing ROM %s (run `make` first)" % path)
+        if self.disk is not None and not os.path.exists(self.disk):
+            raise ViceError("missing disk image %s" % self.disk)
         x64sc = shutil.which("x64sc")
         if not x64sc:
             raise ViceError("x64sc not found on PATH")
@@ -117,6 +124,11 @@ class Vice:
             "-kernal", self.kernal,
             "-basic", self.basic,
         ]
+        if self.disk is not None:
+            cmd += [
+                "-drive8truedrive",           # emulate a real 1541 on the bus
+                "-8", os.path.abspath(self.disk),
+            ]
         self._log("launch: %s" % " ".join(cmd))
         out = None if self.verbose else subprocess.DEVNULL
         self.proc = subprocess.Popen(cmd, stdout=out, stderr=out)
