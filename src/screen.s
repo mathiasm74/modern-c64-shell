@@ -107,15 +107,32 @@ chrout_impl:
         sta TBLX
         jsr set_line_ptrs
         jmp @done
-@cright:                        ; move the cursor one column right (no wrap)
+@cright:                        ; move the cursor one column right
         lda PNTR
         cmp #39
-        bcs @done               ; already at the last column
+        bcc @cr_same            ; not at the last column: just step right
+        lda TBLX                ; at column 39: wrap to column 0 of the next row
+        cmp #24
+        bcs @done               ; bottom-right corner: stay put
+        inc TBLX
+        lda #$00
+        sta PNTR
+        jsr set_line_ptrs
+        jmp @done
+@cr_same:
         inc PNTR
         jmp @done
-@cleft:                         ; move the cursor one column left (no wrap)
+@cleft:                         ; move the cursor one column left
         lda PNTR
-        beq @done               ; already at column 0
+        bne @cl_same            ; not at column 0: just step left
+        lda TBLX                ; at column 0: wrap to column 39 of the prev row
+        beq @done               ; top-left corner: stay put
+        dec TBLX
+        lda #39
+        sta PNTR
+        jsr set_line_ptrs
+        jmp @done
+@cl_same:
         dec PNTR
         jmp @done
 

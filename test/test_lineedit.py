@@ -28,6 +28,17 @@ def _ch(s):
     return [ord(c) for c in s]
 
 
+def _type_n(v, ch, n):
+    """Type `n` copies of `ch`, in keyboard-buffer-sized batches."""
+    code = ord(ch)
+    while n > 0:
+        k = min(n, 10)
+        v.write_memory(0x0277, [code] * k)
+        v.write_byte(0x00C6, k)
+        v.run_for(0.2)
+        n -= k
+
+
 def test_insert_mid_line(v):
     # "abc", cursor left twice (between a and b), insert 'x' -> "axbc".
     _send(v, [CLEAR] + _ch("abc") + [LEFT, LEFT] + _ch("x") + [CR])
@@ -58,6 +69,32 @@ def test_cursor_right_stops_at_end(v):
     # Extra rights past the end are ignored; 'x' appends -> "abx".
     _send(v, [CLEAR] + _ch("ab") + [RIGHT, RIGHT] + _ch("x") + [CR])
     v.assert_screen_contains("Command not found: abx")
+
+
+def test_cursor_left_wraps_past_line_start(v):
+    # Fill row 0 so the cursor wraps to row 1, column 0. LEFT must then step
+    # back to row 0, column 39 -- the reported bug was it sticking at col 0.
+    _send(v, [CLEAR])
+    _type_n(v, "x", 40)
+    assert v.read_byte(0xD6) == 1 and v.read_byte(0xD3) == 0, \
+        "40 chars did not wrap to row 1 (TBLX=%d PNTR=%d)" % (
+            v.read_byte(0xD6), v.read_byte(0xD3))
+    _send(v, [LEFT])
+    assert v.read_byte(0xD6) == 0, "cursor left did not move up to the first row"
+    assert v.read_byte(0xD3) == 39, "cursor left did not land at column 39"
+    _send(v, [CR])
+
+
+def test_cursor_right_wraps_to_next_line(v):
+    # The mirror of the above: from row 0 col 39, RIGHT wraps to row 1 col 0.
+    _send(v, [CLEAR])
+    _type_n(v, "x", 40)
+    _send(v, [LEFT])               # row 0, col 39
+    _send(v, [RIGHT])              # back to row 1, col 0
+    assert v.read_byte(0xD6) == 1 and v.read_byte(0xD3) == 0, \
+        "cursor right did not wrap to the next row (TBLX=%d PNTR=%d)" % (
+            v.read_byte(0xD6), v.read_byte(0xD3))
+    _send(v, [CR])
 
 
 def test_cursor_column_tracks_edits(v):
