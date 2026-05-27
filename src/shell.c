@@ -20,9 +20,12 @@
 #define DEL      0x14            /* DELETE: backspace                       */
 #define CRSR_L   0x9D            /* cursor left  (move within the line)     */
 #define CRSR_R   0x1D            /* cursor right                            */
+#define CRSR_UP  0x91            /* cursor up    (recall older command)     */
+#define CRSR_DN  0x11            /* cursor down  (recall newer command)     */
 #define PRINT_LO 0x20            /* printable PETSCII range we store/echo   */
 #define PRINT_HI 0x7E
 #define LINEMAX  80             /* one 40-col line wraps to two; 80 is plenty */
+#define HIST_N   8              /* commands remembered for up/down recall   */
 
 /* The command table: name -> handler, walked in order both for dispatch and
    by `help`. It is const, so it lives in ROM (RODATA). Add a command here and
@@ -43,6 +46,36 @@ const unsigned char shell_command_count =
 /* The current command line, NUL-terminated by readline() and then carved into
    tokens in place by parse_line(). */
 static char line[LINEMAX + 1];
+
+/* Command history: a ring of the last HIST_N submitted (non-empty) lines.
+   `hist_next` is where the next one goes; `hist_count` is how many are valid.
+   Up/down arrows in readline browse it. */
+static char hist[HIST_N][LINEMAX + 1];
+static unsigned char hist_next;
+static unsigned char hist_count;
+
+/* Remember a submitted command line. */
+static void history_add(const char *s)
+{
+    unsigned char i = 0;
+
+    while (s[i] && i < LINEMAX) {
+        hist[hist_next][i] = s[i];
+        ++i;
+    }
+    hist[hist_next][i] = 0;
+    hist_next = (hist_next + 1) % HIST_N;
+    if (hist_count < HIST_N)
+        ++hist_count;
+}
+
+/* The `browse`-th command back (1 = most recent), or "" for browse 0. */
+static const char *history_get(unsigned char browse)
+{
+    if (browse == 0)
+        return "";
+    return hist[(hist_next + HIST_N - browse) % HIST_N];
+}
 
 /* Compare two NUL-terminated strings for equality. Input and the table names
    are both lowercase ASCII, so a plain byte compare suffices -- no case
@@ -82,6 +115,31 @@ static void redraw_line(unsigned char cur, unsigned char len, unsigned char targ
         chrout(CRSR_L);                 /* park the cursor at `target` */
 }
 
+/* Replace the whole input line with `s` (a recalled history entry, or "").
+ * Steps the cursor back to the line start, draws the new text, pads with
+ * spaces over any leftover of the old (longer) line, and leaves the cursor at
+ * the end. Updates *plen / *ppos. CRSR_L wraps rows, so wrapped lines work. */
+static void replace_line(const char *s, unsigned char *plen, unsigned char *ppos)
+{
+    unsigned char i, n = 0;
+    unsigned char oldlen = *plen;
+
+    for (i = 0; i < *ppos; ++i)
+        chrout(CRSR_L);                 /* back to the start of the input */
+    while (s[n] && n < LINEMAX) {       /* copy and draw the new text */
+        line[n] = s[n];
+        chrout(line[n]);
+        ++n;
+    }
+    line[n] = 0;
+    for (i = n; i < oldlen; ++i)
+        chrout(' ');                    /* wipe the tail of a longer old line */
+    for (i = n; i < oldlen; ++i)
+        chrout(CRSR_L);
+    *plen = n;
+    *ppos = n;
+}
+
 /* Read one line into `line`, echoing as we go; return its length.
  *
  * RETURN submits. Cursor left/right move within the line; printable characters
@@ -92,6 +150,7 @@ static unsigned char readline(void)
 {
     unsigned char len = 0;              /* characters in the line          */
     unsigned char pos = 0;              /* cursor index within it, 0..len  */
+    unsigned char browse = 0;           /* history depth: 0 = the fresh line */
     unsigned char c, i;
 
     for (;;) {
@@ -101,7 +160,23 @@ static unsigned char readline(void)
         if (c == CR) {
             chrout(CR);
             line[len] = 0;
+            if (len > 0)                /* don't remember empty lines */
+                history_add(line);
             return len;
+        }
+        if (c == CRSR_UP) {             /* recall an older command */
+            if (browse < hist_count) {
+                ++browse;
+                replace_line(history_get(browse), &len, &pos);
+            }
+            continue;
+        }
+        if (c == CRSR_DN) {             /* back toward the fresh line */
+            if (browse > 0) {
+                --browse;
+                replace_line(history_get(browse), &len, &pos);
+            }
+            continue;
         }
         if (c == CRSR_L) {
             if (pos > 0) {
