@@ -27,6 +27,23 @@ static unsigned int load_start;
    restored on reset), not BSS, so it boots as 8. */
 static unsigned char default_device = 8;
 
+/* Optional friendly names for devices 8..15 (index = device - 8); empty means
+   none. `device <n> <name>` sets one, `device <n>` alone keeps it. BSS, so
+   all start empty. */
+#define DEV_MIN     8
+#define DEV_MAX     15
+#define DEVNAME_MAX 10
+static char device_name[DEV_MAX - DEV_MIN + 1][DEVNAME_MAX + 1];
+
+/* The remembered name for the current default device, or "" (none / out of
+   the 8..15 range). */
+static const char *current_device_name(void)
+{
+    if (default_device >= DEV_MIN && default_device <= DEV_MAX)
+        return device_name[default_device - DEV_MIN];
+    return "";
+}
+
 /* Parse a small decimal number (the device number). */
 static unsigned char parse_dec(const char *s)
 {
@@ -200,24 +217,33 @@ void cmd_ls(int argc, char *argv[])
     dir_end();
 }
 
-/* pwd - print the disk's name (the quoted title in the directory header). */
+/* pwd - print the current device (number and name, if any) and the disk's
+   name (the quoted title in the directory header), e.g. "9 fd: TEST DISK". */
 void cmd_pwd(int argc, char *argv[])
 {
     unsigned int blocks;
     unsigned char i;
+    const char *name;
     (void)argc; (void)argv;
 
     if (!dir_begin())
         return;
     if (dir_line(&blocks)) {            /* first line is the header */
+        print_uint(default_device);
+        name = current_device_name();
+        if (name[0]) {
+            chrout(' ');
+            puts_raw(name);
+        }
+        puts_raw(": ");
         for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
             ;
         if (dir_buf[i] == '"') {
             ++i;
             while (dir_buf[i] && dir_buf[i] != '"')
                 chrout(dir_buf[i++]);
-            chrout(CR);
         }
+        chrout(CR);
     }
     dir_end();
 }
@@ -486,16 +512,32 @@ void cmd_less(int argc, char *argv[])
         chrout(CR);
 }
 
-/* device <n> - set the device ls/load/run talk to (default 8). */
+/* device <n> [name] - set the device ls/load/run talk to (default 8). A name,
+   if given, is remembered for that device number and reused when `device <n>`
+   is later given without one. */
 void cmd_device(int argc, char *argv[])
 {
+    const char *name;
+
     if (argc < 2) {
-        puts_raw("usage: device <n>");
+        puts_raw("usage: device <n> [name]");
         chrout(CR);
         return;
     }
     default_device = parse_dec(argv[1]);
+    if (argc >= 3 && default_device >= DEV_MIN && default_device <= DEV_MAX) {
+        char *slot = device_name[default_device - DEV_MIN];
+        unsigned char i;
+        for (i = 0; argv[2][i] && i < DEVNAME_MAX; ++i)
+            slot[i] = argv[2][i];
+        slot[i] = 0;
+    }
     puts_raw("device ");
     print_uint(default_device);
+    name = current_device_name();
+    if (name[0]) {
+        chrout(' ');
+        puts_raw(name);
+    }
     chrout(CR);
 }

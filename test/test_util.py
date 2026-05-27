@@ -43,6 +43,20 @@ def test_device_sets_default(v):
     assert v.screen_text().count("device 9") >= 2, "device did not confirm the change"
 
 
+def test_device_remembers_name(v):
+    # "device 9 fd" is > 10 chars, so split it across two keyboard-buffer loads.
+    v.write_memory(0x0277, _ch("device 9 "))
+    v.write_byte(0x00C6, 9)
+    v.run_for(0.3)
+    v.write_memory(0x0277, _ch("fd") + [CR])
+    v.write_byte(0x00C6, 3)
+    v.run_for(0.3)
+    assert "device 9 fd" in v.screen_text(), "device did not echo the name"
+    # "device 9" alone now recalls the remembered name
+    _send(v, [CLEAR] + _ch("device 9") + [CR])
+    assert "device 9 fd" in v.screen_text(), "device 9 did not recall the name 'fd'"
+
+
 def test_reset_reboots(v):
     _send(v, _ch("reset") + [CR])
     v.run_for(0.5)
