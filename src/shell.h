@@ -28,4 +28,7 @@ unsigned char getin(void);
 /* Print a NUL-terminated string through CHROUT. */
 void puts_raw(const char *s);
 
+/* Set the shell prompt string (shown by main(), defined in shell.c). */
+void set_prompt(const char *s);
+
 #endif /* SHELL_H */

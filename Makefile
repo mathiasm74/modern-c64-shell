@@ -28,7 +28,7 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s
-SRC_C := src/shell.c src/parser.c src/commands/builtins.c src/commands/fs.c src/commands/mem.c
+SRC_C := src/shell.c src/parser.c src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c
 OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S)) \
          $(patsubst src/%.c,$(BUILD)/%.o,$(SRC_C))
 

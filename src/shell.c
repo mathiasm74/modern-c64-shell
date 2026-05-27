@@ -16,6 +16,7 @@
 #include "commands/builtins.h"
 #include "commands/fs.h"
 #include "commands/mem.h"
+#include "commands/config.h"
 
 #define CR       0x0D            /* RETURN: submit the line                 */
 #define TAB      0x09            /* complete the command word               */
@@ -47,6 +48,10 @@ const struct command shell_commands[] = {
     { "peek",   cmd_peek   },
     { "poke",   cmd_poke   },
     { "reset",  cmd_reset  },
+    { "border", cmd_border },
+    { "bg",     cmd_bg     },
+    { "text",   cmd_text   },
+    { "prompt", cmd_prompt },
 };
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);
@@ -101,6 +106,21 @@ void puts_raw(const char *s)
 {
     while (*s)
         chrout(*s++);
+}
+
+/* The prompt symbol main() shows (followed by a space). Initialized -> DATA,
+   so it survives reset; `prompt` changes it. */
+static char prompt_str[16] = ">";
+
+void set_prompt(const char *s)
+{
+    unsigned char i = 0;
+
+    while (s[i] && i < sizeof(prompt_str) - 1) {
+        prompt_str[i] = s[i];
+        ++i;
+    }
+    prompt_str[i] = 0;
 }
 
 /* Redraw the whole input line and leave the cursor at column `target`.
@@ -311,7 +331,7 @@ void main(void)
     struct command_line cl;
 
     for (;;) {
-        chrout('>');
+        puts_raw(prompt_str);
         chrout(' ');
         readline();
         parse_line(line, &cl);
