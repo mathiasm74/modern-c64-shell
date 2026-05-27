@@ -87,7 +87,8 @@ check-tools:
 		echo "Missing tools; see CLAUDE.md Toolchain section."; exit 1; fi
 
 # Pass DISK=path to attach a disk image on device 8 (needed for ls/load),
-# e.g. `make run DISK=test/data/test.d64`.
+# e.g. `make run DISK=test/data/test.d64`. A fresh writable copy is mounted,
+# so the tracked image is never modified by the session.
 run: all
 	SKIP_BUILD=1 VICE=$(VICE) DISK=$(DISK) ./run.sh $(VICEFLAGS)
 

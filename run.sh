@@ -17,6 +17,9 @@
 # DISK= to attach one; without it, typing `ls` talks to an empty drive that
 # blinks but never returns a directory, hanging the shell.
 #
+# DISK= mounts a fresh *copy* (build/run-disk.d64), so writing commands
+# (cp/rm) in the session never modify the tracked image.
+#
 set -euo pipefail
 
 # Work from the repo root (this script's directory) so it runs from anywhere.
@@ -51,8 +54,11 @@ if [[ -n "${DISK:-}" ]]; then
         echo "error: disk image '$DISK' not found" >&2
         exit 1
     fi
-    # True drive emulation is required for the ROM's IEC routines to work.
-    ARGS+=(-drive8truedrive -8 "$DISK")
-    echo "  -8      $DISK (device 8, true drive)"
+    # Mount a fresh writable copy so the session can't mutate the tracked
+    # image; true drive emulation is required for the ROM's IEC routines.
+    SCRATCH="$ROOT/build/run-disk.d64"
+    cp "$DISK" "$SCRATCH"
+    ARGS+=(-drive8truedrive -8 "$SCRATCH")
+    echo "  -8      $SCRATCH (writable copy of $DISK; original untouched)"
 fi
 exec "$VICE" "${ARGS[@]}" "$@"
