@@ -1,0 +1,229 @@
+; screen.s - Phase 3 screen output (CHROUT).
+;
+; Cursor-tracking character output: printable PETSCII goes to screen RAM (and
+; color RAM) at the cursor, control codes handle CR / backspace / clear / home,
+; and the screen scrolls when the cursor runs past the bottom row. Cursor state
+; is kept in the standard KERNAL zero-page locations for compatibility.
+
+.export chrout_impl
+.export set_line_ptrs
+.export screen_clear
+
+; --- cursor state (KERNAL-compatible zero page) --------------------------
+PNT    = $D1            ; $D1/$D2: pointer to start of the current screen line
+PNTR   = $D3            ; cursor column (0-39)
+TBLX   = $D6            ; cursor row (0-24)
+USER   = $F3            ; $F3/$F4: pointer to start of the current color line
+COLOR  = $0286          ; current text color
+
+SAVE_X = $F5            ; CHROUT register save slots (not touched by the IRQ)
+SAVE_Y = $F6
+
+SCREEN = $0400
+CSCREEN = $D800
+SPACE  = $20
+COLOR_OFFSET = $D4      ; high-byte delta from screen RAM to color RAM ($D400)
+
+.segment "CODE"
+
+; -------------------------------------------------------------------------
+; chrout_impl - print the PETSCII character in A. Preserves A, X, Y.
+; -------------------------------------------------------------------------
+chrout_impl:
+        pha                     ; save the character (restored on exit)
+        stx SAVE_X
+        sty SAVE_Y
+
+        cmp #$0D
+        beq @cr
+        cmp #$14
+        beq @bs
+        cmp #$93
+        beq @clr
+        cmp #$13
+        beq @home
+        cmp #$20
+        bcc @done               ; other $00-$1F control codes: ignore
+        cmp #$80
+        bcs @done               ; $80-$FF (function keys, graphics): ignore
+
+        ; printable $20-$7F
+        jsr pet2scr
+        ldy PNTR
+        sta (PNT),y             ; screen code
+        lda COLOR
+        sta (USER),y            ; color
+        inc PNTR
+        lda PNTR
+        cmp #40
+        bcc @done
+        jsr do_newline          ; wrapped past column 39
+@done:
+        ldx SAVE_X
+        ldy SAVE_Y
+        pla                     ; restore original character into A
+        rts
+
+@cr:
+        jsr do_newline
+        jmp @done
+@bs:
+        lda PNTR
+        beq @done               ; already at column 0
+        dec PNTR
+        ldy PNTR
+        lda #SPACE
+        sta (PNT),y
+        jmp @done
+@clr:
+        jsr screen_clear
+        jmp @done
+@home:
+        lda #$00
+        sta PNTR
+        sta TBLX
+        jsr set_line_ptrs
+        jmp @done
+
+; -------------------------------------------------------------------------
+; do_newline - column 0, advance one row, scrolling if past the bottom.
+; -------------------------------------------------------------------------
+do_newline:
+        lda #$00
+        sta PNTR
+        inc TBLX
+        lda TBLX
+        cmp #25
+        bcc @set
+        jsr do_scroll
+        lda #24
+        sta TBLX
+@set:
+        jsr set_line_ptrs
+        rts
+
+; -------------------------------------------------------------------------
+; set_line_ptrs - point PNT/USER at the start of row TBLX in screen/color RAM.
+; -------------------------------------------------------------------------
+set_line_ptrs:
+        ldx TBLX
+        lda line_lo,x
+        sta PNT
+        sta USER                ; color RAM shares the low byte
+        lda line_hi,x
+        sta PNT+1
+        clc
+        adc #COLOR_OFFSET
+        sta USER+1
+        rts
+
+; -------------------------------------------------------------------------
+; screen_clear - fill the screen with spaces, color RAM with COLOR, home.
+; -------------------------------------------------------------------------
+screen_clear:
+        ldx #$00
+        lda #SPACE
+@s:
+        sta SCREEN + $000,x
+        sta SCREEN + $100,x
+        sta SCREEN + $200,x
+        sta SCREEN + $2E8,x
+        inx
+        bne @s
+        ldx #$00
+        lda COLOR
+@c:
+        sta CSCREEN + $000,x
+        sta CSCREEN + $100,x
+        sta CSCREEN + $200,x
+        sta CSCREEN + $2E8,x
+        inx
+        bne @c
+        lda #$00
+        sta PNTR
+        sta TBLX
+        jsr set_line_ptrs
+        rts
+
+; -------------------------------------------------------------------------
+; do_scroll - scroll the screen (and color RAM) up one line; blank the last.
+; Moves 960 bytes up by 40, then clears the bottom row.
+; -------------------------------------------------------------------------
+do_scroll:
+        ldx #$00
+@s1:
+        lda SCREEN + $028,x     ; rows 1.. -> rows 0.. (first 768 bytes)
+        sta SCREEN + $000,x
+        lda SCREEN + $128,x
+        sta SCREEN + $100,x
+        lda SCREEN + $228,x
+        sta SCREEN + $200,x
+        inx
+        bne @s1
+        ldx #$00
+@s2:
+        lda SCREEN + $328,x     ; remaining 192 bytes
+        sta SCREEN + $300,x
+        inx
+        cpx #192
+        bne @s2
+        ldx #$00
+        lda #SPACE
+@s3:
+        sta SCREEN + $3C0,x     ; blank the new bottom row ($07C0-$07E7)
+        inx
+        cpx #40
+        bne @s3
+
+        ldx #$00
+@c1:
+        lda CSCREEN + $028,x
+        sta CSCREEN + $000,x
+        lda CSCREEN + $128,x
+        sta CSCREEN + $100,x
+        lda CSCREEN + $228,x
+        sta CSCREEN + $200,x
+        inx
+        bne @c1
+        ldx #$00
+@c2:
+        lda CSCREEN + $328,x
+        sta CSCREEN + $300,x
+        inx
+        cpx #192
+        bne @c2
+        ldx #$00
+        lda COLOR
+@c3:
+        sta CSCREEN + $3C0,x
+        inx
+        cpx #40
+        bne @c3
+        rts
+
+; -------------------------------------------------------------------------
+; pet2scr - convert the PETSCII code in A ($20-$7F) to a screen code.
+; -------------------------------------------------------------------------
+pet2scr:
+        cmp #$40
+        bcc @done               ; $20-$3F: unchanged
+        cmp #$60
+        bcc @sub40              ; $40-$5F ('@','A'-'Z',...): -$40
+        sec                     ; $60-$7F: -$20
+        sbc #$20
+        rts
+@sub40:
+        sec
+        sbc #$40
+@done:
+        rts
+
+; --- per-row screen-line address tables (low/high bytes) -----------------
+line_lo:
+        .repeat 25, i
+            .byte <(SCREEN + i * 40)
+        .endrepeat
+line_hi:
+        .repeat 25, i
+            .byte >(SCREEN + i * 40)
+        .endrepeat

@@ -120,13 +120,22 @@ Standard KERNAL routines must exist at their published addresses for compatibili
 | $FFD5   | LOAD     | Load file                        |
 | $FFD8   | SAVE     | Save file                        |
 
-These are JMPs to implementations elsewhere in the ROM. Defined in `src/kernal_stubs.s`.
+These are JMPs to implementations elsewhere in the ROM, placed at their fixed addresses by per-entry segments in `cfg/rom.cfg`. Defined in `src/kernal_stubs.s`. Implemented so far (Phase 3): **CHROUT** ($FFD2 -> `chrout_impl` in `src/screen.s`) and **GETIN** ($FFE4 -> `getin_impl`). The rest arrive in later phases (file I/O in Phase 6).
 
 ### Zero page
 
 The C64 normally reserves $00-$8F for BASIC and $90-$FF for KERNAL. Since we have no BASIC, $00-$8F is available to the shell. cc65 uses $02-$1F by default for its pseudo-registers; configure this in `cfg/rom.cfg`.
 
-Reserve $90-$FF for KERNAL working storage and keep it compatible with documented usage so loaded programs that poke around in zero page don't break. The reset code uses $FB-$FE (the stock C64's documented-free zero-page bytes) as scratch pointers for its string-drawing helper.
+Reserve $90-$FF for KERNAL working storage and keep it compatible with documented usage so loaded programs that poke around in zero page don't break. Locations in use, all at their standard KERNAL addresses:
+
+- `$A0-$A2` jiffy clock (TIME), advanced by the IRQ handler
+- `$C5` last key matrix code (LSTX), `$C6` keyboard buffer count (NDX)
+- `$D1/$D2` current screen line pointer (PNT), `$D3` cursor column (PNTR), `$D6` cursor row (TBLX)
+- `$F3/$F4` current color line pointer (USER), `$F5/$F6` CHROUT register save
+- `$F7-$F9` keyboard-scan scratch, `$FB-$FE` reset's string-drawing pointers
+- `$0277-$0280` keyboard buffer, `$0286` current text color
+
+The keyboard-scan scratch ($F7-$F9) is deliberately disjoint from the CHROUT/cursor locations so an IRQ-driven scan can't corrupt a CHROUT in progress.
 
 ### Naming
 
@@ -171,11 +180,13 @@ When adding a new feature, add a test that exercises it. The test suite is the s
 
 ## Current phase
 
-Phase 2 complete: the smoke test is now a reusable harness library (`test/lib/vice.py`) driven by a discovery runner (`test/run_tests.py`). Tests run headless via `-console`. The suite covers boot (memory map, reset vector, PC in ROM), the banner, known register/memory values, and harness plumbing (memory write, keyboard injection) — 11 checks, well under the 30s budget.
+Phase 3 complete: the machine is interactive. A CIA #1 timer-A IRQ (~60 Hz, `src/irq.s`) advances the jiffy clock and scans the keyboard matrix into the buffer; `GETIN` ($FFE4) reads it and `CHROUT` ($FFD2, `src/screen.s`) prints with cursor tracking, CR / backspace / clear / home, and scrolling. `reset.s` enables the IRQ and runs an echo loop. 17 checks pass in ~12s (boot, banner, memory, jiffy/IRQ, echo, control codes, scroll, harness).
 
-The deterministic Phase 1 boot still stands: processor port ($01=$37), both CIAs quieted, VIC-II initialized, screen cleared, banner drawn.
+The harness gained `Vice.run_for(seconds)`: connecting to the monitor halts the CPU, so it disconnects (resume) / reconnects (halt) to let the ROM react to injected input.
 
-Next: Phase 3 (keyboard input and basic I/O — IRQ handler, keyboard scan, CHROUT/GETIN, echo loop).
+Caveat: the automated tests drive the GETIN -> echo -> CHROUT pipeline by writing the keyboard buffer directly. The keyboard *matrix* decode (physical keypress -> PETSCII) can only be verified by typing in the GUI (`make run`).
+
+Next: Phase 4 (move the shell into C via cc65; custom linker config, C-to-asm interface).
 
 See `PLAN.md` for the full phased plan.
 

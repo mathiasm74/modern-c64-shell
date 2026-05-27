@@ -6,8 +6,9 @@
 ; clear the screen, and draw a startup banner. No interrupts are enabled and
 ; there is no keyboard input yet -- that arrives in Phase 3.
 
-.import irq_stub
+.import irq_handler
 .import nmi_stub
+.import set_line_ptrs
 
 .export reset
 
@@ -27,6 +28,12 @@ VIC_BORDER = $D020
 VIC_BGCOL  = $D021
 
 ; --- CIA #1 ($DC00) and CIA #2 ($DD00) -----------------------------------
+CIA1_PRA   = $DC00              ; keyboard column select (output)
+CIA1_PRB   = $DC01              ; keyboard row read (input)
+CIA1_DDRA  = $DC02
+CIA1_DDRB  = $DC03
+CIA1_TALO  = $DC04              ; timer A latch low/high
+CIA1_TAHI  = $DC05
 CIA1_ICR   = $DC0D              ; interrupt control/status
 CIA1_CRA   = $DC0E              ; timer A control
 CIA1_CRB   = $DC0F              ; timer B control
@@ -39,6 +46,11 @@ CIA2_CRB   = $DD0F
 ; --- Zero-page scratch (documented-free bytes; see CLAUDE.md) -------------
 zp_src     = $FB                ; $FB/$FC: source pointer for puts_at
 zp_dst     = $FD                ; $FD/$FE: screen destination pointer
+
+; --- Cursor / text color (shared with screen.s) --------------------------
+PNTR       = $D3                ; cursor column
+TBLX       = $D6                ; cursor row
+COLOR      = $0286              ; current text color
 
 ; --- Constants -----------------------------------------------------------
 COLOR_BLACK  = $00
@@ -53,6 +65,7 @@ CTRL1_BLANK  = $0B              ; 25 rows, text mode, display OFF
 CTRL1_ON     = $1B              ; same, display ON
 CTRL2_40COL  = $C8              ; 40 columns
 MEMPTR_0400  = $14              ; screen @ $0400, charset @ $1000 (char ROM)
+TIMER_PERIOD = $4025            ; CIA #1 timer A latch (~60 Hz IRQ tick)
 
 ; Write a zero-terminated ASCII string `str` to screen address `dst`.
 ; The parentheses matter: ca65's #< / #> byte operators bind tighter than +,
@@ -148,12 +161,44 @@ reset:
         PRINT banner1, SCREEN_RAM + 40 * 1 + 1
         PRINT banner2, SCREEN_RAM + 40 * 3 + 1
 
+        ; --- Keyboard port: PA outputs (columns), PB inputs (rows) -------
+        lda #$ff
+        sta CIA1_DDRA
+        sta CIA1_PRA            ; no column driven yet
+        lda #$00
+        sta CIA1_DDRB
+
+        ; --- CIA #1 timer A: continuous, ~60 Hz, IRQ on underflow --------
+        lda #<TIMER_PERIOD
+        sta CIA1_TALO
+        lda #>TIMER_PERIOD
+        sta CIA1_TAHI
+        lda #$81
+        sta CIA1_ICR            ; enable timer A interrupt
+        lda #$11
+        sta CIA1_CRA            ; start, continuous mode, force-load latch
+
+        ; --- Cursor: a couple of lines below the banner ------------------
+        lda #COLOR_LTBLUE
+        sta COLOR
+        lda #$00
+        sta PNTR
+        lda #$05
+        sta TBLX
+        jsr set_line_ptrs
+
         ; --- Enable the display now that the screen is ready -------------
         lda #CTRL1_ON
         sta VIC_CTRL1
 
-@halt:
-        jmp @halt               ; static screen; input comes in Phase 3
+        cli                     ; allow the timer IRQ (keyboard scan) to run
+
+        ; --- Echo loop: print whatever the keyboard delivers -------------
+echo_loop:
+        jsr $FFE4               ; GETIN
+        beq echo_loop           ; nothing waiting
+        jsr $FFD2               ; CHROUT
+        jmp echo_loop
 
 ; -------------------------------------------------------------------------
 ; puts_at: copy the zero-terminated ASCII string at (zp_src) to screen RAM
@@ -184,4 +229,4 @@ banner2:
 .segment "VECTORS"
         .addr nmi_stub          ; $FFFA NMI
         .addr reset             ; $FFFC RESET
-        .addr irq_stub          ; $FFFE IRQ/BRK
+        .addr irq_handler       ; $FFFE IRQ/BRK

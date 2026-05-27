@@ -17,7 +17,7 @@ CFG    := cfg/rom.cfg
 
 ASFLAGS := --cpu 6502
 
-SRC_S := src/reset.s src/irq.s
+SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s
 OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S))
 
 BASIC  := $(BUILD)/basic.bin

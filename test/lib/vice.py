@@ -135,6 +135,18 @@ class Vice:
                 self.proc.kill()
             self.proc = None
 
+    def run_for(self, seconds=0.2):
+        """Let the CPU run for `seconds`, then halt again for inspection.
+
+        Connecting to the monitor halts the CPU; disconnecting resumes it. So
+        to observe the running machine react to injected input we drop the
+        connection, wait, then reconnect (which halts it once more).
+        """
+        self.sock.close()
+        time.sleep(seconds)
+        self.sock = self._connect()
+        self._drain()
+
     # -- monitor plumbing -------------------------------------------------
     def _connect(self, timeout=20.0):
         deadline = time.time() + timeout
@@ -149,7 +161,13 @@ class Vice:
                 time.sleep(0.25)
         raise ViceError("could not reach VICE monitor on %d: %s" % (self.port, last))
 
-    def _drain(self, settle=0.5):
+    def _drain(self, settle=0.12):
+        """Read all monitor output until the socket is quiet for `settle`.
+
+        Draining everything keeps request/response in lockstep (no leftover
+        bytes to desync the next read). Monitor responses arrive as a single
+        fast burst over the loopback, so a short quiet gap means "done".
+        """
         self.sock.settimeout(settle)
         chunks = []
         while True:
@@ -162,10 +180,10 @@ class Vice:
                 break
         return b"".join(chunks).decode("latin-1", "replace")
 
-    def _command(self, cmd, settle=0.5):
+    def _command(self, cmd):
         self._log(">>> %s" % cmd)
         self.sock.sendall((cmd + "\n").encode("ascii"))
-        out = self._drain(settle)
+        out = self._drain()
         if self.verbose and out.strip():
             self._log(out.strip())
         return out
@@ -177,8 +195,7 @@ class Vice:
     # -- memory -----------------------------------------------------------
     def read_memory(self, addr, count):
         """Read `count` bytes starting at `addr`; returns a list of ints."""
-        settle = 0.8 if count > 64 else 0.4
-        text = self._command("m %04x %04x" % (addr, addr + count - 1), settle=settle)
+        text = self._command("m %04x %04x" % (addr, addr + count - 1))
         vals = []
         for line in text.splitlines():
             m = re.search(r"[Cc]:[0-9a-fA-F]{4}\s+((?:[0-9a-fA-F]{2}[ \t]+)+)", line)
