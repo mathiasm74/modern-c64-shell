@@ -11,7 +11,7 @@
 NDX    = $C6            ; keyboard buffer count
 KEYBUF = $0277          ; keyboard buffer
 
-.segment "CODE"
+.segment "KCODE"        ; hand-written core in the KERNAL ROM (see cfg/rom.cfg)
 
 ; -------------------------------------------------------------------------
 ; getin_impl - return the next character from the keyboard buffer in A, or

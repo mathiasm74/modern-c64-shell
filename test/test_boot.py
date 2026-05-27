@@ -16,8 +16,11 @@ def test_reset_vector(v):
 
 
 def test_cpu_running_in_rom(v):
-    # After boot the CPU spins in the halt loop, which lives in KERNAL ROM.
+    # After boot the CPU runs the C shell: either its code in the BASIC ROM
+    # ($A000-$BFFF) or the KERNAL stubs/implementations it calls ($E000-$FFFF).
+    # The idle shell loops between the two (readline in C, GETIN in KERNAL),
+    # so accept either bank. Anywhere else means boot crashed into RAM.
     pc = v.pc()
-    assert pc is not None and 0xE000 <= pc <= 0xFFFF, \
-        "PC %s is not in KERNAL ROM (boot may have crashed)" % (
-            "$%04X" % pc if pc is not None else "?")
+    in_rom = pc is not None and (0xA000 <= pc <= 0xBFFF or 0xE000 <= pc <= 0xFFFF)
+    assert in_rom, "PC %s is not in shell or KERNAL ROM (boot may have crashed)" % (
+        "$%04X" % pc if pc is not None else "?")

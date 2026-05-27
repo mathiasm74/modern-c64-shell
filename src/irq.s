@@ -23,7 +23,9 @@ COLMASK   = $F7         ; scan scratch (not used by the main thread / CHROUT)
 ROWBITS   = $F8
 found_key = $F9         ; matrix code found this scan ($FF = none)
 
-.segment "CODE"
+; Hand-written core lives in the KERNAL ROM ($E000); the cc65-emitted shell
+; owns the default CODE segment in the BASIC ROM ($A000). See cfg/rom.cfg.
+.segment "KCODE"
 
 ; -------------------------------------------------------------------------
 ; irq_handler - timer tick: ack, advance jiffy clock, scan keyboard.

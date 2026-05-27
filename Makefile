@@ -15,10 +15,20 @@ VICE   := x64sc
 BUILD  := build
 CFG    := cfg/rom.cfg
 
-ASFLAGS := --cpu 6502
+ASFLAGS   := --cpu 6502
+CC65FLAGS := -t none -O --cpu 6502
 
-SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s
-OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S))
+# cc65 runtime library: the `none` target carries the runtime helpers (stack,
+# zerobss, copydata, ...) without any platform startup or conio. Located
+# relative to the cc65 binary so the build is self-contained on any install.
+CC65_LIBDIR := $(dir $(shell command -v cc65))../share/cc65/lib
+RTLIB       := $(CC65_LIBDIR)/none.lib
+
+# Link order matters: reset.o must come first so `reset` lands at $E000.
+SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s
+SRC_C := src/shell.c
+OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S)) \
+         $(patsubst src/%.c,$(BUILD)/%.o,$(SRC_C))
 
 BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
@@ -34,10 +44,21 @@ $(BUILD):
 $(BUILD)/%.o: src/%.s | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
+# C is compiled to assembly by cc65, then assembled by ca65 (keep the .s so a
+# build leaves the generated assembly around for inspection).
+.PRECIOUS: $(BUILD)/%.s
+$(BUILD)/%.s: src/%.c | $(BUILD)
+	$(CC) $(CC65FLAGS) -o $@ $<
+
+$(BUILD)/%.o: $(BUILD)/%.s | $(BUILD)
+	$(AS) $(ASFLAGS) -o $@ $<
+
 # One ld65 invocation writes both binaries (file= is set per memory area in
 # the linker config). kernal.bin is the rule target; basic.bin rides along.
+# The cc65 runtime library resolves the stack/zerobss/copydata helpers the
+# compiled C pulls in.
 $(KERNAL): $(OBJ) $(CFG) | $(BUILD)
-	$(LD) -C $(CFG) $(OBJ)
+	$(LD) -C $(CFG) $(OBJ) $(RTLIB)
 	@echo "  basic.bin : $$(wc -c < $(BASIC)) bytes"
 	@echo "  kernal.bin: $$(wc -c < $(KERNAL)) bytes"
 

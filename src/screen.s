@@ -24,7 +24,7 @@ CSCREEN = $D800
 SPACE  = $20
 COLOR_OFFSET = $D4      ; high-byte delta from screen RAM to color RAM ($D400)
 
-.segment "CODE"
+.segment "KCODE"        ; hand-written core in the KERNAL ROM (see cfg/rom.cfg)
 
 ; -------------------------------------------------------------------------
 ; chrout_impl - print the PETSCII character in A. Preserves A, X, Y.

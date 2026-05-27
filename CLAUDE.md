@@ -180,13 +180,15 @@ When adding a new feature, add a test that exercises it. The test suite is the s
 
 ## Current phase
 
-Phase 3 complete: the machine is interactive. A CIA #1 timer-A IRQ (~60 Hz, `src/irq.s`) advances the jiffy clock and scans the keyboard matrix into the buffer; `GETIN` ($FFE4) reads it and `CHROUT` ($FFD2, `src/screen.s`) prints with cursor tracking, CR / backspace / clear / home, and scrolling. `reset.s` enables the IRQ and runs an echo loop. 17 checks pass in ~12s (boot, banner, memory, jiffy/IRQ, echo, control codes, scroll, harness).
+Phase 4 complete: the shell is C. `src/shell.c`'s `main()` prints a `> ` prompt, reads a line (its `readline` echoes printable PETSCII, handles RETURN / DELETE, and passes other control codes straight to CHROUT), reports `COMMAND NOT FOUND: <line>`, and loops — no command table yet (Phase 5). The C reaches the KERNAL through the C-callable `_chrout`/`_getin` shims in `src/c_io.s`, not cc65's conio (which assumes the stock KERNAL we replaced).
 
-The harness gained `Vice.run_for(seconds)`: connecting to the monitor halts the CPU, so it disconnects (resume) / reconnects (halt) to let the ROM react to injected input.
+Build/link split by authorship: hand-written assembly (reset, IRQ, screen, stubs, the c_io shims) moved to a `KCODE` segment in the KERNAL ROM ($E000); everything cc65 emits keeps its default segments (CODE/RODATA/DATA/BSS/ZEROPAGE) and lands in the BASIC ROM ($A000) / RAM / zero page. `cfg/rom.cfg` defines a `ZP` area for cc65's pseudo-registers and a `RAM` area ($C000-$CFFF) for BSS/DATA and the downward-growing C stack. `reset.s` now initializes the cc65 stack pointer, runs `zerobss`/`copydata`, and `jsr _main` in place of the old echo loop; the Makefile compiles C with cc65 and links `none.lib` for the runtime helpers. Both binaries are still exactly 8KB.
 
-Caveat: the automated tests drive the GETIN -> echo -> CHROUT pipeline by writing the keyboard buffer directly. The keyboard *matrix* decode (physical keypress -> PETSCII) can only be verified by typing in the GUI (`make run`).
+20 checks pass in ~15s. New `test_shell.py` exercises the prompt, unknown-command response, empty-line reprompt, backspace editing, and scrolling under the shell; the echo-loop-specific tests (RETURN starts a new line, raw scroll) moved out of `test_echo.py` since the shell now mediates RETURN.
 
-Next: Phase 4 (move the shell into C via cc65; custom linker config, C-to-asm interface).
+Caveat (unchanged): tests drive the GETIN -> CHROUT pipeline by writing the keyboard buffer directly. The keyboard *matrix* decode (physical keypress -> PETSCII) can only be verified by typing in the GUI (`make run`).
+
+Next: Phase 5 (command parser and built-ins: a dispatch table in `shell.c`, `cmd_*` handlers in `src/commands/`).
 
 See `PLAN.md` for the full phased plan.
 

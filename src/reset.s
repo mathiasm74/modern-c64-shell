@@ -10,6 +10,20 @@
 .import nmi_stub
 .import set_line_ptrs
 
+; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
+.import _main                   ; the C shell (src/shell.c)
+.import zerobss                 ; clear the BSS segment in RAM
+.import copydata                ; copy initialized DATA from ROM to RAM
+.importzp sp                    ; cc65 C software stack pointer
+.import __RAM_START__, __RAM_SIZE__
+
+; cc65 force-imports __STARTUP__ from every C module to guarantee a startup
+; module gets linked. We are that startup (see below), so define the symbol
+; ourselves; this keeps the library's crt0 -- and the constructor/destructor
+; machinery it pulls in -- out of the ROM. The value is never used.
+.export __STARTUP__ : absolute  ; cc65 imports it as absolute; match that
+__STARTUP__ = 1
+
 .export reset
 
 ; --- Processor port ------------------------------------------------------
@@ -82,7 +96,7 @@ TIMER_PERIOD = $4025            ; CIA #1 timer A latch (~60 Hz IRQ tick)
         jsr puts_at
 .endmacro
 
-.segment "CODE"
+.segment "KCODE"                ; hand-written core in the KERNAL ROM (see cfg/rom.cfg)
 
 reset:
         sei                     ; mask IRQs during setup
@@ -193,12 +207,19 @@ reset:
 
         cli                     ; allow the timer IRQ (keyboard scan) to run
 
-        ; --- Echo loop: print whatever the keyboard delivers -------------
-echo_loop:
-        jsr $FFE4               ; GETIN
-        beq echo_loop           ; nothing waiting
-        jsr $FFD2               ; CHROUT
-        jmp echo_loop
+        ; --- Hand control to the C shell ---------------------------------
+        ; cc65 expects its data stack pointer initialized to one past the top
+        ; of the C stack (it grows downward); BSS zeroed and DATA copied from
+        ; ROM to RAM before main() runs.
+        lda #<(__RAM_START__ + __RAM_SIZE__)
+        sta sp
+        lda #>(__RAM_START__ + __RAM_SIZE__)
+        sta sp+1
+        jsr zerobss
+        jsr copydata
+        jsr _main               ; the shell loops forever; should not return
+@halt:
+        jmp @halt               ; trap, just in case main() ever returns
 
 ; -------------------------------------------------------------------------
 ; puts_at: copy the zero-terminated ASCII string at (zp_src) to screen RAM
