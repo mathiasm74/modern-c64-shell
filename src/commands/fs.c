@@ -294,7 +294,7 @@ void cmd_cp(int argc, char *argv[])
 /* cat <name> - dump a file's bytes to the screen. */
 void cmd_cat(int argc, char *argv[])
 {
-    unsigned char b;
+    unsigned char b, last = CR;
 
     if (argc < 2) {
         puts_raw("usage: cat <name>");
@@ -316,6 +316,7 @@ void cmd_cat(int argc, char *argv[])
         if (iec_status() & ST_TIMEOUT)
             break;
         chrout(b);
+        last = b;
         if (iec_status() & ST_EOI)
             break;
     }
@@ -323,6 +324,8 @@ void cmd_cat(int argc, char *argv[])
     iec_clrchn();
     if (iec_status() & ST_TIMEOUT) {
         puts_raw("read error");
+        chrout(CR);
+    } else if (last != CR) {        /* end on a fresh line for the prompt */
         chrout(CR);
     }
 }
@@ -342,7 +345,7 @@ static unsigned char wait_key(void)
    (any key continues, 'q' quits, each page on a fresh screen). */
 void cmd_less(int argc, char *argv[])
 {
-    unsigned char b, lines = 0;
+    unsigned char b, lines = 0, last = CR;
 
     if (argc < 2) {
         puts_raw("usage: less <name>");
@@ -364,18 +367,22 @@ void cmd_less(int argc, char *argv[])
         if (iec_status() & ST_TIMEOUT)
             break;
         chrout(b);
+        last = b;
         if (b == CR && ++lines >= 22) {
             puts_raw("-- more --");
             if (wait_key() == 'q')
                 break;
             chrout(CLEAR);          /* fresh screen for the next page */
             lines = 0;
+            last = CR;
         }
         if (iec_status() & ST_EOI)
             break;
     }
     iec_close();
     iec_clrchn();
+    if (last != CR)                 /* end on a fresh line for the prompt */
+        chrout(CR);
 }
 
 /* device <n> - set the device ls/load/run talk to (default 8). */

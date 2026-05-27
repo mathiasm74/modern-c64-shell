@@ -37,6 +37,20 @@ def test_cat_dumps_file(v):
     assert "l28" in txt and "l29" in txt, "cat tail missing"
 
 
+def test_cat_leaves_prompt_on_fresh_line(v):
+    # readme has no trailing newline; cat must still drop the prompt onto a
+    # fresh line rather than append it to the file's last line.
+    v.write_memory(0x0277, [CLEAR] + _ch("cat read"))   # split: 10-byte buffer
+    v.write_byte(0x00C6, 9)
+    v.run_for(0.3)
+    v.write_memory(0x0277, _ch("me") + [CR])
+    v.write_byte(0x00C6, 3)
+    assert _wait(v, "DISK"), "cat readme did not show the file"
+    disk_row = next(r for r in v.screen_rows() if "DISK" in r)
+    assert disk_row.rstrip().endswith("DISK"), \
+        "prompt was appended to the file's last line: %r" % disk_row.rstrip()
+
+
 def test_less_pages_file(v):
     v.run_for(0.3)
     _send(v, [CLEAR] + _ch("less doc") + [CR])
