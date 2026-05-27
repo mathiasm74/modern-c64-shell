@@ -10,7 +10,8 @@
 #include "shell.h"
 #include "iec.h"
 
-#define CR 0x0D
+#define CR    0x0D
+#define CLEAR 0x93
 
 /* in c_io.s: jump to a loaded program; does not return. */
 void run_program(unsigned int addr);
@@ -288,6 +289,93 @@ void cmd_cp(int argc, char *argv[])
     print_uint(len);
     puts_raw(" bytes");
     chrout(CR);
+}
+
+/* cat <name> - dump a file's bytes to the screen. */
+void cmd_cat(int argc, char *argv[])
+{
+    unsigned char b;
+
+    if (argc < 2) {
+        puts_raw("usage: cat <name>");
+        chrout(CR);
+        return;
+    }
+    iec_set_fa(default_device);
+    iec_set_sa(2);                  /* a read data channel */
+    iec_setname(argv[1]);
+    iec_open();
+    if (iec_status() & ST_NODEV) {
+        puts_raw("device not present");
+        chrout(CR);
+        return;
+    }
+    iec_chkin();
+    for (;;) {
+        b = iec_getbyte();
+        if (iec_status() & ST_TIMEOUT)
+            break;
+        chrout(b);
+        if (iec_status() & ST_EOI)
+            break;
+    }
+    iec_close();
+    iec_clrchn();
+    if (iec_status() & ST_TIMEOUT) {
+        puts_raw("read error");
+        chrout(CR);
+    }
+}
+
+/* Block until a key is pressed; return it. */
+static unsigned char wait_key(void)
+{
+    unsigned char c;
+
+    do {
+        c = getin();
+    } while (c == 0);
+    return c;
+}
+
+/* less <name> - page a file: 22 lines at a time, "-- more --" between pages
+   (any key continues, 'q' quits, each page on a fresh screen). */
+void cmd_less(int argc, char *argv[])
+{
+    unsigned char b, lines = 0;
+
+    if (argc < 2) {
+        puts_raw("usage: less <name>");
+        chrout(CR);
+        return;
+    }
+    iec_set_fa(default_device);
+    iec_set_sa(2);
+    iec_setname(argv[1]);
+    iec_open();
+    if (iec_status() & ST_NODEV) {
+        puts_raw("device not present");
+        chrout(CR);
+        return;
+    }
+    iec_chkin();
+    for (;;) {
+        b = iec_getbyte();
+        if (iec_status() & ST_TIMEOUT)
+            break;
+        chrout(b);
+        if (b == CR && ++lines >= 22) {
+            puts_raw("-- more --");
+            if (wait_key() == 'q')
+                break;
+            chrout(CLEAR);          /* fresh screen for the next page */
+            lines = 0;
+        }
+        if (iec_status() & ST_EOI)
+            break;
+    }
+    iec_close();
+    iec_clrchn();
 }
 
 /* device <n> - set the device ls/load/run talk to (default 8). */

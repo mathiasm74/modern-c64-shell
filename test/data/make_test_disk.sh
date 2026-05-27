@@ -9,6 +9,8 @@
 #                  shell's working RAM at $C000-$CFFF, which a load there would
 #                  corrupt.)
 #   readme (PRG) - a short payload, just a second directory entry.
+#   doc    (SEQ) - 30 lines "l00".."l29"; long enough that `less` pages it
+#                  and `cat` scrolls.
 #
 # Requires c1541 (ships with VICE). Run from anywhere; writes next to itself.
 set -e
@@ -39,9 +41,12 @@ prog += b"hello from prog" + bytes([0x0D, 0x00])
 open(os.path.join(tmp, "prog.prg"), "wb").write(prog)
 open(os.path.join(tmp, "readme.prg"), "wb").write(
     bytes([0x00, 0x20]) + b"C64 SHELL TEST DISK")
+doc = "".join("l%02d\r" % i for i in range(30))   # 30 lines, CR-separated
+open(os.path.join(tmp, "doc.seq"), "wb").write(doc.encode("ascii"))
 PY
 
 c1541 -format "test disk,01" d64 "$here/test.d64" \
       -write "$tmp/prog.prg"  "prog,p" \
-      -write "$tmp/readme.prg" "readme,p"
+      -write "$tmp/readme.prg" "readme,p" \
+      -write "$tmp/doc.seq"   "doc,s"
 echo "wrote $here/test.d64"

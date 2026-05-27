@@ -45,6 +45,8 @@ const struct command shell_commands[] = {
     { "device", cmd_device },
     { "rm",     cmd_rm     },
     { "cp",     cmd_cp     },
+    { "cat",    cmd_cat    },
+    { "less",   cmd_less   },
     { "peek",   cmd_peek   },
     { "poke",   cmd_poke   },
     { "reset",  cmd_reset  },
