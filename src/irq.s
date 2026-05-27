@@ -164,4 +164,4 @@ keytab:
         .byte $39,$69,$6A,$30,$6D,$6B,$6F,$6E   ; 9 i j 0 m k o n
         .byte $2B,$70,$6C,$2D,$2E,$3A,$40,$2C   ; + p l - . : @ ,
         .byte $5C,$2A,$3B,$13,$00,$3D,$5E,$2F   ; POUND * ; HOME RSHIFT = ^ /
-        .byte $31,$5F,$00,$32,$20,$00,$71,$03   ; 1 <- CTRL 2 SPACE CBM q STOP
+        .byte $31,$5F,$09,$32,$20,$00,$71,$03   ; 1 <- CTRL(=TAB) 2 SPC CBM q STOP
