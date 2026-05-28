@@ -43,7 +43,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash
 
 all: $(ROM16K)
 
@@ -107,11 +107,19 @@ test: all
 # Build a One ROM firmware image holding both halves as a single multi-ROM set
 # (kernal.bin + basic.bin, served via two_cs_one_addr -- two active-low chip
 # selects on a shared address bus, matching the C64's KERNAL and BASIC /CS).
-# Output: build/onerom-<board>.bin. Flash with `tools/onerom program`.
+# Output: build/onerom-<board>.bin. Flash with `make onerom-flash`.
 onerom: $(BASIC) $(KERNAL)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --config-file $(ONEROM_CFG) \
 		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
 	@echo "  onerom fw : $$(wc -c < $(BUILD)/onerom-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
+
+# Build the firmware AND flash a connected One ROM in one step. Plug the device
+# in (USB), then run `make onerom-flash`. ONEROM_BOARD must match the connected
+# device. Pass ONEROM_SERIAL='5*' (or similar wildcard) to pick one of several.
+onerom-flash: $(BASIC) $(KERNAL)
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
+		--board $(ONEROM_BOARD) --config-file $(ONEROM_CFG) \
+		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
 
 # Same suite, but show the launch command, monitor traffic, and tracebacks.
 test-verbose: all
