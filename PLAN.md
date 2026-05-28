@@ -281,7 +281,61 @@ When working on a phase:
 
 ---
 
-## Phase 9: Real hardware validation
+## Phase 9: Software compatibility testing
+
+**Goal:** Systematically verify what real-world software needs from the ROMs, and discover what (if anything) our shell ROM is missing. Because we omit BASIC entirely and may trim the KERNAL, some software will break. This phase finds out what, why, and whether it's fixable.
+
+**Why this matters:** Our shell deliberately drops BASIC and possibly trims KERNAL features (tape, some vectors). Lots of software assumes the full stock environment: it calls undocumented KERNAL entry points, reads specific ROM bytes directly, copies ROM routines into RAM, depends on BASIC zero-page variables being initialized, or expects the BASIC ROM to be present at $A000-$BFFF even if it never calls it. We need to catalogue these dependencies empirically rather than guess.
+
+**Test methodology:** Build a test matrix of software categories and run each in VICE (with our ROM) and on real hardware, recording pass/fail/partial and the failure mode. Automate as much as possible via the VICE test harness; some will need manual observation.
+
+**Categories to test (roughly in order of likely compatibility):**
+- *Pure machine-language games* (cartridge-style, self-contained): should mostly work. These set up their own environment and rarely touch BASIC. Examples: most demoscene productions, cartridge game conversions, intros.
+- *Disk-loaded ML games with their own loaders:* test the interaction between our fast loader / KERNAL LOAD and the game's loader. Many games install custom IRQ handlers and custom loaders; watch for conflicts with ours.
+- *Games that use KERNAL LOAD then take over:* these rely on a correct KERNAL load path. Verify our LOAD matches stock behavior closely enough (correct end-address reporting, correct status flags, correct handling of load address).
+- *Multi-load games* (load levels/data during play): stress the KERNAL file I/O routines repeatedly. Watch for state that stock KERNAL maintains that we don't.
+- *Utilities and tools* (ML monitors, copiers, disk tools): often poke deep into KERNAL internals or copy ROM routines. High risk of depending on exact ROM contents.
+- *Demos:* frequently abuse undocumented behavior, exact cycle timing, and direct ROM reads. The hardest compatibility target; failures here are informative even if we choose not to fix them.
+- *BASIC programs:* expected to fail (no BASIC). Document this clearly. Test a few anyway to confirm the failure mode is graceful (clear error, not a crash/hang) and to see whether anything partially works.
+- *BASIC programs with ML components* (hybrid type-ins): confirm failure mode. Note whether the ML portion could theoretically run if loaded differently.
+- *Productivity software* (word processors, spreadsheets): many are ML-based and may work; some embed or require BASIC. Test representative examples.
+
+**Tasks:**
+- Assemble a corpus of test software covering the categories above. Use freely distributable / homebrew / PD software where possible to keep the corpus shareable. Do not commit copyrighted ROMs or commercial game images to the repo; keep a local-only test corpus and document its contents in a manifest.
+- For each title, define a minimal "did it work" check: does it reach its title screen / main loop, does it accept input, does it load subsequent data. Automate via VICE where the check can be expressed as a screen-memory or PC assertion.
+- Record results in a compatibility matrix (`docs/COMPATIBILITY.md`): title, category, VICE result, hardware result, failure mode, root cause if known, fixable (yes/no/maybe).
+- For each failure, diagnose the root cause:
+  - Does it call a KERNAL entry point we didn't implement or stubbed incorrectly?
+  - Does it read a specific ROM byte (e.g. for a version check, or to copy a routine)?
+  - Does it depend on BASIC being present at $A000-$BFFF (even passively)?
+  - Does it depend on BASIC zero-page initialization ($00-$8F)?
+  - Does it depend on KERNAL zero-page / page-2/3 variables we don't set up?
+  - Is it a timing issue (our fast loader or IRQ handler)?
+- Use OneROM telemetry (SWD) on real hardware to capture exactly which ROM addresses failing software reads. This is the killer feature for this phase: you can see precisely what byte a program expected to find and didn't. Log the access pattern leading up to a crash and work backwards.
+- Categorize fixes:
+  - *Cheap fixes:* missing KERNAL entry point, wrong status flag, a ROM byte that some software reads for a version/identity check that we can simply replicate at the same address. Add these to our ROM.
+  - *BASIC-presence fixes:* software that needs some bytes at $A000-$BFFF. Consider whether a small BASIC-compatibility shim (key entry points and identity bytes, not a full interpreter) buys meaningful compatibility cheaply. Decide case by case; do not let this balloon into reimplementing BASIC.
+  - *Won't-fix:* software fundamentally requiring full BASIC, or abusing exact ROM contents/timing in ways incompatible with our design. Document and move on. These users switch to a stock-BASIC OneROM slot.
+- Where a cheap fix exists, implement it and add a regression test so the compatibility matrix stays green.
+- Identify the set of KERNAL entry points and ROM identity bytes that, if present, maximize compatibility for minimum ROM cost. This is the key deliverable: an evidence-based answer to "what's the minimum we must keep to run most ML software."
+
+**Done when:**
+- `docs/COMPATIBILITY.md` exists with results for at least ~20-30 representative titles across the categories.
+- Every failure has a documented root cause (or "undiagnosed" explicitly noted).
+- All cheap fixes are implemented and covered by regression tests.
+- There is a clear, evidence-based statement of the shell ROM's compatibility profile: "runs self-contained ML software and KERNAL-LOAD games; does not run BASIC programs or software requiring [specific list]."
+- Known incompatibilities and the "switch to BASIC slot" guidance are documented for users.
+
+**Risks/notes:**
+- Scope can explode; cap the corpus size and prioritize representative titles over exhaustive coverage. Twenty well-chosen titles teach more than a hundred random ones.
+- Resist the urge to chase every demo. Demos are the hardest target and often not worth fixing; treat them as informative stress tests, not compatibility requirements.
+- Do not commit copyrighted images to the repo. Keep the corpus local; commit only the manifest, results, and any PD/homebrew test programs you have the right to distribute.
+- The OneROM telemetry workflow is worth setting up properly here even if you skipped it earlier; "show me exactly which ROM address this program read right before it died" turns guesswork into a five-minute diagnosis.
+- Some "incompatibilities" will actually be fast-loader bugs from Phase 7 surfacing under real workloads. Keep Phase 7's tests in mind when diagnosing.
+
+---
+
+## Phase 10: Real hardware validation
 
 **Goal:** Ship a ROM that works on real C64s.
 
@@ -309,7 +363,7 @@ When working on a phase:
 
 ---
 
-## Beyond Phase 9
+## Beyond Phase 10
 
 Possible directions if you want to keep going:
 
