@@ -11,12 +11,26 @@ Status legend:
 - **⚠️ partial** — gets past boot, then misbehaves later.
 - **❌ fails** — crashes or wedges before getting useful work done.
 
+Reproducing the ground-truth (stock-ROM) tests: the `Vice` harness now takes
+a `stock_roms=True` argument that omits the `-kernal`/`-basic` flags and
+lets VICE use its bundled C64 ROMs. Pair with `cart=...` for .crt files; for
+.prg files, launch VICE manually with `-autostart <prg>` (the harness
+doesn't have an autostart hook yet -- can add one when the bank-swap work
+lands and we want CI-runnable matrix updates).
+
 ## Matrix
 
-| Title | Format | Category | VICE | Real HW | Failure mode | Fixable? |
-|-------|--------|----------|------|---------|--------------|----------|
-| Ghostbusters | .crt (Magic Desk, type 19) | ML cart | ❌ | — | Calls internal stock KERNAL addresses in `$E3BF`, `$E453`, `$E51B` — they fall inside our own KCODE | maybe (high cost) |
-| fb64-turbo   | .prg, BASIC stub + ML at $0801 | BASIC + ML loader  | ❌ | — | Calls into stock BASIC ROM (7 addresses across `$A1xx-$B9xx`, which is our shell ROM now) and 18 internal KERNAL addresses outside our jump table | no (BASIC-dependent) |
+Two VICE columns: **shell-ROM** is our actual environment (the shell at
+`$A000` + our minimal KERNAL at `$E000`); **stock-ROM** is plain VICE with
+its bundled stock C64 BASIC/KERNAL, which establishes "does this software
+work on a *real* C64 at all?" -- the ground truth that the future OneROM
+bank-swap design needs to deliver. If a title is `✅` in stock-ROM and
+`❌` in shell-ROM, that is a title the bank-swap design will recover.
+
+| Title | Format | Category | VICE (shell) | VICE (stock) | Real HW | Notes |
+|-------|--------|----------|------|------|---------|-------|
+| Ghostbusters | .crt (Magic Desk, type 19) | ML cart | ❌ | ✅ | — | Stock ROMs deliver the full game; our shell fails because the cart calls internal `$E3BF`/`$E453`/`$E51B` inside our KCODE. Won by bank-swap. |
+| fb64-turbo   | .prg, BASIC stub + ML at $0801 | BASIC + ML loader | ❌ | ✅ | — | Autostart-loads under stock BASIC, the screen shows the FB64-TURBO UI. Calls 7 BASIC-ROM addresses + 18 internal KERNAL — won by bank-swap. |
 
 ---
 

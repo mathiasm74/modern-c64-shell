@@ -77,7 +77,8 @@ def ascii_to_petscii(ch):
 
 class Vice:
     def __init__(self, kernal=DEFAULT_KERNAL, basic=DEFAULT_BASIC,
-                 headless=None, verbose=None, disk=None, cart=None):
+                 headless=None, verbose=None, disk=None, cart=None,
+                 stock_roms=False):
         self.kernal = kernal
         self.basic = basic
         self.headless = HEADLESS if headless is None else headless
@@ -92,6 +93,12 @@ class Vice:
         # and lay out the cart's banks; our reset.s honors the CBM80 signature
         # at $8004 and JMPs through $8000 so autostart carts boot.
         self.cart = cart
+        # When True, launch with the stock C64 BASIC+KERNAL ROMs that VICE
+        # ships with (we skip the -kernal/-basic args and let VICE pick its
+        # defaults). Used by the Phase 9 corpus to establish "does this
+        # software work on a *stock* C64 at all?" -- the ground truth that
+        # our future OneROM bank-switch design has to land in.
+        self.stock_roms = stock_roms
         self.proc = None
         self.sock = None
         self.port = None
@@ -106,9 +113,10 @@ class Vice:
         return False
 
     def start(self):
-        for path in (self.kernal, self.basic):
-            if not os.path.exists(path):
-                raise ViceError("missing ROM %s (run `make` first)" % path)
+        if not self.stock_roms:
+            for path in (self.kernal, self.basic):
+                if not os.path.exists(path):
+                    raise ViceError("missing ROM %s (run `make` first)" % path)
         if self.disk is not None and not os.path.exists(self.disk):
             raise ViceError("missing disk image %s" % self.disk)
         if self.cart is not None and not os.path.exists(self.cart):
@@ -128,9 +136,9 @@ class Vice:
             "-jamaction", "1",            # on CPU jam: continue, never block
             "-remotemonitor",
             "-remotemonitoraddress", "ip4://127.0.0.1:%d" % self.port,
-            "-kernal", self.kernal,
-            "-basic", self.basic,
         ]
+        if not self.stock_roms:
+            cmd += ["-kernal", self.kernal, "-basic", self.basic]
         if self.disk is not None:
             cmd += [
                 "-drive8truedrive",           # emulate a real 1541 on the bus
