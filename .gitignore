@@ -16,3 +16,8 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Phase 9 software corpus: copyrighted images don't belong in the repo.
+# We track docs/COMPATIBILITY.md for the results; the actual disk/cart
+# files stay local.
+test/corpus/

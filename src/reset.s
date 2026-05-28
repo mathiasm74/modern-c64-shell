@@ -231,6 +231,30 @@ reset:
 
         cli                     ; allow the timer IRQ (keyboard scan) to run
 
+        ; --- Auto-start an attached cartridge ----------------------------
+        ; If a ROM cart at $8000 carries the "CBM80" signature ($C3,$C2,$CD,
+        ; $38,$30 at $8004-$8008), the C64 convention is to JMP through the
+        ; cold-start vector at $8000. Most plug-in game carts use this so
+        ; the C64 boots straight into the game. Without this check the cart
+        ; just sits there and our shell takes over.
+        lda $8004
+        cmp #$C3
+        bne @no_cart
+        lda $8005
+        cmp #$C2
+        bne @no_cart
+        lda $8006
+        cmp #$CD
+        bne @no_cart
+        lda $8007
+        cmp #$38
+        bne @no_cart
+        lda $8008
+        cmp #$30
+        bne @no_cart
+        jmp ($8000)             ; cart's cold-start vector
+@no_cart:
+
         ; --- Hand control to the C shell ---------------------------------
         ; cc65 expects its data stack pointer initialized to one past the top
         ; of the C stack (it grows downward); BSS zeroed and DATA copied from

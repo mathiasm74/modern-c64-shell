@@ -77,7 +77,7 @@ def ascii_to_petscii(ch):
 
 class Vice:
     def __init__(self, kernal=DEFAULT_KERNAL, basic=DEFAULT_BASIC,
-                 headless=None, verbose=None, disk=None):
+                 headless=None, verbose=None, disk=None, cart=None):
         self.kernal = kernal
         self.basic = basic
         self.headless = HEADLESS if headless is None else headless
@@ -87,6 +87,11 @@ class Vice:
         # replaced the KERNAL, so VICE's KERNAL-trap-based fastpath never fires
         # and the ROM must drive the real IEC serial protocol.
         self.disk = disk
+        # Path to a .crt cartridge image to attach (Phase 9 software-corpus
+        # testing), or None. VICE reads the .crt header to set EXROM/GAME
+        # and lay out the cart's banks; our reset.s honors the CBM80 signature
+        # at $8004 and JMPs through $8000 so autostart carts boot.
+        self.cart = cart
         self.proc = None
         self.sock = None
         self.port = None
@@ -106,6 +111,8 @@ class Vice:
                 raise ViceError("missing ROM %s (run `make` first)" % path)
         if self.disk is not None and not os.path.exists(self.disk):
             raise ViceError("missing disk image %s" % self.disk)
+        if self.cart is not None and not os.path.exists(self.cart):
+            raise ViceError("missing cart image %s" % self.cart)
         x64sc = shutil.which("x64sc")
         if not x64sc:
             raise ViceError("x64sc not found on PATH")
@@ -129,6 +136,8 @@ class Vice:
                 "-drive8truedrive",           # emulate a real 1541 on the bus
                 "-8", os.path.abspath(self.disk),
             ]
+        if self.cart is not None:
+            cmd += ["-cartcrt", os.path.abspath(self.cart)]
         self._log("launch: %s" % " ".join(cmd))
         out = None if self.verbose else subprocess.DEVNULL
         self.proc = subprocess.Popen(cmd, stdout=out, stderr=out)
