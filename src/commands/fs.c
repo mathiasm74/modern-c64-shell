@@ -19,6 +19,13 @@
 /* in c_io.s: jump to a loaded program; does not return. */
 void run_program(unsigned int addr);
 
+/* in src/rbcp/launch.s: copy the RBCP library to RAM and drive a bank swap
+   to the stock-ROM slot, then JMP to `addr`. Never returns. Only meaningful
+   on a One ROM firmware that includes the user/host-control plugin (see
+   cfg/onerom-stock.json); on a stock VICE or a shell-only OneROM, the bank
+   swap is a no-op and the JMP will still happen but in the wrong ROM env. */
+void rbcp_launch_stock(unsigned int addr);
+
 /* Start address of the most recently loaded program, or 0 if none. Lives in
    BSS, so it is zero at boot. */
 static unsigned int load_start;
@@ -340,6 +347,29 @@ void cmd_run(int argc, char *argv[])
     }
     run_program(load_start);
 }
+
+/* runstock - swap the One ROM to stock C64 ROMs and jump to the loaded
+   program. Uses the host-control plugin's RBCP protocol (see src/rbcp/) to
+   load the stock-ROM flash slot into a RAM slot, switch to it, and only
+   then JMP to the program -- so it runs against full stock BASIC+KERNAL.
+   On a shell-only OneROM (or in VICE) the bank swap is a no-op; the JMP
+   still happens but the program sees our shell's ROM environment, not
+   stock. Real use requires `make onerom-stock` flashed to a OneROM. The
+   command never returns; back to the shell needs a power cycle. Lives in
+   CODE2 (KERNAL ROM) so its bytes don't push the BASIC ROM over budget. */
+#pragma code-name (push, "CODE2")
+void cmd_runstock(int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+
+    if (load_start == 0) {
+        puts_raw("nothing loaded");
+        chrout(CR);
+        return;
+    }
+    rbcp_launch_stock(load_start);      /* never returns */
+}
+#pragma code-name (pop)
 
 /* Send "<prefix><arg1>[=<arg2>]" on the default device's command channel.
    Shared by rm ("S0:name"), cd ("CD:path"), and mv ("R0:new=old"). The IEC

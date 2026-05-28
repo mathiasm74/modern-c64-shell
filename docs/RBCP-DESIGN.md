@@ -46,28 +46,46 @@ All the routines are exported; we link only what's referenced.
 
 ## What still has to land
 
-1. **A RAM trampoline + `cmd_runstock` (or rebrand `cmd_run`).** The library
-   must execute from RAM (the ROM under the CPU vanishes mid-call). The flow
-   is: load the program into user RAM; copy the RBCP routines + a tiny
-   launcher to RAM; `SEI`; `JSR rbcp_reset` -> `JSR rbcp_cmd_enter_cmd_resp`
-   -> `JSR rbcp_cmd_load_slot` (flash 3 -> a RAM slot) -> `JSR
-   rbcp_cmd_switch_and_exit`; finally `JMP ($FFFC)` (so stock KERNAL's reset
-   takes over and the cart-style autostart path runs), or `JMP entry` for an
-   ML program that doesn't need stock-KERNAL init.
+1. ~~**A RAM trampoline + `cmd_runstock`.**~~ **Done.** `src/rbcp/launch.s`
+   has the launcher (`_rbcp_launch_stock`, KCODE) and the RAM-side trampoline
+   (in `RBCP_CODE`). The launcher copies the whole library block from ROM
+   ($Exxx) to RAM ($C800), patches the trampoline's final `JMP $0000`
+   operand with the program's entry address, then `JMP`s into the in-RAM
+   trampoline. The trampoline does `SEI -> rbcp_reset -> enter_cmd_resp
+   -> load_slot (3 -> RAM slot 1) -> switch_and_exit -> JMP entry`.
+   `cmd_runstock` in `fs.c` is the C-side glue; the dispatch table has a
+   new `runstock` command. `test_rbcp.py` verifies the layout and that
+   the launcher does the right copy/patch.
 
-2. **Stock ROM bytes.** `test/data/c64-{kernal,basic}.bin`. Not in the repo;
-   the user provides them.
+2. ~~**Stock ROM bytes.**~~ **Provided** at `stock-roms/basic.901226-01.bin`
+   and `stock-roms/kernal.901227-03.bin` (gitignored). `make onerom-stock`
+   builds the 4-slot firmware.
 
-3. **Hardware validation.** VICE has no One ROM model, so the actual swap
-   can only be confirmed on a real One ROM. We can verify in VICE that the
-   shell emits the expected reads in the expected order via a memory watch,
-   but the swap itself only happens on the device.
+3. **Hardware validation.** Still pending. VICE has no One ROM model -- the
+   reads at the command page are inert there, so the trampoline issues the
+   correct protocol bytes but the device-side swap never happens; the SEI'd
+   CPU then hangs in the protocol's poll loop. On a real One ROM with the
+   `user/host-control` plugin in slot 1, the device should see the commands
+   and serve slot 3 (stock ROMs) on the next instruction fetch.
 
 4. **Return-to-shell path.** RBCP's `RBCP_RESET` resets the *device's*
    protocol state, not the host. Returning from a launched program to the
-   shell currently requires a power cycle (the device boots back to slot
-   2 = the shell). A future plugin-side "host reset" command would let us
-   wire a soft return; worth asking about.
+   shell currently requires a power cycle (the device powers up back to
+   slot 2 = the shell). A future plugin-side "host reset" command would let
+   us wire a soft return; worth asking Piers about.
+
+5. **Picking the right RAM slot.** The launcher hard-codes `RAM slot 1` as
+   the target of `load_slot`. The reference bootloader does the same, but
+   it's a guess until hardware testing tells us whether slot 1 is always
+   safe or whether we need to call `rbcp_cmd_get_ram_slot_info_all` first to
+   find a free one. Easy to swap in; tracked as a follow-up.
+
+6. **Per-program entry semantics.** `cmd_runstock` currently `JMP`s
+   straight to `load_start` after the swap, like `cmd_run`. For a BASIC
+   `.prg` we may want `JMP ($FFFC)` instead, or to plant a `CBM80` autostart
+   stub at `$8000` before the swap, or to drive stock BASIC's `RUN` from
+   the program already in RAM. These are per-corpus-title decisions and
+   can be wired in once we have hardware-confirmed working titles.
 
 ## What we did in this session
 

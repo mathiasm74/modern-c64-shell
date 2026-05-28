@@ -59,6 +59,7 @@ const struct command shell_commands[] = {
     { "reset",  cmd_reset  },
     { "rm",     cmd_rm     },
     { "run",    cmd_run    },
+    { "runstock", cmd_runstock },
     { "text",   cmd_text   },
     { "ver",    cmd_ver    },
 };
