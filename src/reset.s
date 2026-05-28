@@ -11,6 +11,7 @@
 .import set_line_ptrs
 .import pet2scr                 ; ASCII -> screen code (shared with CHROUT)
 .import iec_init                ; serial bus port setup
+.importzp DFLTN, DFLTO, LDTND   ; default I/O channels (kernal_stubs.s)
 
 ; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
 .import _main                   ; the C shell (src/shell.c)
@@ -194,6 +195,13 @@ reset:
         sta NDX
         lda #$FF
         sta LSTX
+
+        ; --- Default I/O channels: keyboard in, screen out, no files open
+        lda #$00
+        sta DFLTN               ; input = keyboard
+        sta LDTND               ; no files open
+        lda #$03
+        sta DFLTO               ; output = screen
 
         ; --- CIA #1 timer A: continuous, ~60 Hz, IRQ on underflow --------
         lda #<TIMER_PERIOD

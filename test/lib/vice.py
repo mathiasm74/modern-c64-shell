@@ -175,6 +175,17 @@ class Vice:
         self.sock = self._connect()
         self._drain()
 
+    def run_at(self, addr, seconds=0.5):
+        """Jump to `addr` and let the CPU run for `seconds`, then halt.
+
+        Useful for exercising an ML stub written into RAM -- the shell's CPU
+        state is abandoned (the test will not return to the shell), but for
+        unit tests of KERNAL entry points that is fine. End your stub with an
+        infinite loop so the CPU is parked somewhere predictable on halt.
+        """
+        self._command("r pc=$%04x" % (addr & 0xFFFF))
+        self.run_for(seconds)
+
     # -- monitor plumbing -------------------------------------------------
     def _connect(self, timeout=20.0):
         deadline = time.time() + timeout
