@@ -350,25 +350,22 @@ void cmd_run(int argc, char *argv[])
     run_program(load_start);
 }
 
-/* runstock - swap the One ROM to stock C64 ROMs and jump to the loaded
-   program. Uses the host-control plugin's RBCP protocol (see src/rbcp/) to
-   load the stock-ROM flash slot into a RAM slot, switch to it, and only
-   then JMP to the program -- so it runs against full stock BASIC+KERNAL.
-   On a shell-only OneROM (or in VICE) the bank swap is a no-op; the JMP
-   still happens but the program sees our shell's ROM environment, not
-   stock. Real use requires `make onerom-stock` flashed to a OneROM. The
-   command never returns; back to the shell needs a power cycle. Lives in
-   CODE2 (KERNAL ROM) so its bytes don't push the BASIC ROM over budget. */
+/* runstock - swap the One ROM to stock C64 ROMs and JMP through (FFFC) so
+   stock KERNAL's reset path runs. Uses the host-control plugin's RBCP
+   protocol (see src/rbcp/) to load the stock-ROM flash slot into a RAM
+   slot, switch to it, and only then hand off. After the swap the user
+   lands at stock BASIC's READY. prompt; a program previously loaded into
+   RAM via `load` survives the reset, so `RUN` picks it up. Calling without
+   a previous `load` is fine -- the swap itself is the point; the user
+   gets stock BASIC. Real use requires the host-control plugin (the
+   `make onerom-stock` build); on a shell-only OneROM or in VICE the
+   protocol calls are inert and the JMP through (FFFC) just re-enters our
+   own shell. Never returns; back to the shell needs a power cycle. Lives
+   in CODE2 (KERNAL ROM) so its bytes don't push the BASIC ROM over budget. */
 #pragma code-name (push, "CODE2")
 void cmd_runstock(int argc, char *argv[])
 {
     (void)argc; (void)argv;
-
-    if (load_start == 0) {
-        puts_raw("nothing loaded");
-        chrout(CR);
-        return;
-    }
     rbcp_launch_stock();                /* never returns */
 }
 #pragma code-name (pop)
