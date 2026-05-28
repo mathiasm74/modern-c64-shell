@@ -117,27 +117,15 @@ scan_keyboard:
         lda #KEY_RATE           ; repeat now, then again after the rate
         sta RPTCNT
 @lookup:
-        lda keytab,x
-        beq @ret                ; non-emitting key (ctrl, cbm, ...)
-        ; apply SHIFT: letters -> uppercase; cursor right/down -> left/up.
         ldy SHFLAG
-        beq @emit
-        cmp #$61
-        bcc @notletter
-        cmp #$7B
-        bcs @notletter
-        and #$DF                ; 'a'-'z' -> 'A'-'Z' (clear bit 5)
+        bne @shifted
+        lda keytab,x            ; unshifted decode
         jmp @emit
-@notletter:
-        cmp #$1D                ; cursor right -> cursor left
-        bne @notcrsr
-        lda #$9D
-        jmp @emit
-@notcrsr:
-        cmp #$11                ; cursor down -> cursor up
-        bne @emit
-        lda #$91
+@shifted:
+        lda keytab_shift,x      ; shifted decode: uppercase, !"#$ symbols,
+                                ; <>?[] punctuation, cursor left/up, CLR, ...
 @emit:
+        beq @ret                ; non-emitting key (ctrl, cbm, a shift, ...)
         ldx NDX
         cpx #KEYBUF_MAX
         bcs @ret                ; buffer full
@@ -151,11 +139,23 @@ scan_keyboard:
         rts
 
 ; -------------------------------------------------------------------------
-; keytab - matrix code (0-63) -> ASCII/PETSCII. $00 = key produces no char.
-; Standard C64 matrix order; unshifted only (shift handling comes later).
-; Letter keys deliver LOWERCASE (the boot default is the lowercase charset);
-; uppercase will arrive via SHIFT once that is implemented.
+; keytab / keytab_shift - matrix code (0-63) -> ASCII/PETSCII. $00 = key
+; produces no char. Standard C64 matrix order. Letter keys deliver LOWERCASE
+; (the boot default is the lowercase charset); SHIFT selects keytab_shift,
+; which gives uppercase letters and the C64-native shifted symbols.
+;
+; The shifted symbols are deliberately the *native* C64 layout (shift-1 = !,
+; shift-2 = ", ... shift-6 = &, shift-/ = ?, shift-: = [, shift-; = ]). That
+; is what VICE's default symbolic keyboard mapping expects: it translates a
+; host symbol to the C64 key+shift that natively makes it, so a host '!'
+; arrives as shift-1 and must decode to '!'. (Symbols the C64 makes with a
+; dedicated key -- @ * + and the up-arrow for ^ -- come through those keys
+; unshifted and are already in keytab.) keytab_shift is exported so a test
+; can check the table bytes; the matrix scan itself is GUI-verified.
 ; -------------------------------------------------------------------------
+.export keytab
+.export keytab_shift
+
 keytab:
         .byte $14,$0D,$1D,$88,$85,$86,$87,$11   ; DEL RET CR> F7 F1 F3 F5 CR\/
         .byte $33,$77,$61,$34,$7A,$73,$65,$00   ; 3 w a 4 z s e LSHIFT
@@ -165,3 +165,16 @@ keytab:
         .byte $2B,$70,$6C,$2D,$2E,$3A,$40,$2C   ; + p l - . : @ ,
         .byte $5C,$2A,$3B,$13,$00,$3D,$5E,$2F   ; POUND * ; HOME RSHIFT = ^ /
         .byte $31,$5F,$09,$32,$20,$00,$71,$03   ; 1 <- CTRL(=TAB) 2 SPC CBM q STOP
+
+; SHIFTed decode, same matrix order. Cursor right/down become left/up ($9D/
+; $91); HOME becomes CLR ($93). Punctuation/symbol keys with no useful shifted
+; ASCII (+ - @ * = ^ £ <-) keep their unshifted value.
+keytab_shift:
+        .byte $14,$0D,$9D,$8C,$89,$8A,$8B,$91   ; DEL RET CRSR-L F8 F2 F4 F6 CRSR-U
+        .byte $23,$57,$41,$24,$5A,$53,$45,$00   ; # W A $ Z S E LSHIFT
+        .byte $25,$52,$44,$26,$43,$46,$54,$58   ; % R D & C F T X
+        .byte $27,$59,$47,$28,$42,$48,$55,$56   ; ' Y G ( B H U V
+        .byte $29,$49,$4A,$30,$4D,$4B,$4F,$4E   ; ) I J 0 M K O N
+        .byte $2B,$50,$4C,$2D,$3E,$5B,$40,$3C   ; + P L - > [ @ <
+        .byte $5C,$2A,$5D,$93,$00,$3D,$5E,$3F   ; POUND * ] CLR RSHIFT = ^ ?
+        .byte $21,$5F,$09,$22,$20,$00,$51,$03   ; ! <- CTRL " SPC CBM Q STOP

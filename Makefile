@@ -64,8 +64,10 @@ $(BUILD)/%.o: $(BUILD)/%.s | $(BUILD)
 # the linker config). kernal.bin is the rule target; basic.bin rides along.
 # The cc65 runtime library resolves the stack/zerobss/copydata helpers the
 # compiled C pulls in.
+# -Ln writes a VICE label file (build/labels.txt) for monitor debugging and so
+# tests can locate exported symbols (e.g. keytab_shift) in the ROM.
 $(KERNAL): $(OBJ) $(CFG) | $(BUILD)
-	$(LD) -C $(CFG) $(OBJ) $(RTLIB)
+	$(LD) -C $(CFG) $(OBJ) $(RTLIB) -Ln $(BUILD)/labels.txt
 	@echo "  basic.bin : $$(wc -c < $(BASIC)) bytes"
 	@echo "  kernal.bin: $$(wc -c < $(KERNAL)) bytes"
 
