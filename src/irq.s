@@ -71,7 +71,7 @@ scan_keyboard:
         lda #$FF
         sta found_key           ; assume nothing pressed
         lda #$00
-        sta SHFLAG              ; assume no shift this scan
+        sta SHFLAG              ; clear shift (bit0) and cbm (bit1) flags
         ldx #$00                ; matrix code 0..63
         lda #$FE                ; walking-zero column select, starting PA0
         sta COLMASK
@@ -88,10 +88,18 @@ scan_keyboard:
         beq @shift              ; left shift
         cpx #52
         beq @shift              ; right shift
+        cpx #61
+        beq @cbmkey             ; CBM (Commodore) key
         stx found_key           ; remember this key (last pressed wins)
         jmp @next
 @shift:
-        lda #$01
+        lda SHFLAG
+        ora #$01                ; bit0 = a shift key is held
+        sta SHFLAG
+        jmp @next
+@cbmkey:
+        lda SHFLAG
+        ora #$02                ; bit1 = the CBM key is held
         sta SHFLAG
 @next:
         inx
@@ -117,15 +125,25 @@ scan_keyboard:
         lda #KEY_RATE           ; repeat now, then again after the rate
         sta RPTCNT
 @lookup:
-        ldy SHFLAG
+        lda SHFLAG
+        and #$01                ; shift held?
         bne @shifted
+        lda SHFLAG
+        and #$02                ; CBM held?
+        bne @viacbm
         lda keytab,x            ; unshifted decode
         jmp @emit
 @shifted:
         lda keytab_shift,x      ; shifted decode: uppercase, !"#$ symbols,
-                                ; <>?[] punctuation, cursor left/up, CLR, ...
+        jmp @emit               ; <>?[] punctuation, cursor left/up, CLR, ...
+@viacbm:
+        ; VICE's symbolic keymap sends host '_' as @+CBM (the only CBM combo
+        ; it uses); decode that one to underscore and ignore the rest.
+        cpx #46                 ; the @ key
+        bne @ret
+        lda #$5F                ; underscore
 @emit:
-        beq @ret                ; non-emitting key (ctrl, cbm, a shift, ...)
+        beq @ret                ; non-emitting key (ctrl, a shift/cbm alone, ...)
         ldx NDX
         cpx #KEYBUF_MAX
         bcs @ret                ; buffer full
