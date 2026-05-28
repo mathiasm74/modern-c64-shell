@@ -44,7 +44,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-stock-flash
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-stock-flash onerom-pure-stock-flash
 
 all: $(ROM16K)
 
@@ -139,6 +139,18 @@ onerom-stock-flash: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERN
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
+
+# Baseline / bisect target: flash *only* stock C64 BASIC+KERNAL (plus the
+# system/usb plugin so we can still manage the device). None of our shell,
+# no host-control plugin. Used to answer "is the OneROM hardware+wiring
+# fine?" -- if this boots cleanly to the stock C64 READY prompt but our
+# shell flashes show artifacts, the issue is in our ROM image; if even
+# this shows artifacts, the issue is OneROM-side.
+onerom-pure-stock-flash: $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
+		--board $(ONEROM_BOARD) --config-file cfg/onerom-pure-stock.json \
+		--out $(BUILD)/onerom-pure-stock-$(ONEROM_BOARD).bin
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 
 # Build the firmware AND flash a connected One ROM, then reboot it into the
