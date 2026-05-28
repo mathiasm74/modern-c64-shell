@@ -56,7 +56,9 @@ chrout_impl:
         cmp #$1D
         beq @cright             ; cursor right
         cmp #$9D
-        beq @cleft              ; cursor left
+        bne @notcleft
+        jmp @cleft              ; cursor left (jmp: handler is out of branch range)
+@notcleft:
         cmp #$20
         bcc @done               ; other $00-$1F control codes: ignore
         cmp #$80
@@ -92,8 +94,17 @@ chrout_impl:
         jmp @done
 @bs:
         lda PNTR
-        beq @done               ; already at column 0
+        bne @bs_same            ; not at column 0: step left within the row
+        lda TBLX                ; at column 0: wrap to column 39 of the prev row
+        beq @done               ; top-left corner: nothing to delete
+        dec TBLX
+        lda #39
+        sta PNTR
+        jsr set_line_ptrs
+        jmp @bs_blank
+@bs_same:
         dec PNTR
+@bs_blank:
         ldy PNTR
         lda #SPACE
         sta (PNT),y

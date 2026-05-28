@@ -85,6 +85,27 @@ def test_cursor_left_wraps_past_line_start(v):
     _send(v, [CR])
 
 
+def test_backspace_wraps_past_line_start(v):
+    # The DELETE mirror of the cursor-left wrap: fill row 0 so the cursor sits
+    # at row 1 col 0, then DELETE must step back to row 0 col 39 AND blank that
+    # cell. (Bug: backspace stuck at col 0 -- it dropped the char from the line
+    # buffer but left the screen untouched until you arrowed back, after which
+    # further deletes acted on characters that looked already gone.)
+    _send(v, [CLEAR])
+    _type_n(v, "x", 40)
+    assert v.read_byte(0xD6) == 1 and v.read_byte(0xD3) == 0, \
+        "40 chars did not wrap to row 1 (TBLX=%d PNTR=%d)" % (
+            v.read_byte(0xD6), v.read_byte(0xD3))
+    _send(v, [DEL])
+    assert v.read_byte(0xD6) == 0, "backspace did not move up to the first row"
+    assert v.read_byte(0xD3) == 39, "backspace did not land at column 39"
+    # the erased cell reads as a space (the cursor block sits on it, but
+    # screen_rows masks bit 7)
+    assert v.screen_rows()[0][39] == " ", \
+        "backspace did not erase the character at the wrap boundary"
+    _send(v, [CR])
+
+
 def test_cursor_right_wraps_to_next_line(v):
     # The mirror of the above: from row 0 col 39, RIGHT wraps to row 1 col 0.
     _send(v, [CLEAR])
