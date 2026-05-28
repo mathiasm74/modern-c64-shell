@@ -21,3 +21,7 @@ __pycache__/
 # We track docs/COMPATIBILITY.md for the results; the actual disk/cart
 # files stay local.
 test/corpus/
+
+# Stock C64 ROMs for the host-control bank-swap build (cfg/onerom-stock.json).
+# Freely redistributable from Commodore but we keep the repo source-only.
+stock-roms/

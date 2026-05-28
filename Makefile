@@ -34,7 +34,8 @@ CC65_LIBDIR := $(dir $(shell command -v cc65))../share/cc65/lib
 RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
-SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s
+SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s \
+         src/rbcp/rbcp.s
 SRC_C := src/shell.c src/parser.c src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c
 OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S)) \
          $(patsubst src/%.c,$(BUILD)/%.o,$(SRC_C))
@@ -43,7 +44,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock
 
 all: $(ROM16K)
 
@@ -112,6 +113,19 @@ onerom: $(BASIC) $(KERNAL)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --config-file $(ONEROM_CFG) \
 		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
 	@echo "  onerom fw : $$(wc -c < $(BUILD)/onerom-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
+
+# Build a One ROM firmware that pairs our shell with stock C64 BASIC+KERNAL
+# as a second bank, plus the user/host-control plugin so the shell can drive a
+# runtime bank-switch via the RBCP protocol (see src/rbcp/). Requires stock
+# C64 ROMs at stock-roms/ -- they're freely distributable from Commodore's
+# released sources, drop them in yourself (gitignored).
+ONEROM_STOCK_BASIC  := stock-roms/basic.901226-01.bin
+ONEROM_STOCK_KERNAL := stock-roms/kernal.901227-03.bin
+onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
+	$(ONEROM) firmware build --board $(ONEROM_BOARD) \
+		--config-file cfg/onerom-stock.json \
+		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
+	@echo "  onerom-stock fw : $$(wc -c < $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
 
 # Build the firmware AND flash a connected One ROM, then reboot it into the
 # running (byte-serving) state. Plug the device in (USB), then `make onerom-
