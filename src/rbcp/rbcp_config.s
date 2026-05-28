@@ -1,12 +1,11 @@
 ; rbcp_config.s -- RBCP library configuration for our shell ROM.
 ;
 ; The shell's KERNAL ROM is at $E000-$FFFF; we map the command page and the
-; back-channel region into the first 768 bytes of it. While the device is in
-; command-response mode, reads from those addresses are commands/responses;
-; outside CR mode, the same addresses return whatever ROM bytes we placed
-; there. Our reset.s code lives in the first few hundred bytes of KERNAL, so
-; we keep the command page at $E0xx but route the back-channel further down
-; the address space to a region we don't actively read while in CR mode.
+; back-channel region into the $EDxx-$EFxx fill region near the top, well
+; away from the hot code path. While the device is in command-response mode,
+; reads from those addresses are commands/responses; outside CR mode, the
+; plugin still *watches* those addresses for the knock sequence, which is
+; why we keep them out of our active instruction-fetch range.
 ;
 ; All of this only matters when the host-control plugin is active on the One
 ; ROM device. In VICE (no plugin model), these reads are inert.
@@ -15,17 +14,30 @@
 CONFIG_ROM_BASE_HI = $E0                ; KERNAL ROM at $E000
 CONFIG_ROM_SIZE    = $2000              ; 8KB
 
-; --- Command page (matches the reference's default) ------------------------
-CONFIG_RBCP_CMD_PAGE     = $E0          ; $E0xx reads = command bytes (in CR mode)
+; --- Command page (must be away from our hot code paths) -------------------
+; The c64-boot reference uses $E0, but for *us* that's the worst possible
+; choice: our reset.s code lives at $E000-$E25E, so the CPU is constantly
+; fetching instructions through whichever page is the command page. The
+; host-control plugin watches every read at the command page (it has to, to
+; detect the !RBCP! knock that *enters* CR mode); even with a transparent
+; passthrough, that watch added enough fragility to our boot that small
+; code-layout shifts could push it from "noisy banner" to "black screen"
+; on real hardware.
+;
+; Move command page and back-channel into the $EDxx-$EFxx fill region of
+; KERNAL ROM. Our actual code ends around $EC00; everything past is $FF
+; until the pinned legacy stubs at $FCxx, so the plugin can watch as much
+; as it wants without poking our hot path.
+CONFIG_RBCP_CMD_PAGE     = $EE
 CONFIG_RBCP_CMD_PAGE_REL = CONFIG_RBCP_CMD_PAGE - CONFIG_ROM_BASE_HI
 
-; --- Back-channel region ($E100..$E2FF) -----------------------------------
+; --- Back-channel region ($EF00..$F0FF) -----------------------------------
 ; 512 bytes including the 8-byte response header and 504 bytes of response
-; data. Lives inside our KERNAL ROM at $E100-$E2FF. While the device is in
-; CR mode, the One ROM serves dynamic response bytes here. Outside CR mode
-; those addresses return whatever ROM bytes we put there -- our reset.s
-; banner code is later than $E2FF, so nothing critical sits in this window.
-CONFIG_RBCP_BCH_BASE  = $E100
+; data. Lives at $EF00-$F0FF, immediately above the $EE command page in the
+; KERNAL ROM fill region. Pinned legacy stubs don't start until $FC85 so
+; there's headroom; we just need to stay clear of CODE2 (which currently
+; ends around $ED60 with cmd_runstock).
+CONFIG_RBCP_BCH_BASE  = $EF00
 CONFIG_RBCP_BCH_START = (CONFIG_RBCP_BCH_BASE - (CONFIG_ROM_BASE_HI * $100))
 CONFIG_RBCP_BCH_SIZE  = 512
 

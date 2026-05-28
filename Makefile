@@ -57,6 +57,11 @@ $(BUILD)/%.o: src/%.s | $(BUILD)
 	@mkdir -p $(@D)
 	$(AS) $(ASFLAGS) -o $@ $<
 
+# The RBCP library uses `.include "rbcp_defs.s"` / `.include "rbcp_config.s"`,
+# which ca65 resolves but make doesn't track. Force a rebuild of rbcp.o if
+# either include changes.
+$(BUILD)/rbcp/rbcp.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
+
 # C is compiled to assembly by cc65, then assembled by ca65 (keep the .s so a
 # build leaves the generated assembly around for inspection).
 .PRECIOUS: $(BUILD)/%.s
