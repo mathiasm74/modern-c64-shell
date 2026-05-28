@@ -16,6 +16,7 @@ Status legend:
 | Title | Format | Category | VICE | Real HW | Failure mode | Fixable? |
 |-------|--------|----------|------|---------|--------------|----------|
 | Ghostbusters | .crt (Magic Desk, type 19) | ML cart | ❌ | — | Calls internal stock KERNAL addresses in `$E3BF`, `$E453`, `$E51B` — they fall inside our own KCODE | maybe (high cost) |
+| fb64-turbo   | .prg, BASIC stub + ML at $0801 | BASIC + ML loader  | ❌ | — | Calls into stock BASIC ROM (7 addresses across `$A1xx-$B9xx`, which is our shell ROM now) and 18 internal KERNAL addresses outside our jump table | no (BASIC-dependent) |
 
 ---
 
@@ -79,3 +80,42 @@ will help any software that calls IOINIT / RAMTAS / RESTOR / CINT
 directly via the implementation addresses rather than the official jump
 table. The shell ROM did *not* hang — our IEC send-path timeouts kept
 the bus from wedging even with the cart's garbage execution.
+
+---
+
+## fb64-turbo (BASIC + ML loader)
+
+**File:** `test/corpus/fb64-turbo.prg` (3661 bytes, loads at `$0801`, ends
+`$164B`). Standard BASIC stub: line 31 `SYS 2061` (= `SYS $080D`).
+
+**Boot path:** writing the file to `$0801` and jumping to `$080D` directly,
+the cold-start does:
+- `TSX` followed by a copy loop from `$156E,X` to `$00FC,X` — depends on the
+  BASIC `SYS` having left the stack pointer at a specific value. Without
+  BASIC, the source range it copies from runs past the end of loaded data
+  ($164B) into uninitialized memory.
+- `JMP $1520` — which writes to screen RAM (`$07E6,Y`) and then operates on
+  the BASIC zero-page / pointer area (`$0367-$039B`), which BASIC would have
+  initialized but we never do.
+
+**Static survey of jumps:**
+- **7 distinct addresses in `$A000-$BFFF`** (`$A103, $A27A, $A51C, $A7AE,
+  $A82A, $A9BD, $B9A4`). On a stock C64 these are BASIC ROM routines; in
+  our memory map that range is *our shell ROM*. Any `JSR` there lands in
+  cc65-compiled C code, executing garbage.
+- **18 distinct internal KERNAL addresses** outside our pinned jump table
+  (`$E19F, $E555, $E619, $E725, ...`).
+
+**Observed run:** after `run_at($080D, 3.0s)`, PC lands back at `$FFE4`
+(our GETIN), a single `!` appears at row 0 col 0, and execution otherwise
+returns to the shell's readline loop -- the program installed nothing
+useful, the misdirected calls were absorbed harmlessly because the BASIC
+ROM area now has our valid (but unrelated) shell ROM bytes in it. Notably
+nothing crashed, which is itself diagnostic: the system stayed coherent
+under a flood of misdirected calls.
+
+**Verdict:** *won't fix.* fb64-turbo is fundamentally BASIC-dependent
+(7 BASIC ROM calls, BASIC zero-page assumptions, `SYS`-context stack
+state). This belongs to the "needs full BASIC interpreter" bucket, which
+the project explicitly does not implement -- the user runs this from a
+stock-BASIC OneROM slot.
