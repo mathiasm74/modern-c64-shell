@@ -49,13 +49,20 @@ All the routines are exported; we link only what's referenced.
 1. ~~**A RAM trampoline + `cmd_runstock`.**~~ **Done.** `src/rbcp/launch.s`
    has the launcher (`_rbcp_launch_stock`, KCODE) and the RAM-side trampoline
    (in `RBCP_CODE`). The launcher copies the whole library block from ROM
-   ($Exxx) to RAM ($C800), patches the trampoline's final `JMP $0000`
-   operand with the program's entry address, then `JMP`s into the in-RAM
-   trampoline. The trampoline does `SEI -> rbcp_reset -> enter_cmd_resp
-   -> load_slot (3 -> RAM slot 1) -> switch_and_exit -> JMP entry`.
-   `cmd_runstock` in `fs.c` is the C-side glue; the dispatch table has a
-   new `runstock` command. `test_rbcp.py` verifies the layout and that
-   the launcher does the right copy/patch.
+   ($Exxx) to RAM ($C800), then `JMP`s into the in-RAM trampoline. The
+   trampoline does `SEI -> rbcp_reset -> enter_cmd_resp -> load_slot
+   (3 -> RAM slot 1) -> switch_and_exit -> JMP ($FFFC)`. Going through the
+   stock-KERNAL reset vector lets stock IOINIT/RAMTAS/CINT clean up the
+   state our shell left behind ($D018 charset bank, IRQ vector, screen
+   contents) -- a direct `JMP load_start` instead skipped all that and put
+   the user in front of a half-initialized stock environment, with our
+   shell's banner ghosting through and scattered `$A0` reverse-video
+   artifacts from garbage execution (the first-hardware-test finding).
+   `cmd_runstock` in `fs.c` is the C-side glue (in CODE2 / KERNAL ROM to
+   fit the BASIC ROM budget); the dispatch table has a new `runstock`
+   command. The loaded program survives the reset in RAM at `load_start`,
+   so `RUN` from the stock BASIC prompt picks it up. `test_rbcp.py`
+   verifies the segment layout and the copy step.
 
 2. ~~**Stock ROM bytes.**~~ **Provided** at `stock-roms/basic.901226-01.bin`
    and `stock-roms/kernal.901227-03.bin` (gitignored). `make onerom-stock`
@@ -80,12 +87,13 @@ All the routines are exported; we link only what's referenced.
    safe or whether we need to call `rbcp_cmd_get_ram_slot_info_all` first to
    find a free one. Easy to swap in; tracked as a follow-up.
 
-6. **Per-program entry semantics.** `cmd_runstock` currently `JMP`s
-   straight to `load_start` after the swap, like `cmd_run`. For a BASIC
-   `.prg` we may want `JMP ($FFFC)` instead, or to plant a `CBM80` autostart
-   stub at `$8000` before the swap, or to drive stock BASIC's `RUN` from
-   the program already in RAM. These are per-corpus-title decisions and
-   can be wired in once we have hardware-confirmed working titles.
+6. **Autostart.** `runstock` currently lands at the stock BASIC `READY.`
+   prompt and expects the user to type `RUN` to start a loaded `.prg`.
+   Cleaner: plant a `CBM80` autostart stub at `$8000-$8009` before the
+   swap (cold-start vector + signature + a tiny `JMP load_start`); stock
+   KERNAL's reset detects the signature and JMPs through the cold vector,
+   running the program automatically. Easy follow-up once the swap itself
+   is fully validated.
 
 ## What we did in this session
 

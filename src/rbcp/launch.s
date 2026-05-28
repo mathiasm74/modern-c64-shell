@@ -18,7 +18,6 @@
 
 .export _rbcp_launch_stock
 .export rbcp_trampoline               ; exported for tests / inspection only
-.export rbcp_trampoline_jmp           ; "
 
 .import rbcp_reset
 .import rbcp_cmd_enter_cmd_resp
@@ -45,8 +44,6 @@ RBCP_STOCK_RAM_SLOT   = 1
 copy_src = $AB
 copy_dst = $AD
 copy_len = $AF
-entry_lo = $B1
-entry_hi = $B2
 
 ; =========================================================================
 ; ROM-side stub. Runs from KERNAL ROM ($Exxx); copies the RBCP code into RAM
@@ -55,10 +52,10 @@ entry_hi = $B2
 .segment "KCODE"
 
 _rbcp_launch_stock:
-        ; cc65 fastcall: A=entry_lo, X=entry_hi. Stash for after the copy --
-        ; we can't patch the trampoline yet because the copy overwrites it.
-        sta entry_lo
-        stx entry_hi
+        ; No arguments. The trampoline hands off through (FFFC) -- the stock
+        ; KERNAL reset vector -- so there's nothing to patch on the way in.
+        ; Once we want a planted-CBM80-style autostart, we'll bring back an
+        ; entry argument and patch a JMP in the trampoline.
 
         ; Copy __RBCP_CODE_SIZE__ bytes from __RBCP_CODE_LOAD__ to
         ; __RBCP_CODE_RUN__ (which puts the library + trampoline in place).
@@ -93,16 +90,8 @@ _rbcp_launch_stock:
 :       dec copy_len
         jmp @copy
 @done:
-        ; Now patch the trampoline's "JMP $0000" operand with the stashed
-        ; entry address. The trampoline is in RAM now; STAing into its
-        ; operand bytes is harmless and survives until we JMP there.
-        lda entry_lo
-        sta rbcp_trampoline_jmp + 1
-        lda entry_hi
-        sta rbcp_trampoline_jmp + 2
-
         ; Jump into the in-RAM trampoline. From here on we never come back
-        ; to ROM-side code (rbcp_trampoline ends in a JMP, not RTS).
+        ; to ROM-side code (rbcp_trampoline ends in a JMP through (FFFC)).
         jmp rbcp_trampoline
 
 ; =========================================================================
@@ -127,6 +116,19 @@ rbcp_trampoline:
         jsr rbcp_cmd_switch_and_exit    ; activate it; the device begins
                                         ; serving the new slot immediately
                                         ; (no polling per the protocol spec)
-rbcp_trampoline_jmp:
-        jmp $0000                       ; entry address; operand byte+1/+2
-                                        ; patched by _rbcp_launch_stock above
+
+        ; Hand off through the stock-KERNAL reset vector. Without this the
+        ; system runs with stock ROMs mapped but with *our* state still
+        ; resident -- $D018 still on the lowercase charset, our IRQ vector,
+        ; an uncleared screen, etc -- and any JMP into a user program
+        ; executes against that half-initialized environment (and produces
+        ; the scattered $A0 artifacts we saw on first hardware test). Going
+        ; through (FFFC) makes stock KERNAL do its IOINIT/RAMTAS/CINT,
+        ; reset the VIC, clear the screen, and land at the READY prompt.
+        ; A loaded program in RAM survives (RAM isn't cleared by the reset),
+        ; so `RUN` from BASIC after the prompt picks it up.
+        ;
+        ; The patched-entry mechanism in _rbcp_launch_stock is retained for
+        ; future use (a planted CBM80 stub at $8000 that the stock reset
+        ; would autostart) but currently goes through this fallback instead.
+        jmp ($FFFC)

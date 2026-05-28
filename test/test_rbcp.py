@@ -44,54 +44,38 @@ def test_rbcp_segment_layout(v):
         "RBCP_CODE size $%X looks wrong (expect roughly 0x200-0x300)" % size
     # The trampoline lives inside RBCP_CODE so it ends up in RAM too.
     tramp = L["rbcp_trampoline"]
-    jmp = L["rbcp_trampoline_jmp"]
     assert run <= tramp < run + size, "rbcp_trampoline $%04X outside RBCP_RAM" % tramp
-    assert tramp <= jmp < tramp + 0x40, \
-        "rbcp_trampoline_jmp $%04X looks too far from the trampoline start" % jmp
 
 
-def test_launch_copies_library_and_patches_jmp(v):
-    # _rbcp_launch_stock copies the whole RBCP_CODE block to its run-address
-    # then patches the trampoline's JMP operand with the entry address it
-    # was called with. We verify both. The launcher then JMPs into the
-    # trampoline, which SEIs and starts banging on the command page; in
-    # VICE that hangs in the protocol's poll loop, but the copy + patch
-    # have already happened by then.
+def test_launch_copies_library_to_ram(v):
+    # _rbcp_launch_stock copies the whole RBCP_CODE block (library + the
+    # in-RAM trampoline) from its KERNAL ROM home to its run-address in
+    # RBCP_RAM, then JMPs into the trampoline. The trampoline's job from
+    # there is RBCP-side -- protocol calls then a JMP through (FFFC) -- and
+    # in VICE without a One ROM model the protocol calls time out and
+    # control falls through. What we can verify in VICE is that the copy
+    # happened correctly.
     L = _labels()
     launch = L["_rbcp_launch_stock"]
     load = L["__RBCP_CODE_LOAD__"]
     run = L["__RBCP_CODE_RUN__"]
-    jmp = L["rbcp_trampoline_jmp"]
 
-    # Stub at $1000: LDA #lo; LDX #hi; JSR launch; JMP self (if launch ever
-    # returned, which it doesn't). Pass entry = $4321 as a sentinel.
-    stub = [0xA9, 0x21,            # LDA #$21
-            0xA2, 0x43,            # LDX #$43
-            0x20, launch & 0xFF, (launch >> 8) & 0xFF,
-            0x4C, 0x07, 0x10]      # JMP $1007 (the JMP itself)
+    # Stub at $1000: JSR launch; spin if it ever returns (it doesn't).
+    stub = [0x20, launch & 0xFF, (launch >> 8) & 0xFF,
+            0x4C, 0x03, 0x10]      # JMP $1003 (the JMP itself)
     v.write_memory(0x1000, stub)
     v.run_at(0x1000, 0.5)
 
-    # After the launch runs to completion, the trampoline SEIs and bangs on
-    # the command page; with no One ROM responding in VICE, the protocol's
-    # poll loop times out and the trampoline ends up `JMP`ing to the
-    # sentinel entry address ($4321 here), which is uninitialized RAM --
-    # garbage execution may well STA $01 with random values and unmap our
-    # KERNAL ROM. Restore the standard mapping ($37) before reading ROM so
-    # we see ROM bytes, not whatever's underneath in RAM.
+    # After the launch runs, the trampoline's JMP (FFFC) re-enters our shell
+    # (since stock KERNAL isn't actually mapped in VICE). Garbage execution
+    # along the way may have touched $01 and unmapped the KERNAL view;
+    # restore the standard mapping before reading ROM.
     v.write_byte(0x01, 0x37)
 
-    # The library's first byte (LDA opcode $AD for the first export rbcp_knock)
-    # should now match between ROM source and RAM destination.
+    # The library's first byte (LDA opcode $AD for the first export
+    # rbcp_knock) should now match between ROM source and RAM destination.
     rom_first = v.read_byte(load)
     ram_first = v.read_byte(run)
     assert rom_first == ram_first, \
         "library first byte mismatch: ROM=$%02X RAM=$%02X" % (rom_first, ram_first)
     assert rom_first == 0xAD, "expected library to start with LDA absolute ($AD)"
-
-    # The trampoline's JMP operand should now be $4321 (low/high in that order).
-    operand = v.read_memory(jmp, 3)
-    assert operand[0] == 0x4C, "trampoline first byte should still be JMP ($4C)"
-    assert operand[1] == 0x21 and operand[2] == 0x43, \
-        "trampoline JMP not patched: got %s, expected [$4C, $21, $43]" % (
-            [hex(b) for b in operand])

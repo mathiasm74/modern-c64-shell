@@ -19,12 +19,14 @@
 /* in c_io.s: jump to a loaded program; does not return. */
 void run_program(unsigned int addr);
 
-/* in src/rbcp/launch.s: copy the RBCP library to RAM and drive a bank swap
-   to the stock-ROM slot, then JMP to `addr`. Never returns. Only meaningful
-   on a One ROM firmware that includes the user/host-control plugin (see
-   cfg/onerom-stock.json); on a stock VICE or a shell-only OneROM, the bank
-   swap is a no-op and the JMP will still happen but in the wrong ROM env. */
-void rbcp_launch_stock(unsigned int addr);
+/* in src/rbcp/launch.s: copy the RBCP library to RAM, drive a bank swap to
+   the stock-ROM slot, and JMP through (FFFC) so stock KERNAL does its own
+   reset/init. The loaded program (if any) stays in RAM at load_start --
+   `RUN` from BASIC after the prompt picks it up. Never returns. Only
+   meaningful on a One ROM firmware that includes the user/host-control
+   plugin (cfg/onerom-stock.json); without it, the protocol calls are inert
+   and the JMP through (FFFC) just re-enters our own shell. */
+void rbcp_launch_stock(void);
 
 /* Start address of the most recently loaded program, or 0 if none. Lives in
    BSS, so it is zero at boot. */
@@ -367,7 +369,7 @@ void cmd_runstock(int argc, char *argv[])
         chrout(CR);
         return;
     }
-    rbcp_launch_stock(load_start);      /* never returns */
+    rbcp_launch_stock();                /* never returns */
 }
 #pragma code-name (pop)
 
