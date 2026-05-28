@@ -4,6 +4,16 @@
   "description": "ROM-resident C64 command shell (BASIC+KERNAL replacement)",
   "chip_sets": [
     {
+      "type": "single",
+      "chips": [
+        {
+          "file": "https://images.onerom.org/plugins/system/usb/v0.1.2/plugin.bin",
+          "type": "system_plugin",
+          "size_handling": "pad"
+        }
+      ]
+    },
+    {
       "type": "multi",
       "serve_alg": "two_cs_one_addr",
       "chips": [

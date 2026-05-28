@@ -113,13 +113,16 @@ onerom: $(BASIC) $(KERNAL)
 		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
 	@echo "  onerom fw : $$(wc -c < $(BUILD)/onerom-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
 
-# Build the firmware AND flash a connected One ROM in one step. Plug the device
-# in (USB), then run `make onerom-flash`. ONEROM_BOARD must match the connected
-# device. Pass ONEROM_SERIAL='5*' (or similar wildcard) to pick one of several.
+# Build the firmware AND flash a connected One ROM, then reboot it into the
+# running (byte-serving) state. Plug the device in (USB), then `make onerom-
+# flash`. ONEROM_BOARD must match the connected device. Pass ONEROM_SERIAL='5*'
+# (or similar wildcard) to pick one of several. The reboot needs the USB system
+# plugin embedded in the firmware (cfg/onerom.json -- slot 0).
 onerom-flash: $(BASIC) $(KERNAL)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file $(ONEROM_CFG) \
 		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 
 # Same suite, but show the launch command, monitor traffic, and tracebacks.
 test-verbose: all
