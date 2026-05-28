@@ -44,7 +44,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-stock-flash
 
 all: $(ROM16K)
 
@@ -126,6 +126,15 @@ onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
 		--config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
 	@echo "  onerom-stock fw : $$(wc -c < $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
+
+# Build the bank-swap firmware AND flash a connected One ROM, then reboot it
+# into running mode. Same shape as onerom-flash, but uses cfg/onerom-stock.json
+# so the device gets host-control + the stock-ROM second bank.
+onerom-stock-flash: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
+		--board $(ONEROM_BOARD) --config-file cfg/onerom-stock.json \
+		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 
 # Build the firmware AND flash a connected One ROM, then reboot it into the
 # running (byte-serving) state. Plug the device in (USB), then `make onerom-
