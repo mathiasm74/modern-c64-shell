@@ -39,6 +39,7 @@ All tools must be on PATH. Verify with `make check-tools`.
 make            # builds build/kernal.bin and build/basic.bin
 make test       # builds and runs the test suite
 make run        # builds and launches VICE with the ROM
+make onerom     # builds a One ROM firmware image from both halves
 make clean      # removes build artifacts
 ```
 
@@ -46,7 +47,13 @@ The build produces two 8KB binaries that together form the 16KB ROM:
 - `build/kernal.bin` maps to $E000-$FFFF.
 - `build/basic.bin` maps to $A000-$BFFF (despite the name, this is not BASIC; it's the shell code).
 
-For OneROM flashing, the two are concatenated: `cat build/basic.bin build/kernal.bin > build/rom16k.bin`.
+For a raw 16KB blob (EPROM/EasyFlash) the two are concatenated: `cat build/basic.bin build/kernal.bin > build/rom16k.bin`.
+
+### One ROM firmware
+
+`make onerom` builds a flashable [One ROM](https://onerom.org/) firmware image with the `tools/onerom` CLI (a Mach-O universal binary, kept untracked — it's ~10MB). It reads `cfg/onerom.json` and writes `build/onerom-<board>.bin`. Both halves live in **one** firmware as a single multi-ROM set: `kernal.bin` and `basic.bin` are two 2364s served by the `two_cs_one_addr` algorithm — two active-low chip selects (the C64's KERNAL `/CS` at U4 and BASIC `/CS` at U3) over the shared A0–A12 bus. (A single CS line can't distinguish KERNAL vs BASIC vs neither, so it genuinely needs both selects; the One ROM CLI also rejects mixing active-low/active-high in one set.) ROM order in the config is the CS-pin order — `kernal.bin` first, `basic.bin` second.
+
+The board defaults to `fire-24-e`; override for your hardware: `make onerom ONEROM_BOARD=fire-28-a` (`tools/onerom scan --list-boards` lists them). Flash with `tools/onerom program --board <board> --config-file cfg/onerom.json` (build + program in one step), or `tools/onerom program --firmware build/onerom-<board>.bin`. The build fetches a base firmware release from the One ROM servers (cached after the first run).
 
 `make run` delegates to `./run.sh`, which builds the ROM (unless `SKIP_BUILD=1`) and launches `x64sc -kernal build/kernal.bin -basic build/basic.bin`. Run `./run.sh` directly to forward extra VICE arguments, e.g. `./run.sh -warp`. To try the disk commands, attach an image with `DISK=`: `make run DISK=test/data/test.d64` (or `DISK=... ./run.sh`). It mounts a fresh writable *copy* (`build/run-disk.d64`) with `-drive8truedrive`, so a session's `cp`/`rm` never mutate the tracked image. True drive emulation is required — we replaced the KERNAL, so VICE's virtual-device traps never fire. Without a disk, typing `ls` reports a read error after a short timeout rather than wedging.
 

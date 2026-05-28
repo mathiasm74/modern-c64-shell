@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "C64 Shell ROM",
+  "description": "ROM-resident C64 command shell (BASIC+KERNAL replacement)",
+  "chip_sets": [
+    {
+      "type": "multi",
+      "serve_alg": "two_cs_one_addr",
+      "chips": [
+        { "file": "build/kernal.bin", "type": "Chip2364", "cs1": "active_low" },
+        { "file": "build/basic.bin",  "type": "Chip2364", "cs1": "active_low" }
+      ]
+    }
+  ]
+}

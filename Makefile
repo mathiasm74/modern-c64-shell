@@ -15,6 +15,13 @@ VICE   := x64sc
 BUILD  := build
 CFG    := cfg/rom.cfg
 
+# One ROM firmware build (see `make onerom`). The board defaults to a 24-pin
+# Fire; override per your hardware, e.g. `make onerom ONEROM_BOARD=fire-28-a`.
+# `tools/onerom scan --list-boards` lists known boards.
+ONEROM       := tools/onerom
+ONEROM_BOARD ?= fire-24-e
+ONEROM_CFG   := cfg/onerom.json
+
 ASFLAGS   := --cpu 6502
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
@@ -36,7 +43,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose
+.PHONY: all clean check-tools run test test-verbose onerom
 
 all: $(ROM16K)
 
@@ -96,6 +103,15 @@ run: all
 
 test: all
 	$(PYTHON) test/run_tests.py
+
+# Build a One ROM firmware image holding both halves as a single multi-ROM set
+# (kernal.bin + basic.bin, served via two_cs_one_addr -- two active-low chip
+# selects on a shared address bus, matching the C64's KERNAL and BASIC /CS).
+# Output: build/onerom-<board>.bin. Flash with `tools/onerom program`.
+onerom: $(BASIC) $(KERNAL)
+	$(ONEROM) firmware build --board $(ONEROM_BOARD) --config-file $(ONEROM_CFG) \
+		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
+	@echo "  onerom fw : $$(wc -c < $(BUILD)/onerom-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
 
 # Same suite, but show the launch command, monitor traffic, and tracebacks.
 test-verbose: all
