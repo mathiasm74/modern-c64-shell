@@ -14,21 +14,48 @@
 /* in c_io.s: reboot through the reset vector; does not return. */
 void soft_reset(void);
 
-/* List every registered command, read straight from the dispatch table so
-   there is no separate list to keep in sync as commands are added. */
+/* List every registered command, read straight from the dispatch table (which
+   shell.c keeps sorted alphabetically) so the columns read top-to-bottom,
+   left-to-right. Three 12-wide columns indented 2 spaces fits in 40: 2 + 3*12
+   = 38, leaving a 2-column right margin. The function lives in CODE2 (KERNAL
+   ROM) so its bytes don't squeeze the smaller BASIC ROM. */
+#define HELP_INDENT  2
+#define HELP_COLS    3
+#define HELP_COL_W  12
+
+#pragma code-name (push, "CODE2")
 void cmd_help(int argc, char *argv[])
 {
-    unsigned char i;
+    unsigned char rows, row, col, i, n;
+    const char *name;
     (void)argc; (void)argv;
 
+    rows = (shell_command_count + HELP_COLS - 1) / HELP_COLS;
     puts_raw("Commands:");
     chrout(CR);
-    for (i = 0; i < shell_command_count; ++i) {
-        puts_raw("  ");
-        puts_raw(shell_commands[i].name);
+    for (row = 0; row < rows; ++row) {
+        for (n = 0; n < HELP_INDENT; ++n)
+            chrout(' ');
+        for (col = 0; col < HELP_COLS; ++col) {
+            i = col * rows + row;
+            if (i >= shell_command_count)
+                break;
+            name = shell_commands[i].name;
+            n = 0;
+            while (name[n]) {
+                chrout(name[n]);
+                ++n;
+            }
+            while (n < HELP_COL_W) {
+                chrout(' ');
+                ++n;
+            }
+        }
         chrout(CR);
     }
 }
+
+#pragma code-name (pop)
 
 void cmd_clear(int argc, char *argv[])
 {

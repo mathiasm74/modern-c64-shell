@@ -341,33 +341,69 @@ void cmd_run(int argc, char *argv[])
     run_program(load_start);
 }
 
-/* rm <name> - scratch a file: write "S0:<name>" to the drive command channel
-   (channel 15). The IEC layer folds the name to uppercase PETSCII to match
-   the directory. */
+/* Send "<prefix><arg1>[=<arg2>]" on the default device's command channel.
+   Shared by rm ("S0:name"), cd ("CD:path"), and mv ("R0:new=old"). The IEC
+   layer folds the name to uppercase PETSCII as it sends. */
+static char cmd_buf[40];
+
+static void send_command(const char *prefix, const char *arg1, const char *arg2)
+{
+    unsigned char i = 0, j;
+
+    while (*prefix && i < sizeof(cmd_buf) - 1)
+        cmd_buf[i++] = *prefix++;
+    for (j = 0; arg1[j] && i < sizeof(cmd_buf) - 2; ++j)
+        cmd_buf[i++] = arg1[j];
+    if (arg2 != 0) {
+        cmd_buf[i++] = '=';
+        for (j = 0; arg2[j] && i < sizeof(cmd_buf) - 1; ++j)
+            cmd_buf[i++] = arg2[j];
+    }
+    cmd_buf[i] = 0;
+
+    iec_set_fa(default_device);
+    iec_setname(cmd_buf);
+    iec_command();
+    if (iec_status() & ST_NODEV)
+        report_no_device(default_device);
+}
+
+/* rm <name> - scratch a file via the drive command channel ("S0:<name>"). */
 void cmd_rm(int argc, char *argv[])
 {
-    static char cmd[24];
-    unsigned char i, j;
-
     if (argc < 2) {
         puts_raw("usage: rm <name>");
         chrout(CR);
         return;
     }
-    cmd[0] = 's';               /* folded to 'S' on the way out */
-    cmd[1] = '0';
-    cmd[2] = ':';
-    i = 3;
-    for (j = 0; argv[1][j] && i < sizeof(cmd) - 1; ++j)
-        cmd[i++] = argv[1][j];
-    cmd[i] = 0;
+    send_command("s0:", argv[1], 0);
+}
 
-    iec_set_fa(default_device);
-    iec_setname(cmd);
-    iec_command();
-    if (iec_status() & ST_NODEV) {
-        report_no_device(default_device);
+/* mv <old> <new> - rename a file via the drive command channel
+   ("R0:<new>=<old>"). */
+void cmd_mv(int argc, char *argv[])
+{
+    if (argc < 3) {
+        puts_raw("usage: mv <old> <new>");
+        chrout(CR);
+        return;
     }
+    send_command("r0:", argv[2], argv[1]);
+}
+
+/* cd <path> - change the working path on the drive ("CD:<path>"). A 1541
+   answers ?SYNTAX ERROR and stays put; network-side drives like the Meatloaf
+   navigate. Whatever the drive does with it shows up on the next dir / pwd.
+   Note the IEC layer folds the path to uppercase, so case-sensitive URL
+   segments may need a follow-up. */
+void cmd_cd(int argc, char *argv[])
+{
+    if (argc < 2) {
+        puts_raw("usage: cd <path>");
+        chrout(CR);
+        return;
+    }
+    send_command("cd:", argv[1], 0);
 }
 
 /* cp <src> <dst> - copy a file. Reads all of src into user RAM at $0800, then

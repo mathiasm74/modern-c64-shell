@@ -8,7 +8,9 @@ void cmd_pwd(int argc, char *argv[]);    /* print the disk name             */
 void cmd_load(int argc, char *argv[]);   /* read a PRG into memory          */
 void cmd_run(int argc, char *argv[]);    /* run the loaded program          */
 void cmd_device(int argc, char *argv[]); /* set the default IEC device      */
+void cmd_cd(int argc, char *argv[]);     /* drive-side change directory     */
 void cmd_rm(int argc, char *argv[]);     /* scratch a file                  */
+void cmd_mv(int argc, char *argv[]);     /* rename a file                   */
 void cmd_cp(int argc, char *argv[]);     /* copy a file                     */
 void cmd_cat(int argc, char *argv[]);    /* dump a file to the screen       */
 void cmd_less(int argc, char *argv[]);   /* page a file                     */

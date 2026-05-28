@@ -31,34 +31,40 @@
 #define HIST_N   8              /* commands remembered for up/down recall   */
 
 /* The command table: name -> handler, walked in order both for dispatch and
-   by `help`. It is const, so it lives in ROM (RODATA). Add a command here and
-   help picks it up automatically. */
+   by `help`. Sorted alphabetically so `help` (which displays it column-major
+   over three columns) reads naturally down each column. Lives in ROM and
+   spends its bytes in the KERNAL ROM (RODATA2) to leave room in the smaller
+   BASIC ROM, where the rest of the cc65 output sits. */
+#pragma rodata-name (push, "RODATA2")
 const struct command shell_commands[] = {
-    { "help",  cmd_help  },
-    { "clear", cmd_clear },
-    { "echo",  cmd_echo  },
-    { "ver",   cmd_ver   },
-    { "exit",  cmd_exit  },
-    { "dir",    cmd_dir    },
-    { "ls",     cmd_ls     },
-    { "pwd",    cmd_pwd    },
-    { "load",   cmd_load   },
-    { "run",    cmd_run    },
-    { "device", cmd_device },
-    { "rm",     cmd_rm     },
-    { "cp",     cmd_cp     },
+    { "bg",     cmd_bg     },
+    { "border", cmd_border },
     { "cat",    cmd_cat    },
+    { "cd",     cmd_cd     },
+    { "clear",  cmd_clear  },
+    { "cp",     cmd_cp     },
+    { "device", cmd_device },
+    { "dir",    cmd_dir    },
+    { "echo",   cmd_echo   },
+    { "exit",   cmd_exit   },
+    { "help",   cmd_help   },
     { "less",   cmd_less   },
+    { "load",   cmd_load   },
+    { "ls",     cmd_ls     },
+    { "mv",     cmd_mv     },
     { "peek",   cmd_peek   },
     { "poke",   cmd_poke   },
-    { "reset",  cmd_reset  },
-    { "border", cmd_border },
-    { "bg",     cmd_bg     },
-    { "text",   cmd_text   },
     { "prompt", cmd_prompt },
+    { "pwd",    cmd_pwd    },
+    { "reset",  cmd_reset  },
+    { "rm",     cmd_rm     },
+    { "run",    cmd_run    },
+    { "text",   cmd_text   },
+    { "ver",    cmd_ver    },
 };
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);
+#pragma rodata-name (pop)
 
 /* The current command line, NUL-terminated by readline() and then carved into
    tokens in place by parse_line(). */

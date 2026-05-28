@@ -190,11 +190,11 @@ _iec_set_sa:                    ; void iec_set_sa(unsigned char sa)
 _iec_setname:                   ; void iec_setname(const char *name)  A=lo X=hi
         sta FNADR
         stx FNADR+1
-        ldy #$00                ; measure length up to the NUL (cap 30: room
-@scan:  lda (FNADR),y           ; for a 16-char name plus a command prefix)
-        beq @done
+        ldy #$00                ; measure length up to the NUL (cap 40: leaves
+@scan:  lda (FNADR),y           ; room for `R0:NEWNAME=OLDNAME` -- two 16-char
+        beq @done               ; CBM names plus the rename prefix/separator)
         iny
-        cpy #30
+        cpy #40
         bne @scan
 @done:  sty FNLEN
         rts
