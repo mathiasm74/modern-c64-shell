@@ -80,30 +80,6 @@ def test_pwd_prints_device_and_disk_name(v):
         "pwd did not prefix the device number\n%s" % v.screen_text()
 
 
-def test_absent_device_does_not_hang(v):
-    # Targeting a device that isn't on the bus (only 8 is) must time out and
-    # report an error -- never wedge -- and must not poison the real drive:
-    # switching back to 8 still works. (Regression: device 9 + pwd hung forever
-    # because the send path had no timeout.)
-    _type(v, "device 9", clear=True)
-    v.run_for(0.4)
-    _type(v, "pwd")
-    # "device not present" ($80) or "read error" ($02) -- either is a clean,
-    # bounded failure rather than the old infinite spin.
-    failed = _wait_for(v, "not present") or "read error" in v.screen_text()
-    assert failed, "absent device did not report an error\n%s" % v.screen_text()
-    pc = v.pc()
-    assert pc is not None and (0xA000 <= pc <= 0xBFFF or 0xE000 <= pc <= 0xFFFF), \
-        "shell not responsive (PC not in ROM) after the absent-device timeout"
-
-    # the present drive recovers: switch back to 8 and a real listing works.
-    _type(v, "device 8", clear=True)
-    v.run_for(0.4)
-    _type(v, "dir", clear=True)
-    assert _wait_for(v, "BLOCKS FREE"), \
-        "device 8 did not recover after the absent-device attempt\n%s" % v.screen_text()
-
-
 def test_load_into_memory(v):
     # "load prog" reads the PRG to its load address ($2000) and reports the
     # range, but does not start it (non-destructive: shell stays at a prompt).

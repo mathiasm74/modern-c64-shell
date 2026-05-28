@@ -90,6 +90,35 @@ static void print_hex16(unsigned int v)
     print_hex_nybble(v);
 }
 
+/* Report that a device didn't answer on the bus, naming the unit. */
+static void report_no_device(unsigned char dev)
+{
+    puts_raw("device ");
+    print_uint(dev);
+    puts_raw(" not present");
+    chrout(CR);
+}
+
+/* Probe whether `dev` is on the bus: open its directory and look for the
+   no-device timeout, then leave the bus idle. Returns 1 if it answered. A
+   present-but-diskless drive still counts as present (it acknowledges; "no
+   disk" only surfaces when something tries to read). Opening "$" is harmless
+   and read-only; the open's own bus cleanup (broadcast UNLISTEN/UNTALK on a
+   timeout) leaves any *other* present device idle. */
+static unsigned char device_present(unsigned char dev)
+{
+    unsigned char absent;
+
+    iec_set_fa(dev);
+    iec_set_sa(0);
+    iec_setname("$");
+    iec_open();
+    absent = iec_status() & ST_NODEV;
+    iec_close();                /* release the channel (sends abort if absent) */
+    iec_clrchn();
+    return absent ? 0 : 1;
+}
+
 /* Scratch buffer for one directory line's text (dir/ls/pwd run one at a
    time, so they can share it). */
 static char dir_buf[42];
@@ -103,8 +132,7 @@ static unsigned char dir_begin(void)
     iec_setname("$");
     iec_open();
     if (iec_status() & ST_NODEV) {
-        puts_raw("device not present");
-        chrout(CR);
+        report_no_device(default_device);
         return 0;
     }
     iec_chkin();
@@ -266,8 +294,7 @@ void cmd_load(int argc, char *argv[])
     iec_setname(argv[1]);
     iec_open();
     if (iec_status() & ST_NODEV) {
-        puts_raw("device not present");
-        chrout(CR);
+        report_no_device(default_device);
         return;
     }
     iec_chkin();
@@ -339,8 +366,7 @@ void cmd_rm(int argc, char *argv[])
     iec_setname(cmd);
     iec_command();
     if (iec_status() & ST_NODEV) {
-        puts_raw("device not present");
-        chrout(CR);
+        report_no_device(default_device);
     }
 }
 
@@ -367,8 +393,7 @@ void cmd_cp(int argc, char *argv[])
     iec_setname(argv[1]);
     iec_open();
     if (iec_status() & ST_NODEV) {
-        puts_raw("device not present");
-        chrout(CR);
+        report_no_device(default_device);
         return;
     }
     iec_chkin();
@@ -433,8 +458,7 @@ void cmd_cat(int argc, char *argv[])
     iec_setname(argv[1]);
     iec_open();
     if (iec_status() & ST_NODEV) {
-        puts_raw("device not present");
-        chrout(CR);
+        report_no_device(default_device);
         return;
     }
     iec_chkin();
@@ -484,8 +508,7 @@ void cmd_less(int argc, char *argv[])
     iec_setname(argv[1]);
     iec_open();
     if (iec_status() & ST_NODEV) {
-        puts_raw("device not present");
-        chrout(CR);
+        report_no_device(default_device);
         return;
     }
     iec_chkin();
@@ -512,11 +535,14 @@ void cmd_less(int argc, char *argv[])
         chrout(CR);
 }
 
-/* device <n> [name] - set the device ls/load/run talk to (default 8). A name,
-   if given, is remembered for that device number and reused when `device <n>`
-   is later given without one. */
+/* device <n> [name] - set the device ls/load/run talk to (default 8). The bus
+   is probed first: if <n> doesn't answer, report it and keep the current
+   device (so a typo'd unit number can't silently misdirect later commands). A
+   name, if given, is remembered for that device number and reused when
+   `device <n>` is later given without one. */
 void cmd_device(int argc, char *argv[])
 {
+    unsigned char dev;
     const char *name;
 
     if (argc < 2) {
@@ -524,7 +550,12 @@ void cmd_device(int argc, char *argv[])
         chrout(CR);
         return;
     }
-    default_device = parse_dec(argv[1]);
+    dev = parse_dec(argv[1]);
+    if (!device_present(dev)) {         /* don't switch to a unit that isn't there */
+        report_no_device(dev);
+        return;
+    }
+    default_device = dev;
     if (argc >= 3 && default_device >= DEV_MIN && default_device <= DEV_MAX) {
         char *slot = device_name[default_device - DEV_MIN];
         unsigned char i;
