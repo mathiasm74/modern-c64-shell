@@ -11,10 +11,22 @@
 ;   - Minimal RAM writes   (the few we make are screen RAM, written once)
 ;   - All conversions use registers, not zero page
 ;
-; The only RAM area we depend on is screen RAM ($0400-$07E7). Even color RAM
-; is left untouched, because the previous version's "color a row red on
-; mismatch" was nice-to-have but added another I/O write per test and the
-; first hardware test froze before it ever ran.
+; Color RAM IS initialized at boot to white-on-black, so all written text is
+; visible (without this, power-on random color RAM made cells whose random
+; color happened to equal the background look invisible, and reverse-video
+; bytes from corrupted writes paint solid color blocks).
+;
+; The border color is set at each test stage as a "got this far" indicator.
+; Even if the rendering hangs or the CPU escapes mid-test, the border tells
+; you the latest stage that completed:
+;
+;   blue        $06   -- boot reached, labels not painted yet
+;   light blue  $0E   -- labels painted (KERNAL ROM walker succeeded)
+;   cyan        $03   -- BANK reads done
+;   green       $05   -- D1 (walking-1) reads done
+;   yellow      $07   -- D0 (walking-0) reads done
+;   orange      $08   -- KRNL sanity read done
+;   white       $01   -- SCAN done; all tests complete; entering halt
 ;
 ; Layout (40-col uppercase text, $D018=$15). The 2-char "BANK" labels on
 ; row 2 carry double duty: each is both the column header (A0 = $A000,
@@ -122,13 +134,21 @@ reset:
         lda #$00            ; black background
         sta VIC_BG
 
-        ; --- Clear screen (just the visible 1000 cells). ---
-        lda #$20            ; space (screen code)
+        ; --- Clear screen and color RAM (visible 1000 cells of each). ---
+        ; Color RAM at $D800: white ($01) so every char is visible against
+        ; the black background. (Without this init, power-on random color
+        ; RAM made parts of the test output invisible.)
         ldx #0
-@cls0:  sta SCREEN_RAM,x
+@cls0:  lda #$20                    ; space (screen code)
+        sta SCREEN_RAM,x
         sta SCREEN_RAM+$100,x
         sta SCREEN_RAM+$200,x
         sta SCREEN_RAM+$2E8,x
+        lda #$01                    ; white
+        sta $D800,x
+        sta $D800+$100,x
+        sta $D800+$200,x
+        sta $D800+$2E8,x
         inx
         bne @cls0
 
@@ -181,6 +201,10 @@ reset:
 :       jmp @lbl_outer
 @lbl_done:
 
+        ; --- Stage marker: labels painted (KERNAL ROM walker survived).
+        lda #$0E                    ; light blue
+        sta VIC_BORDER
+
         ; ====================================================================
         ; Static data done. Now the live ROM-read cells.
         ; ====================================================================
@@ -193,6 +217,10 @@ reset:
         HEX_BYTE $B800, SCREEN_RAM + 3*40 + 14
         HEX_BYTE $BFFF, SCREEN_RAM + 3*40 + 17
 
+        ; --- Stage marker: BANK done.
+        lda #$03                    ; cyan
+        sta VIC_BORDER
+
         ; --- Row 6: D1 reads ($A100..$A107). ---
         ; "D1  RD 01 02 04 08 10 20 40 80"
         HEX_BYTE $A100, SCREEN_RAM + 6*40 + 7
@@ -204,6 +232,10 @@ reset:
         HEX_BYTE $A106, SCREEN_RAM + 6*40 + 25
         HEX_BYTE $A107, SCREEN_RAM + 6*40 + 28
 
+        ; --- Stage marker: D1 (walking-1) done.
+        lda #$05                    ; green
+        sta VIC_BORDER
+
         ; --- Row 9: D0 reads ($A200..$A207). ---
         HEX_BYTE $A200, SCREEN_RAM + 9*40 + 7
         HEX_BYTE $A201, SCREEN_RAM + 9*40 + 10
@@ -214,8 +246,16 @@ reset:
         HEX_BYTE $A206, SCREEN_RAM + 9*40 + 25
         HEX_BYTE $A207, SCREEN_RAM + 9*40 + 28
 
+        ; --- Stage marker: D0 (walking-0) done.
+        lda #$07                    ; yellow
+        sta VIC_BORDER
+
         ; --- Row 11: KRNL sanity ($EFFE = $EF). Goes after "RD " at col 20.
         HEX_BYTE $EFFE, SCREEN_RAM + 11*40 + 20
+
+        ; --- Stage marker: KRNL sanity done.
+        lda #$08                    ; orange
+        sta VIC_BORDER
 
         ; --- Row 13: transient SCAN (1000 reads of $A050; expect $55). ---
         ; Counters live entirely in our zero page. We avoid macros here to
@@ -246,7 +286,23 @@ reset:
         ; Render LAST=XX
         HEX_BYTE SC_LAST, SCREEN_RAM + 13*40 + 32
 
+        ; --- Stage marker: all tests complete.
+        lda #$01                    ; white
+        sta VIC_BORDER
+
+        ; --- Halt. The CPU sits in this 3-byte loop forever. If an
+        ; instruction-fetch glitch ever returns something other than the
+        ; expected $4C (JMP) for the opcode byte, the CPU escapes and starts
+        ; executing wild code (we've seen it stomp screen + color RAM + VIC
+        ; registers on this hardware). We can't prevent the glitch, but we
+        ; can stack multiple redundant JMPs so that even if execution does
+        ; slip forward by one or two bytes, the next instruction lands on
+        ; another JMP back to the halt label.
 @halt:  jmp @halt
+        jmp @halt
+        jmp @halt
+        jmp @halt
+        jmp @halt
 
 
 ; ============================================================================
