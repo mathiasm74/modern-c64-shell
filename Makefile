@@ -44,7 +44,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-stock-flash onerom-pure-stock-flash
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-stock-flash onerom-pure-stock-flash memtest memtest-flash
 
 all: $(ROM16K)
 
@@ -162,6 +162,38 @@ onerom-flash: $(BASIC) $(KERNAL)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file $(ONEROM_CFG) \
 		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
+
+# ----------------------------------------------------------------------------
+# Hardware bus diagnostic ROM (`make memtest` / `make memtest-flash`).
+#
+# Standalone 16KB ROM that replaces the shell entirely. On boot it reads
+# known sentinel bytes from BASIC and KERNAL banks and prints expected-vs-
+# actual values to the screen. Helps distinguish address-line / data-line /
+# CS / transient bus faults on real hardware. See src/memtest/memtest.s for
+# the test layout.
+# ----------------------------------------------------------------------------
+MEMTEST_OBJ := $(BUILD)/memtest/memtest.o $(BUILD)/memtest/memtest_basic.o
+MEMTEST_KERNAL := $(BUILD)/memtest-kernal.bin
+MEMTEST_BASIC  := $(BUILD)/memtest-basic.bin
+
+$(MEMTEST_KERNAL): $(MEMTEST_OBJ) cfg/memtest.cfg | $(BUILD)
+	$(LD) -C cfg/memtest.cfg $(MEMTEST_OBJ) -Ln $(BUILD)/memtest-labels.txt
+	@echo "  memtest-basic.bin : $$(wc -c < $(MEMTEST_BASIC)) bytes"
+	@echo "  memtest-kernal.bin: $$(wc -c < $(MEMTEST_KERNAL)) bytes"
+
+$(MEMTEST_BASIC): $(MEMTEST_KERNAL) ;
+
+memtest: $(MEMTEST_KERNAL) $(MEMTEST_BASIC)
+	$(ONEROM) firmware build --board $(ONEROM_BOARD) \
+		--config-file cfg/onerom-memtest.json \
+		--out $(BUILD)/onerom-memtest-$(ONEROM_BOARD).bin
+	@echo "  onerom-memtest fw : $$(wc -c < $(BUILD)/onerom-memtest-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
+
+memtest-flash: $(MEMTEST_KERNAL) $(MEMTEST_BASIC)
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
+		--board $(ONEROM_BOARD) --config-file cfg/onerom-memtest.json \
+		--out $(BUILD)/onerom-memtest-$(ONEROM_BOARD).bin
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 
 # Same suite, but show the launch command, monitor traffic, and tracebacks.

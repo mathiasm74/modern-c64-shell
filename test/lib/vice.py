@@ -253,10 +253,14 @@ class Vice:
         """Read `count` bytes starting at `addr`; returns a list of ints."""
         text = self._command("m %04x %04x" % (addr, addr + count - 1))
         vals = []
+        # Each line is `>C:XXXX  HH HH .. HH HH   <ASCII rendering>`. The ASCII
+        # column can contain hex-pair-looking substrings (e.g. screen content
+        # of "A0 B0 BF"), so cap the per-line hex-pair count to 16 instead of
+        # letting the regex munch into the ASCII column.
         for line in text.splitlines():
-            m = re.search(r"[Cc]:[0-9a-fA-F]{4}\s+((?:[0-9a-fA-F]{2}[ \t]+)+)", line)
+            m = re.search(r"[Cc]:[0-9a-fA-F]{4}\s+((?:[0-9a-fA-F]{2}[ \t]+){1,16})", line)
             if m:
-                vals.extend(int(b, 16) for b in m.group(1).split())
+                vals.extend(int(b, 16) for b in m.group(1).split()[:16])
         return vals[:count]
 
     def read_byte(self, addr):
