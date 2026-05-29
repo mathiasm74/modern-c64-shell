@@ -287,10 +287,22 @@ puts_at:
 @done:
         rts
 
+; --- Banner strings -- hardware-bisect diagnostic.
+; banner1 lives in KCODE (KERNAL ROM, $E000-$FFFF) as usual; banner2 is in
+; RODATA_BANNER which loads to BASIC ROM ($A000-$BFFF). Both get read by the
+; same puts_at routine in KCODE. On real hardware:
+;   - If "C64 Shell ROM v0.1" (banner1) appears cleanly but "Ready." is
+;     missing or garbled, BASIC ROM reads are unreliable.
+;   - If both appear cleanly, BASIC reads are fine and the scattered
+;     artifacts come from a different mechanism.
+; After diagnosis, move banner2 back to KCODE.
 banner1:
         .byte "C64 Shell ROM v0.1", 0
+
+.segment "RODATA_BANNER"
 banner2:
         .byte "Ready.", 0
+.segment "KCODE"
 
 ; --- 6502 hardware vectors ($FFFA-$FFFF) ---------------------------------
 .segment "VECTORS"
