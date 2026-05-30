@@ -20,6 +20,7 @@
 
 .export iec_init
 .export _iec_set_fa, _iec_set_sa, _iec_setname
+.export _iec_set_fnadr, _iec_set_fnlen, _iec_command_raw
 .export _iec_open, _iec_command, _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
 .export _iec_chkout, _iec_putbyte, _iec_puteoi, _iec_unlisten
 .export _iec_status
@@ -44,6 +45,11 @@ NAMEIDX = $A4           ; filename index (survives iec_sendbyte)
 EOIBUF = $A5            ; EOI flag for the byte being sent
 TMOUT  = $A6            ; receive-wait timeout countdown
 SECADR = $A9            ; secondary address held across the LISTEN command send
+IECRAW = $A7            ; raw-mode flag (1 = skip lowercase-to-uppercase fold
+                        ; when sending the name buffer; 0 = fold).  Standard
+                        ; KERNAL reserves $A7 as "RIBYTE" general I/O scratch
+                        ; -- since we don't run the KERNAL receive path, it's
+                        ; free for us to repurpose.
 
 .segment "KCODE"
 
@@ -52,6 +58,8 @@ SECADR = $A9            ; secondary address held across the LISTEN command send
 ; reset.s after the CIA #2 bank bits are set; preserves those (bits 0-2).
 ; -------------------------------------------------------------------------
 iec_init:
+        lda #$00
+        sta IECRAW              ; default: fold lowercase->uppercase in names
         lda DDR2
         ora #(B_ATN | B_CLK | B_DATA)   ; bits 3,4,5 are outputs
         sta DDR2
@@ -199,6 +207,29 @@ _iec_setname:                   ; void iec_setname(const char *name)  A=lo X=hi
 @done:  sty FNLEN
         rts
 
+; iec_setname's NUL-scan can't carry binary data containing zero bytes (M-W
+; payloads, addresses, etc.), so we expose the FNADR / FNLEN setters directly
+; for the fast loader's upload phase. Pair with iec_command_raw below.
+_iec_set_fnadr:                 ; void iec_set_fnadr(const void *p)  A=lo X=hi
+        sta FNADR
+        stx FNADR+1
+        rts
+_iec_set_fnlen:                 ; void iec_set_fnlen(unsigned char len)  A=len
+        sta FNLEN
+        rts
+
+; Same as iec_command but flags the name-send loop to ship bytes verbatim,
+; without folding ASCII lowercase to PETSCII uppercase. M-W / M-E / M-R bodies
+; mix the literal "M-W" / "M-E" / "M-R" prefix with binary address bytes; the
+; fold would corrupt any payload byte that happens to land in $61..$7A.
+_iec_command_raw:
+        lda #$01
+        sta IECRAW
+        jsr _iec_command
+        lda #$00
+        sta IECRAW
+        rts
+
 _iec_status:                    ; unsigned char iec_status(void)
         lda ST
         ldx #$00
@@ -315,8 +346,12 @@ send_listen:
         bcs @unlisten           ; index >= length -> whole name sent
         ldy NAMEIDX
         lda (FNADR),y
-        ; disk names/commands are uppercase PETSCII; our shell types lowercase
-        ; ASCII, so fold 'a'-'z' ($61-$7A) up to 'A'-'Z' ($41-$5A).
+        ; In raw mode (IECRAW != 0) the name buffer is binary -- M-W payload
+        ; bytes for the drive, addresses, etc. -- so we send it untouched.
+        ; In normal mode we fold lowercase to uppercase: disk names/commands
+        ; are uppercase PETSCII, our shell types lowercase ASCII.
+        ldx IECRAW
+        bne @putname
         cmp #$61
         bcc @putname
         cmp #$7B

@@ -15,8 +15,15 @@ void iec_set_fa(unsigned char dev);     /* device number (e.g. 8)          */
 void iec_set_sa(unsigned char sa);      /* secondary address / channel     */
 void iec_setname(const char *name);     /* NUL-terminated, length measured */
 
+/* Raw / binary name buffer setters. Use when the body contains zero bytes
+   (M-W, M-E, M-R payloads) -- iec_setname() can't measure those. Pair with
+   iec_command_raw(), which skips the lowercase->uppercase fold.            */
+void iec_set_fnadr(const void *p);      /* set FNADR (no length scan)      */
+void iec_set_fnlen(unsigned char len);  /* set FNLEN explicitly            */
+
 void iec_open(void);            /* LISTEN, send open-secondary + name, UNLISTEN */
 void iec_command(void);         /* LISTEN, write the name to the command channel*/
+void iec_command_raw(void);     /* same, but send the body verbatim (no fold)   */
 void iec_chkin(void);           /* TALK + secondary, turn the bus around        */
 unsigned char iec_getbyte(void);/* receive one byte (ACPTR); sets EOI in status */
 void iec_close(void);           /* LISTEN, send close-secondary, UNLISTEN       */
