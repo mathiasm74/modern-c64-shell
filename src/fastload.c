@@ -131,13 +131,13 @@ void fastload_selftest(void)
     *(unsigned char *)0x0340 = 0xAA;
 }
 
-/* Upload the drive-side blob in 34-byte M-W chunks, then M-E its entry. */
+/* Upload the drive-side blob in 34-byte M-W chunks, then M-E `entry`. */
 #define FL_MW_CHUNK 34
-void fastload_install(void)
+void fastload_install_at(unsigned int entry)
 {
     unsigned int remaining = fastload_drive_code_size;
     unsigned int src = 0;
-    unsigned int dst = FASTLOAD_DRIVE_ENTRY;
+    unsigned int dst = 0x0500;          /* blob load address in 1541 RAM   */
     unsigned char this_chunk;
 
     while (remaining != 0) {
@@ -150,7 +150,12 @@ void fastload_install(void)
         dst += this_chunk;
         remaining -= this_chunk;
     }
-    fastload_me(FASTLOAD_DRIVE_ENTRY);
+    fastload_me(entry);
+}
+
+void fastload_install(void)
+{
+    fastload_install_at(FASTLOAD_DRIVE_SENTINEL);
 }
 
 void fastload_selftest_me(void)
@@ -166,6 +171,36 @@ void fastload_selftest_me(void)
     *(unsigned char *)0x0351 = sentinel;
     *(unsigned char *)0x0352 = iec_status();
     *(unsigned char *)0x0350 = 0xAA;
+}
+
+void fastload_selftest_2bit(void)
+{
+    unsigned char b;
+    unsigned char pair_buf[4];
+
+    fastload_install_at(FASTLOAD_DRIVE_ONE_BYTE);
+    *(unsigned char *)0x0362 = iec_status();
+
+    b = epyx_recv_byte();
+    *(unsigned char *)0x0361 = b;
+
+    fastload_mr(0x0600, pair_buf, 4);
+    *(unsigned char *)0x0364 = pair_buf[0];
+    *(unsigned char *)0x0365 = pair_buf[1];
+    *(unsigned char *)0x0366 = pair_buf[2];
+    *(unsigned char *)0x0367 = pair_buf[3];
+
+    *(unsigned char *)0x0360 = 0xAA;
+}
+
+/* Raw-read diagnostic variant: install, M-E one_byte, then capture the 4
+ * $DD00 reads at $0370 (set by epyx_recv_raw itself). Footprint:
+ *   $0368 = $AA marker  $0370..$0373 = R1..R4 raw reads                  */
+void fastload_selftest_2bit_raw(void)
+{
+    fastload_install_at(FASTLOAD_DRIVE_ONE_BYTE);
+    epyx_recv_raw();
+    *(unsigned char *)0x0368 = 0xAA;
 }
 
 #pragma code-name (pop)

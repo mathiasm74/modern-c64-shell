@@ -15,7 +15,6 @@
     },
     {
       "type": "multi",
-      "serve_alg": "two_cs_one_addr",
       "chips": [
         { "file": "stock-roms/kernal.901227-03.bin", "type": "Chip2364", "cs1": "active_low" },
         { "file": "stock-roms/basic.901226-01.bin",  "type": "Chip2364", "cs1": "active_low" }

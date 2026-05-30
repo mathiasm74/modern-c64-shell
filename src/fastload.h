@@ -52,17 +52,29 @@ void fastload_me(unsigned int addr);
 extern const unsigned char fastload_drive_code[];
 extern const unsigned int fastload_drive_code_size;
 
-/* Default entry point for the drive-side image. The drive code's reset /
- * dispatch label is at the start of its segment, i.e. $0500.              */
-#define FASTLOAD_DRIVE_ENTRY 0x0500
+/* Entry points within the drive blob (see src/fastload_drive.s jump table). */
+#define FASTLOAD_DRIVE_SENTINEL 0x0500   /* Phase 7b: $42 -> $07FF, RTS    */
+#define FASTLOAD_DRIVE_ONE_BYTE 0x0503   /* Phase 7c2: send $42 via 2-bit  */
 
-/* Upload the drive-side image to the 1541 and M-E its entry point. After
- * this returns, the drive is running our code (which in the Phase 7b stub
- * is a single sentinel-write that RTSes immediately).
+/* Upload the drive-side image to the 1541 and M-E `entry`. After this
+ * returns, the drive is running the code at that entry.
  *
- * Chunks the upload into 34-byte M-W frames if the blob is larger than
- * the 1541's command-channel parse buffer. Sets ST_NODEV on no-device.   */
+ * Chunks the upload into 34-byte M-W frames. Sets ST_NODEV on no-device.   */
+void fastload_install_at(unsigned int entry);
+
+/* Convenience wrapper: install + M-E the Phase 7b sentinel entry.          */
 void fastload_install(void);
+
+/* Receive one byte via the 2-bit timed protocol. Cycle-tight; lives in
+ * src/fastload_recv.s. Returns the byte the drive sent (with our drive's
+ * pre-inversion compensating the bus inversion, the host's EOR chain
+ * yields the original byte exactly).                                       */
+unsigned char __fastcall__ epyx_recv_byte(void);
+
+/* Diagnostic: same handshake + timed reads as epyx_recv_byte, but stores
+ * the 4 raw $DD00 reads into $0370..$0373 instead of doing the EOR
+ * unscramble. Lets the test see exactly what the host samples.            */
+void __fastcall__ epyx_recv_raw(void);
 
 /* Self-test entry point for test_fastload.py. Round-trips a known pattern
  * through drive RAM via M-W + M-R and leaves a footprint at $0340 onwards.
@@ -76,5 +88,15 @@ void fastload_selftest(void);
  *   $0351 = the byte read back from $07FF in drive RAM ($42 on success)
  *   $0352 = ST after the round-trip                                      */
 void fastload_selftest_me(void);
+
+/* Third selftest: install, M-E the one-byte 2-bit sender, receive the byte
+ * via epyx_recv_byte. Footprint:
+ *   $0360 = $AA when it ran to completion
+ *   $0361 = the byte received via the 2-bit protocol ($42 on success)
+ *   $0362 = ST after install                                            */
+void fastload_selftest_2bit(void);
+
+/* Raw-read diagnostic: like _2bit but stores R1..R4 to $0370..$0373.    */
+void fastload_selftest_2bit_raw(void);
 
 #endif /* FASTLOAD_H */
