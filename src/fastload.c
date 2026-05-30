@@ -131,6 +131,43 @@ void fastload_selftest(void)
     *(unsigned char *)0x0340 = 0xAA;
 }
 
+/* Upload the drive-side blob in 34-byte M-W chunks, then M-E its entry. */
+#define FL_MW_CHUNK 34
+void fastload_install(void)
+{
+    unsigned int remaining = fastload_drive_code_size;
+    unsigned int src = 0;
+    unsigned int dst = FASTLOAD_DRIVE_ENTRY;
+    unsigned char this_chunk;
+
+    while (remaining != 0) {
+        this_chunk = (remaining > FL_MW_CHUNK) ? FL_MW_CHUNK
+                                               : (unsigned char)remaining;
+        fastload_mw(dst, fastload_drive_code + src, this_chunk);
+        if (iec_status() & ST_NODEV)
+            return;
+        src += this_chunk;
+        dst += this_chunk;
+        remaining -= this_chunk;
+    }
+    fastload_me(FASTLOAD_DRIVE_ENTRY);
+}
+
+void fastload_selftest_me(void)
+{
+    unsigned char sentinel = 0;
+
+    /* Poison the drive's sentinel cell first so a no-op M-E is detectable
+       (the drive code's job is to write $42; we want to see that change). */
+    fastload_mw(0x07FF, selftest_pattern, 1);   /* writes $AB at $07FF    */
+    fastload_install();
+    fastload_mr(0x07FF, &sentinel, 1);
+
+    *(unsigned char *)0x0351 = sentinel;
+    *(unsigned char *)0x0352 = iec_status();
+    *(unsigned char *)0x0350 = 0xAA;
+}
+
 #pragma code-name (pop)
 #pragma rodata-name (pop)
 

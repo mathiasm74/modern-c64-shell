@@ -47,10 +47,34 @@ void fastload_mr(unsigned int addr, unsigned char *dst, unsigned char len);
  */
 void fastload_me(unsigned int addr);
 
+/* Drive-side image embedded in our ROM (see src/fastload_blob.s and
+ * src/fastload_drive.s). fastload_install() ships it to the drive.        */
+extern const unsigned char fastload_drive_code[];
+extern const unsigned int fastload_drive_code_size;
+
+/* Default entry point for the drive-side image. The drive code's reset /
+ * dispatch label is at the start of its segment, i.e. $0500.              */
+#define FASTLOAD_DRIVE_ENTRY 0x0500
+
+/* Upload the drive-side image to the 1541 and M-E its entry point. After
+ * this returns, the drive is running our code (which in the Phase 7b stub
+ * is a single sentinel-write that RTSes immediately).
+ *
+ * Chunks the upload into 34-byte M-W frames if the blob is larger than
+ * the 1541's command-channel parse buffer. Sets ST_NODEV on no-device.   */
+void fastload_install(void);
+
 /* Self-test entry point for test_fastload.py. Round-trips a known pattern
  * through drive RAM via M-W + M-R and leaves a footprint at $0340 onwards.
  * See fastload.c for the protocol; the test invokes this via run_at after
  * stamping $0340 with $00.                                                 */
 void fastload_selftest(void);
+
+/* Second selftest: M-W + M-E the drive code, then M-R the sentinel it
+ * writes ($07FF -> $42). Footprint:
+ *   $0350 = $AA when it ran to completion
+ *   $0351 = the byte read back from $07FF in drive RAM ($42 on success)
+ *   $0352 = ST after the round-trip                                      */
+void fastload_selftest_me(void);
 
 #endif /* FASTLOAD_H */

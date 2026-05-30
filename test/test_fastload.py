@@ -27,13 +27,17 @@ def _label_addr(name):
     raise AssertionError("label %r not found in %s" % (name, _LABELS))
 
 
-def _selftest_stub():
-    """Six bytes: JSR _fastload_selftest ; JMP self."""
-    addr = _label_addr("_fastload_selftest")
+def _jsr_then_spin(symbol):
+    """Six-byte ML stub: JSR <symbol> ; JMP self."""
+    addr = _label_addr(symbol)
     return [
-        0x20, addr & 0xFF, (addr >> 8) & 0xFF,    # JSR fastload_selftest
+        0x20, addr & 0xFF, (addr >> 8) & 0xFF,    # JSR <addr>
         0x4C, 0x03, 0x10,                          # JMP $1003 (spin)
     ]
+
+
+def _selftest_stub():
+    return _jsr_then_spin("_fastload_selftest")
 
 
 def test_fastload_selftest_roundtrips_pattern_through_drive_ram(v):
@@ -79,4 +83,42 @@ def test_fastload_selftest_roundtrips_pattern_through_drive_ram(v):
         "ST after selftest = $%02X; ST_NODEV bit set -- the drive didn't "
         "answer. Confirm -drive8truedrive and that the disk fixture exists."
         % st
+    )
+
+
+def test_fastload_install_runs_drive_code(v):
+    """End-to-end M-E: upload the drive blob, run it, M-R the sentinel.
+
+    The drive-side stub (src/fastload_drive.s) writes $42 to $07FF in drive
+    RAM and RTSes. The selftest_me() helper poisons $07FF with $AB first,
+    M-Ws+M-Es the drive code, then M-Rs $07FF -- a result of $42 means M-E
+    actually entered our code (a result of $AB would mean M-E silently
+    failed; a result of $00 would mean M-R itself failed).
+    """
+    v.write_memory(0x0350, [0x00] * 4)
+    v.write_memory(0x1000, _jsr_then_spin("_fastload_selftest_me"))
+
+    # Slightly more generous: install does 1 M-W + 1 M-E + 1 M-R (3 IEC
+    # round-trips through the slow-bus command channel) plus the drive's
+    # M-E latency.
+    v.run_at(0x1000, 4.0)
+
+    marker = v.read_byte(0x0350)
+    assert marker == 0xAA, (
+        "fastload_selftest_me did not complete: $0350 = $%02X (expected $AA)"
+        % marker
+    )
+
+    sentinel = v.read_byte(0x0351)
+    assert sentinel == 0x42, (
+        "Drive sentinel = $%02X (expected $42). "
+        "$AB means the M-E never executed our code (we poisoned $07FF with "
+        "$AB beforehand). $00 means the M-R reply was empty (no-device or "
+        "command-channel timeout). Anything else is genuine corruption."
+        % sentinel
+    )
+
+    st = v.read_byte(0x0352)
+    assert (st & 0x80) == 0, (
+        "ST after selftest_me = $%02X; ST_NODEV bit set." % st
     )
