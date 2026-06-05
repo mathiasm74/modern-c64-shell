@@ -6,6 +6,10 @@ files.zip
 
 # Claude Code personal/local settings (shared config would be .claude/settings.json)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# onerom CLI: a ~10MB Mach-O universal binary, kept untracked (see CLAUDE.md).
+tools/onerom
 
 # Throwaway disk copies the mutating disk tests (rm/cp) work on
 test/data/_scratch*.d64
