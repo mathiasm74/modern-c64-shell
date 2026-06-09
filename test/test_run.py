@@ -38,3 +38,17 @@ def test_run_prints_and_returns(v):
     _type(v, "ver")
     assert _wait_for(v, "C64 Shell ROM v0.1"), \
         "shell did not return to the prompt after the program RTS'd\n%s" % v.screen_text()
+
+
+def test_load_missing_reports_not_found(v):
+    """A missing file streams back no data (immediate EOI, no timeout); load
+    must say so rather than read $00,$00 as a load address and print a bogus
+    "loaded $0000-$0000"."""
+    v.run_for(0.3)
+    _type(v, "load nosuchfile")
+    found = _wait_for(v, "file not found")
+    txt = v.screen_text()
+    assert "loaded $0000" not in txt, \
+        "missing-file load printed a bogus load range\n%s" % txt
+    assert found, \
+        "missing-file load did not report 'file not found'\n%s" % txt

@@ -468,20 +468,42 @@ _iec_getbyte:
         jsr data_hi
         ; 3. wait for CLK to go low (talker starts clocking bits). If it stays
         ;    high past the short window, this is EOI (the last byte).
-        ldy #$00                ; ~256-iteration EOI window
+        ; 3. wait for CLK to go low (talker clocking the byte's bits). If CLK
+        ;    instead stays high past the window, the talker is signalling
+        ;    end-of-data, and the two drive families do it differently:
+        ;      - a 1541 holds CLK high until we acknowledge EOI, then clocks out
+        ;        one final byte (the EOI byte); we read it and return it with EOI.
+        ;      - Meatloaf (and SD2IEC-likes) stream every byte at full speed with
+        ;        no EOI hold and then simply go idle. Here the window elapses on
+        ;        the idle bus and NO final byte follows -- a CLEAN end of stream,
+        ;        not an error, so we return EOI WITHOUT the read-timeout bit.
+        ;    Normal bytes pull CLK low within microseconds, far inside the window,
+        ;    so this only ever triggers at the actual end of a transfer.
+        ldy #$00                ; inner 256-iteration counter
+        lda #$10                ; outer ticks: ~16 * 2.86ms ~= 46ms end-of-data wait
+        sta COUNT
 @eoi:
         bit DD00
-        bvc @gotclk             ; CLK low -> bits coming, no EOI
+        bvc @gotclk             ; CLK low -> a real byte is coming
         dey
         bne @eoi
-        lda ST                  ; window elapsed -> EOI: flag and acknowledge
-        ora #$40
+        dec COUNT
+        bne @eoi
+        lda ST                  ; window elapsed -> end of data: flag EOI, then
+        ora #$40                ; acknowledge and see whether a final byte follows
         sta ST
         jsr data_lo             ; pulse DATA low ...
         jsr iec_settle
-        jsr data_hi             ; ... then release; the talker now proceeds
-        jsr wait_clk_lo         ; wait for CLK low (the last byte's bits)
-        bcs @timeout
+        jsr data_hi             ; ... then release; a 1541 now sends its last byte
+        jsr wait_clk_lo         ; patient: a 1541 clocks out its final EOI byte
+        bcc @gotclk             ; CLK low -> read that byte (returned with EOI set)
+        ; timed out -> the bus is idle (Meatloaf-style end of stream). ST already
+        ; carries EOI (no $02), so the caller stops without a "read error". Return
+        ; no fresh byte: chrout($00) is a no-op and dir_line/load see EOI and stop.
+        lda #$00
+        ldx #$00
+        plp
+        rts
 @gotclk:
         lda #$08
         sta COUNT

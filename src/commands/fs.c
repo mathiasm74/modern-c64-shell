@@ -286,7 +286,11 @@ void cmd_pwd(int argc, char *argv[])
 }
 
 /* load <name> - read a PRG into memory at the load address stored in its
-   first two bytes, and report the range. The program is not started. */
+   first two bytes, and report the range. The program is not started. Lives in
+   CODE2/RODATA2 (KERNAL ROM) so its code and strings don't push the smaller
+   BASIC ROM over budget. */
+#pragma code-name (push, "CODE2")
+#pragma rodata-name (push, "RODATA2")
 void cmd_load(int argc, char *argv[])
 {
     unsigned char lo, hi;
@@ -309,6 +313,18 @@ void cmd_load(int argc, char *argv[])
     iec_chkin();
 
     lo = iec_getbyte();         /* the file's load address */
+    /* An immediate EOI with no timeout means the drive opened the channel but
+       streamed back no data: the file does not exist. (A genuine read fault --
+       no disk, etc. -- sets the timeout bit instead and is reported as "read
+       error" below.) Without this check a missing file reads as load address
+       $0000 and prints a bogus "loaded $0000-$0000". */
+    if ((iec_status() & ST_EOI) && !(iec_status() & ST_TIMEOUT)) {
+        iec_close();
+        iec_clrchn();
+        puts_raw("file not found");
+        chrout(CR);
+        return;
+    }
     hi = iec_getbyte();
     p = (unsigned char *)(lo | ((unsigned int)hi << 8));
     load_start = (unsigned int)p;
@@ -334,6 +350,8 @@ void cmd_load(int argc, char *argv[])
     print_hex16((unsigned int)(p - 1));
     chrout(CR);
 }
+#pragma rodata-name (pop)
+#pragma code-name (pop)
 
 /* run - call the most recently loaded program like SYS. It returns here (and
    the shell reprompts) if the program ends in RTS; a program that loops or
