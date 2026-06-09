@@ -142,6 +142,28 @@ void fastload_epyx_install(void)
     fastload_me(FL_EPYX_ME);
 }
 
+void fastload_epyx_send_header(const char *name, unsigned char namelen)
+{
+    unsigned int k;
+
+    if (epyx_send_begin() != 0)         /* drive never signalled "ready"     */
+        return;
+
+    /* 256-byte op routine: Meatloaf only sums it (and discards the bytes), so
+       send 255 x $00 + $86 = checksum $86 ("V2 load file").                  */
+    for (k = 0; k < 255; ++k)
+        epyx_send_byte(0x00);
+    epyx_send_byte(0x86);
+
+    /* filename length, then the name in reverse (the drive reads it backwards
+       into m_buffer[n-1..0], so the last character goes out first).          */
+    epyx_send_byte(namelen);
+    while (namelen != 0)
+        epyx_send_byte((unsigned char)name[--namelen]);
+
+    epyx_send_end();
+}
+
 /* Self-test entry point for test_fastload.py.
  *
  * Writes a known pattern into the drive's free buffer space, reads it back

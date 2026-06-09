@@ -24,6 +24,7 @@
 .export _iec_open, _iec_command, _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
 .export _iec_chkout, _iec_putbyte, _iec_puteoi, _iec_unlisten
 .export _iec_status
+.export wait_clk_lo, wait_clk_hi        ; used by the Epyx host transmit (fastload_send.s)
 
 DD00   = $DD00
 DDR2   = $DD02

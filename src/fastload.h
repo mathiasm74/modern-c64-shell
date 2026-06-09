@@ -72,9 +72,32 @@ extern const unsigned char fastload_epyx_upload[3 * FL_EPYX_CHUNK];
 
 /* Send the V2/V3 handshake: the three M-W chunks then M-E $01A9. On a Meatloaf
  * (or SD2IEC) drive this hands control to the drive's built-in Epyx handler,
- * which then expects the 256-byte op routine over the 2-bit wire (step 2, not
- * yet implemented). Sets ST_NODEV if the drive doesn't answer.              */
+ * which then expects the 256-byte op routine over the wire (step 2). Sets
+ * ST_NODEV if the drive doesn't answer.                                      */
 void fastload_epyx_install(void);
+
+/* --- Step 2: host -> drive transmit over the Epyx wire (src/fastload_send.s)
+ *
+ * After install the drive runs receiveEpyxHeader and clocks bytes IN from us
+ * (handshaked, LSB-first, inverted, 1 bit per CLK edge -- not cycle-timed).  */
+
+/* Handshake: wait for the drive's "ready for header", answer, and take the
+ * bus (IRQs masked until epyx_send_end). Returns 0 on success, 1 on timeout
+ * (drive not in Epyx mode -- IRQs restored, lines released).                 */
+unsigned char __fastcall__ epyx_send_begin(void);
+
+/* Clock one byte out to the drive (LSB first, inverted, handshaked).         */
+void __fastcall__ epyx_send_byte(unsigned char b);
+
+/* Release the bus and re-enable IRQs.                                        */
+void __fastcall__ epyx_send_end(void);
+
+/* Send the "load file" op header the drive expects after install: a 256-byte
+ * routine whose only checked property is its 8-bit additive checksum ($86 =
+ * "V2 load file"; the bytes are discarded), then the filename length and the
+ * filename in REVERSE order. After this the drive opens the file and starts
+ * streaming it back over the timed 2-bit protocol (step 3, not yet here).    */
+void fastload_epyx_send_header(const char *name, unsigned char namelen);
 
 /* Drive-side image embedded in our ROM (see src/fastload_blob.s and
  * src/fastload_drive.s). fastload_install() ships it to the drive.        */
