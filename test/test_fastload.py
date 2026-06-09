@@ -40,6 +40,26 @@ def _selftest_stub():
     return _jsr_then_spin("_fastload_selftest")
 
 
+def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
+    """Step 1: the drive-side Epyx handshake. Meatloaf recognises the cartridge
+    by three 25-byte M-W chunks whose 8-bit additive checksums are $53/$A6/$8F
+    (IECFileDevice.cpp epyxV2V3sig), then M-E $01A9. It only sums the bytes, so
+    our upload is clean-room filler -- but the sums must be exact. Read the 75
+    bytes out of ROM and check each chunk. (The actual Epyx-mode handoff only
+    happens on a real Meatloaf; VICE's 1541 can't model it, so this verifies
+    the one thing that must be byte-exact.)"""
+    base = _label_addr("_fastload_epyx_upload")
+    data = v.read_memory(base, 3 * 0x19)
+    want = [0x53, 0xA6, 0x8F]
+    for k, expect in enumerate(want):
+        chunk = data[k * 0x19:(k + 1) * 0x19]
+        assert len(chunk) == 0x19
+        got = sum(chunk) & 0xFF
+        assert got == expect, \
+            "Epyx chunk %d ($%04X) sum = $%02X, expected $%02X" \
+            % (k + 1, [0x0180, 0x0199, 0x01B2][k], got, expect)
+
+
 def test_fastload_selftest_roundtrips_pattern_through_drive_ram(v):
     """M-W an 8-byte pattern to $0500 in the drive, M-R it back, compare.
 

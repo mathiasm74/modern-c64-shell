@@ -47,6 +47,35 @@ void fastload_mr(unsigned int addr, unsigned char *dst, unsigned char len);
  */
 void fastload_me(unsigned int addr);
 
+/* --- Epyx FastLoad drive handshake (step 1; see docs/FASTLOAD-FINGERPRINT.md)
+ *
+ * Meatloaf (and SD2IEC) recognise the Epyx FastLoad cartridge by three M-W
+ * uploads to the 1541 stack page followed by an M-E, then run their own native
+ * Epyx implementation -- they never execute the uploaded bytes, they only
+ * checksum them. So fastload_epyx_upload below is clean-room fingerprint bait
+ * sized/summed to match Meatloaf's V2/V3 signature, not real Epyx drive code.
+ *
+ * The V2/V3 profile (the one both Meatloaf and SD2IEC accept):
+ *   M-W $0180, 25 bytes, 8-bit additive checksum $53
+ *   M-W $0199, 25 bytes, checksum $A6
+ *   M-W $01B2, 25 bytes, checksum $8F
+ *   M-E $01A9                                                              */
+#define FL_EPYX_MW1      0x0180
+#define FL_EPYX_MW2      0x0199
+#define FL_EPYX_MW3      0x01B2
+#define FL_EPYX_ME       0x01A9
+#define FL_EPYX_CHUNK    0x19            /* 25 bytes per chunk               */
+
+/* The 75-byte (3 x 25) fingerprint upload, in the KERNAL ROM. Exported so a
+ * static test can read it back and verify the per-chunk checksums.          */
+extern const unsigned char fastload_epyx_upload[3 * FL_EPYX_CHUNK];
+
+/* Send the V2/V3 handshake: the three M-W chunks then M-E $01A9. On a Meatloaf
+ * (or SD2IEC) drive this hands control to the drive's built-in Epyx handler,
+ * which then expects the 256-byte op routine over the 2-bit wire (step 2, not
+ * yet implemented). Sets ST_NODEV if the drive doesn't answer.              */
+void fastload_epyx_install(void);
+
 /* Drive-side image embedded in our ROM (see src/fastload_blob.s and
  * src/fastload_drive.s). fastload_install() ships it to the drive.        */
 extern const unsigned char fastload_drive_code[];

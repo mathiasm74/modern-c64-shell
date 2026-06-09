@@ -101,6 +101,47 @@ void fastload_mr(unsigned int addr, unsigned char *dst, unsigned char len)
     iec_clrchn();
 }
 
+/* Clean-room Epyx V2/V3 fingerprint upload (see docs/FASTLOAD-FINGERPRINT.md).
+ *
+ * Meatloaf matches the Epyx FastLoad cartridge by three M-W chunks into the
+ * 1541 stack page and an M-E $01A9; crucially it only sums each chunk's bytes
+ * (IECFileDevice.cpp::checkMWcmd) and compares against $53/$A6/$8F -- it never
+ * runs the uploaded code. So these 75 bytes are pure fingerprint bait: $EA
+ * ("NOP") filler with a final byte per chunk chosen so the 8-bit additive sum
+ * lands on Meatloaf's value. 24 * $EA = ...$F0, so the last byte is
+ * (target - $F0) & $FF. (A real 1541 would EXECUTE this and would need genuine
+ * Epyx drive bytes -- out of scope; the target is Meatloaf.)                */
+#define EPYX_F 0xEA                     /* filler byte (24 per chunk)         */
+const unsigned char fastload_epyx_upload[3 * FL_EPYX_CHUNK] = {
+    /* chunk 1 -> $0180, 8-bit sum $53 */
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F,
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F,
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, 0x63,
+    /* chunk 2 -> $0199, 8-bit sum $A6 */
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F,
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F,
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, 0xB6,
+    /* chunk 3 -> $01B2, 8-bit sum $8F */
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F,
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F,
+    EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, 0x9F,
+};
+
+void fastload_epyx_install(void)
+{
+    fastload_mw(FL_EPYX_MW1, fastload_epyx_upload, FL_EPYX_CHUNK);
+    if (iec_status() & ST_NODEV)
+        return;
+    fastload_mw(FL_EPYX_MW2, fastload_epyx_upload + FL_EPYX_CHUNK, FL_EPYX_CHUNK);
+    if (iec_status() & ST_NODEV)
+        return;
+    fastload_mw(FL_EPYX_MW3, fastload_epyx_upload + 2 * FL_EPYX_CHUNK,
+                FL_EPYX_CHUNK);
+    if (iec_status() & ST_NODEV)
+        return;
+    fastload_me(FL_EPYX_ME);
+}
+
 /* Self-test entry point for test_fastload.py.
  *
  * Writes a known pattern into the drive's free buffer space, reads it back
