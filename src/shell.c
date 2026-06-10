@@ -47,6 +47,7 @@ const struct command shell_commands[] = {
     { "dir",    cmd_dir    },
     { "echo",   cmd_echo   },
     { "exit",   cmd_exit   },
+    { "fload",  cmd_fload  },
     { "help",   cmd_help   },
     { "less",   cmd_less   },
     { "load",   cmd_load   },

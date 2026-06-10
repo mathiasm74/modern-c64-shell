@@ -96,8 +96,23 @@ void __fastcall__ epyx_send_end(void);
  * routine whose only checked property is its 8-bit additive checksum ($86 =
  * "V2 load file"; the bytes are discarded), then the filename length and the
  * filename in REVERSE order. After this the drive opens the file and starts
- * streaming it back over the timed 2-bit protocol (step 3, not yet here).    */
+ * streaming it back over the timed 2-bit protocol (step 3).                  */
 void fastload_epyx_send_header(const char *name, unsigned char namelen);
+
+/* --- Step 3: drive -> host receive over the timed 2-bit protocol
+ *               (src/fastload_recv.s) -------------------------------------- */
+
+/* Wait for the drive's per-block "ready" (CLK low then high). 0 = ready,
+ * 1 = timeout. Call before each block's length byte.                         */
+unsigned char __fastcall__ epyx_wait_ready(void);
+
+/* Receive one byte over the timed 2-bit protocol. The sample timing is
+ * hardware-calibrated (see the PAD note in fastload_recv.s).                 */
+unsigned char __fastcall__ epyx_recv_byte(void);
+
+/* Timing diagnostic: capture the four raw $DD00 samples to $0370..$0373 so the
+ * PAD can be calibrated on hardware.                                         */
+void __fastcall__ epyx_recv_raw(void);
 
 /* Drive-side image embedded in our ROM (see src/fastload_blob.s and
  * src/fastload_drive.s). fastload_install() ships it to the drive.        */
@@ -116,17 +131,6 @@ void fastload_install_at(unsigned int entry);
 
 /* Convenience wrapper: install + M-E the Phase 7b sentinel entry.          */
 void fastload_install(void);
-
-/* Receive one byte via the 2-bit timed protocol. Cycle-tight; lives in
- * src/fastload_recv.s. Returns the byte the drive sent (with our drive's
- * pre-inversion compensating the bus inversion, the host's EOR chain
- * yields the original byte exactly).                                       */
-unsigned char __fastcall__ epyx_recv_byte(void);
-
-/* Diagnostic: same handshake + timed reads as epyx_recv_byte, but stores
- * the 4 raw $DD00 reads into $0370..$0373 instead of doing the EOR
- * unscramble. Lets the test see exactly what the host samples.            */
-void __fastcall__ epyx_recv_raw(void);
 
 /* Self-test entry point for test_fastload.py. Round-trips a known pattern
  * through drive RAM via M-W + M-R and leaves a footprint at $0340 onwards.

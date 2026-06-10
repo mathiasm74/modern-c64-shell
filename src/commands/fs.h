@@ -6,6 +6,7 @@ void cmd_dir(int argc, char *argv[]);    /* full 1541-style directory       */
 void cmd_ls(int argc, char *argv[]);     /* file names, colored by type     */
 void cmd_pwd(int argc, char *argv[]);    /* print the disk name             */
 void cmd_load(int argc, char *argv[]);   /* read a PRG into memory          */
+void cmd_fload(int argc, char *argv[]);  /* experimental Epyx fast load      */
 void cmd_run(int argc, char *argv[]);    /* run the loaded program          */
 void cmd_runstock(int argc, char *argv[]); /* swap to stock ROMs, then run  */
 void cmd_device(int argc, char *argv[]); /* set the default IEC device      */

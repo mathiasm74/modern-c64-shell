@@ -10,6 +10,7 @@
  */
 #include "shell.h"
 #include "iec.h"
+#include "fastload.h"
 
 #define CR    0x0D
 #define CLEAR 0x93
@@ -348,6 +349,83 @@ void cmd_load(int argc, char *argv[])
     print_hex16(load_start);
     puts_raw("-$");
     print_hex16((unsigned int)(p - 1));
+    chrout(CR);
+}
+#pragma rodata-name (pop)
+#pragma code-name (pop)
+
+/* fload <name> - experimental Epyx fast load (Phase 7). Installs the Epyx
+   handshake, requests the file, and receives it over the timed 2-bit protocol;
+   leaves it in RAM at its PRG load address (so `run` works afterwards). Kept
+   SEPARATE from `load` during bring-up: M-E $01A9 on a drive that isn't Epyx-
+   aware would run our fingerprint filler as drive code, so only point this at a
+   Meatloaf (or other Epyx-emulating drive). Uses device 8 (the fast loader's
+   fixed FA). The 2-bit receive timing still needs hardware calibration -- see
+   the PAD note in src/fastload_recv.s; until then this may return garbage.
+   Lives in CODE2/RODATA2 (KERNAL ROM). */
+#pragma code-name (push, "CODE2")
+#pragma rodata-name (push, "RODATA2")
+void cmd_fload(int argc, char *argv[])
+{
+    unsigned char namebuf[16];
+    unsigned char namelen = 0, i, n, b;
+    unsigned int count = 0;
+    unsigned char *dst = (unsigned char *)0x0800;
+    unsigned char lo = 0, hi = 0;
+    char c;
+
+    if (argc < 2) {
+        puts_raw("usage: fload <name>");
+        chrout(CR);
+        return;
+    }
+
+    /* fold the name to uppercase PETSCII (CBM convention), max 16 chars */
+    for (i = 0; argv[1][i] != 0 && namelen < sizeof(namebuf); ++i) {
+        c = argv[1][i];
+        if (c >= 'a' && c <= 'z')
+            c = (char)(c - 32);
+        namebuf[namelen++] = (unsigned char)c;
+    }
+
+    fastload_epyx_install();
+    if (iec_status() & ST_NODEV) {
+        report_no_device(8);
+        return;
+    }
+    fastload_epyx_send_header((const char *)namebuf, namelen);
+
+    /* receive the file in [length][data...] blocks until a zero-length block.
+       The first two bytes are the PRG load address. */
+    for (;;) {
+        if (epyx_wait_ready() != 0)         /* drive didn't engage / timeout */
+            break;
+        n = epyx_recv_byte();               /* block length; 0 = end of file */
+        if (n == 0)
+            break;
+        for (i = 0; i < n; ++i) {
+            b = epyx_recv_byte();
+            if (count == 0)
+                lo = b;
+            else if (count == 1) {
+                hi = b;
+                dst = (unsigned char *)(lo | ((unsigned int)hi << 8));
+            } else
+                *dst++ = b;
+            ++count;
+        }
+    }
+
+    if (count < 3) {                        /* nothing (or only an address)  */
+        puts_raw("fast load failed");
+        chrout(CR);
+        return;
+    }
+    load_start = (unsigned int)(lo | ((unsigned int)hi << 8));
+    puts_raw("floaded $");
+    print_hex16(load_start);
+    puts_raw("-$");
+    print_hex16((unsigned int)(dst - 1));
     chrout(CR);
 }
 #pragma rodata-name (pop)
