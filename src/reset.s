@@ -143,15 +143,19 @@ reset:
         sta CIA2_CRA            ; stop CIA #2 timers A/B
         sta CIA2_CRB
 
-        ; --- Boot ROM selector: hold C= for the stock ROMs ---------------
-        ; Read the Commodore (C=) key directly -- keyboard column PA7, row PB5
-        ; -- before anything is drawn. If it's held at power-on, switch the One
-        ; ROM to the stock C64 ROMs (via RBCP) instead of booting the shell.
+        ; --- Boot stock ROMs if C= is held or a cartridge is present -----
+        ; Two triggers hand the machine to the stock C64 ROMs (via RBCP) instead
+        ; of booting the shell, both checked before anything is drawn:
+        ;   * the Commodore (C=) key held at power-on (manual override), read
+        ;     straight off the keyboard matrix (column PA7, row PB5); and
+        ;   * a cartridge at $8000 carrying the CBM80 autostart signature -- e.g.
+        ;     a game on a Kung Fu Flash. Our KERNAL can't run cartridge software
+        ;     (it calls stock KERNAL routines we don't provide), so we let stock
+        ;     take over; the stock KERNAL reset then does the CBM80 autostart.
         ; Boot-time keyboard scan after Holger Gryska's MIT-licensed
-        ; c64-bootloader (itself derived from EasyFlash's crt0). On a shell-only
-        ; build (no host-control plugin / stock slot) the RBCP calls are inert
-        ; and the launcher just falls through (FFFC) back into the shell -- so
-        ; this only does anything on the `make onerom-stock` firmware.
+        ; c64-bootloader (derived from EasyFlash's crt0). On a shell-only build
+        ; (no host-control plugin / stock slot) the RBCP calls are inert and the
+        ; launcher falls through (FFFC) back into the shell.
         lda #$ff
         sta CIA1_DDRA           ; keyboard columns = outputs
         lda #$00
@@ -164,8 +168,26 @@ reset:
         bne @kb_settle
         lda CIA1_PRB            ; read rows; C= is bit 5
         and #$20
-        bne @boot_shell         ; bit set -> C= not held -> boot the shell
-        jmp _rbcp_launch_stock  ; C= held -> stock ROMs (never returns)
+        beq @boot_stock         ; C= held -> stock ROMs
+
+        ; cartridge present? CBM80 signature ($C3,$C2,$CD,$38,$30) at $8004-$8008
+        lda $8004
+        cmp #$C3
+        bne @boot_shell
+        lda $8005
+        cmp #$C2
+        bne @boot_shell
+        lda $8006
+        cmp #$CD
+        bne @boot_shell
+        lda $8007
+        cmp #$38
+        bne @boot_shell
+        lda $8008
+        cmp #$30
+        bne @boot_shell
+@boot_stock:
+        jmp _rbcp_launch_stock  ; stock ROMs (never returns)
 @boot_shell:
 
         ; --- VIC-II memory layout, bank, and colors ----------------------
@@ -257,29 +279,9 @@ reset:
 
         cli                     ; allow the timer IRQ (keyboard scan) to run
 
-        ; --- Auto-start an attached cartridge ----------------------------
-        ; If a ROM cart at $8000 carries the "CBM80" signature ($C3,$C2,$CD,
-        ; $38,$30 at $8004-$8008), the C64 convention is to JMP through the
-        ; cold-start vector at $8000. Most plug-in game carts use this so
-        ; the C64 boots straight into the game. Without this check the cart
-        ; just sits there and our shell takes over.
-        lda $8004
-        cmp #$C3
-        bne @no_cart
-        lda $8005
-        cmp #$C2
-        bne @no_cart
-        lda $8006
-        cmp #$CD
-        bne @no_cart
-        lda $8007
-        cmp #$38
-        bne @no_cart
-        lda $8008
-        cmp #$30
-        bne @no_cart
-        jmp ($8000)             ; cart's cold-start vector
-@no_cart:
+        ; (Cartridge autostart is handled earlier, before the banner: a CBM80
+        ; cart hands the machine to the stock ROMs -- see "Boot stock ROMs if
+        ; C= is held or a cartridge is present" above.)
 
         ; --- Hand control to the C shell ---------------------------------
         ; cc65 expects its data stack pointer initialized to one past the top
@@ -314,7 +316,7 @@ puts_at:
         rts
 
 banner1:
-        .byte "C64 Shell ROM v0.3", 0
+        .byte "C64 Shell ROM v0.4", 0
 banner2:
         .byte "Ready.", 0
 
