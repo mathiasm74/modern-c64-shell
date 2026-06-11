@@ -268,12 +268,18 @@ reset:
         ; becomes briefly visible before the swap. Our KERNAL can't run cartridge
         ; software itself (it expects stock KERNAL routines).
         ;
-        ; KNOWN-FLAKY (best-effort): with a cart on the bus the RBCP swap only
-        ; succeeds ~2/10 boots -- the cart electrically loads the bus and garbles
-        ; the swap reads; the rest go black (power-cycle to retry). This is not
-        ; software-fixable (a settle delay in launch.s did nothing). The reliable
-        ; route is to serve stock from boot (no swap); the clean toggle will be
-        ; `onerom control select`, unsupported on fw 0.6.13. Kept as-is by choice.
+        ; The swap stops our CIA IRQ timer first (see launch.s) so the game
+        ; doesn't inherit a live timer it never armed -- stock's cartridge-
+        ; autostart path skips the IOINIT/CINT that would otherwise clean up.
+        ;
+        ; Postmortem of the long flakiness hunt (games starting then going
+        ; black, varying run to run): it was NOT this swap. The cause was a
+        ; Meatloaf on the IEC bus interfering with cartridge games -- it
+        ; reproduced on a pure-stock-ROM firmware with no shell and no swap
+        ; (`make onerom-pure-stock-flash`), and unplugging the Meatloaf fixed
+        ; it. Games blank the screen while loading, so a wedged IEC handshake
+        ; presents as a black screen. If cart games go black at game start,
+        ; unplug IEC devices before suspecting this code.
         lda $8004
         cmp #$C3
         bne @no_cart
@@ -325,7 +331,7 @@ puts_at:
         rts
 
 banner1:
-        .byte "C64 Shell ROM v0.6", 0
+        .byte "C64 Shell ROM v0.9", 0
 banner2:
         .byte "Ready.", 0
 

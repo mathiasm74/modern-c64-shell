@@ -57,6 +57,32 @@ _rbcp_launch_stock:
         ; Once we want a planted-CBM80-style autostart, we'll bring back an
         ; entry argument and patch a JMP in the trampoline.
 
+        ; --- Quiet our IRQ source before swapping ------------------------
+        ; If we're swapping from the running shell (the late cartridge-detect
+        ; path, or runstock) our CIA1 timer-A IRQ is live. On a real cartridge
+        ; boot no timer runs, and the stock KERNAL's cartridge path (JMP $8000)
+        ; skips IOINIT, so nothing would stop ours: the first IRQ after the
+        ; game's CLI goes through stock's $FF48 -> JMP ($0314) -> uninitialized
+        ; RAM. Stop both CIAs' timers and clear pending flags to restore the
+        ; real-cart-boot invariant (no IRQ until the game arms its own).
+        ; (Harmless on the early C= path, where the timers are already stopped,
+        ; and on runstock, where stock's BASIC reset re-inits the CIAs anyway.)
+        ;
+        ; Note: the game-start flakiness this was added for turned out to be a
+        ; Meatloaf on the IEC bus (see the postmortem note in reset.s); this
+        ; cleanup is kept because it's correct, not because it was the fix.
+        sei
+        lda #$7f
+        sta $DC0D               ; CIA1 ICR: disable all interrupt sources
+        sta $DD0D               ; CIA2 ICR
+        lda $DC0D               ; read to clear any pending flags
+        lda $DD0D
+        lda #$00
+        sta $DC0E               ; stop CIA1 timer A
+        sta $DC0F               ; stop CIA1 timer B
+        sta $DD0E               ; stop CIA2 timer A
+        sta $DD0F               ; stop CIA2 timer B
+
         ; Copy __RBCP_CODE_SIZE__ bytes from __RBCP_CODE_LOAD__ to
         ; __RBCP_CODE_RUN__ (which puts the library + trampoline in place).
         lda #<__RBCP_CODE_LOAD__
@@ -117,36 +143,17 @@ rbcp_trampoline:
                                         ; serving the new slot immediately
                                         ; (no polling per the protocol spec)
 
-        ; --- Settle before reading the reset vector ----------------------
-        ; Defensive spin before JMP (FFFC). Without a cartridge the swap is
-        ; reliable (runstock / C=), so this is a no-op there. It was added while
-        ; chasing the cart-present flakiness (shell boots + swaps, then ~80% of
-        ; boots go black) on a hunch the JMP raced a half-finished switch -- but
-        ; lengthening/adding the spin did NOT change the ~2/10 success rate, so
-        ; the cart failure is electrical (the cart loading the bus garbles the
-        ; RBCP swap reads), not a settle race. Kept as cheap insurance; the real
-        ; fix is `onerom control select` (USB slot switch, not yet supported on
-        ; fw 0.6.13) or booting stock directly. See the cart note in reset.s.
-        ldx #$00
-        ldy #$14
-@settle:
-        dex
-        bne @settle
-        dey
-        bne @settle
-
-        ; Hand off through the stock-KERNAL reset vector. Without this the
-        ; system runs with stock ROMs mapped but with *our* state still
-        ; resident -- $D018 still on the lowercase charset, our IRQ vector,
-        ; an uncleared screen, etc -- and any JMP into a user program
-        ; executes against that half-initialized environment (and produces
-        ; the scattered $A0 artifacts we saw on first hardware test). Going
-        ; through (FFFC) makes stock KERNAL do its IOINIT/RAMTAS/CINT,
-        ; reset the VIC, clear the screen, and land at the READY prompt.
-        ; A loaded program in RAM survives (RAM isn't cleared by the reset),
-        ; so `RUN` from BASIC after the prompt picks it up.
+        ; Hand off through the stock-KERNAL reset vector. For a cart this lands
+        ; in the CBM80 cold-start (stock reset's JMP ($8000)); with no cart it
+        ; runs the full stock init and reaches READY. A loaded program in RAM
+        ; survives the reset, so RUN from BASIC picks it up. (Going through
+        ; (FFFC) -- rather than into a half-initialized environment -- is also
+        ; what cleared the scattered $A0 artifacts seen on first hardware test.)
         ;
-        ; The patched-entry mechanism in _rbcp_launch_stock is retained for
-        ; future use (a planted CBM80 stub at $8000 that the stock reset
-        ; would autostart) but currently goes through this fallback instead.
+        ; NOTE: a RESTOR ($FF8A) call was tried here to fix the cart path's
+        ; skipped RAM vectors and didn't help (the flakiness it targeted was
+        ; later traced to a Meatloaf on the IEC bus -- see reset.s). It was
+        ; dropped again: real carts boot with uninitialized vectors anyway, so
+        ; they can't rely on them, and keeping the handoff a single JMP avoids
+        ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
