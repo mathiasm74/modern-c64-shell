@@ -11,6 +11,7 @@
 .import set_line_ptrs
 .import pet2scr                 ; ASCII -> screen code (shared with CHROUT)
 .import iec_init                ; serial bus port setup
+.import _rbcp_launch_stock      ; RBCP: swap the One ROM to the stock ROMs
 .importzp DFLTN, DFLTO, LDTND   ; default I/O channels (kernal_stubs.s)
 
 ; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
@@ -141,6 +142,31 @@ reset:
         sta CIA1_CRB
         sta CIA2_CRA            ; stop CIA #2 timers A/B
         sta CIA2_CRB
+
+        ; --- Boot ROM selector: hold C= for the stock ROMs ---------------
+        ; Read the Commodore (C=) key directly -- keyboard column PA7, row PB5
+        ; -- before anything is drawn. If it's held at power-on, switch the One
+        ; ROM to the stock C64 ROMs (via RBCP) instead of booting the shell.
+        ; Boot-time keyboard scan after Holger Gryska's MIT-licensed
+        ; c64-bootloader (itself derived from EasyFlash's crt0). On a shell-only
+        ; build (no host-control plugin / stock slot) the RBCP calls are inert
+        ; and the launcher just falls through (FFFC) back into the shell -- so
+        ; this only does anything on the `make onerom-stock` firmware.
+        lda #$ff
+        sta CIA1_DDRA           ; keyboard columns = outputs
+        lda #$00
+        sta CIA1_DDRB           ; keyboard rows = inputs
+        lda #$7f
+        sta CIA1_PRA            ; drive column PA7 low
+        ldx #$10                ; let the key matrix settle
+@kb_settle:
+        dex
+        bne @kb_settle
+        lda CIA1_PRB            ; read rows; C= is bit 5
+        and #$20
+        bne @boot_shell         ; bit set -> C= not held -> boot the shell
+        jmp _rbcp_launch_stock  ; C= held -> stock ROMs (never returns)
+@boot_shell:
 
         ; --- VIC-II memory layout, bank, and colors ----------------------
         lda #MEMPTR_0400
