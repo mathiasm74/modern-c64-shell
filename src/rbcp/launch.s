@@ -30,13 +30,13 @@
 .import __RBCP_CODE_RUN__
 .import __RBCP_CODE_SIZE__
 
-; Stock ROMs live in flash slot 3 of cfg/onerom-stock.json (the 4th
-; chip_set: system/usb, host-control, shell, stock). We load that into a
-; RAM slot the device isn't currently serving and then switch to it.
-; The exact safe RAM slot to use is device-dependent; slot 1 is the
-; reference's choice in the bootloader example, and a reasonable guess
-; until hardware testing tells us otherwise.
-RBCP_STOCK_FLASH_SLOT = 3
+; Stock ROMs are the 4th chip_set in cfg/onerom-stock.json (system/usb,
+; host-control, shell, stock) -- but RBCP indexes by loadable ROM SET, not
+; raw slot: `onerom inspect info` reports rom_set_count = 2 (shell=0,
+; stock=1), so the plugin slots don't count. The stock ROM set is flash
+; slot 1, NOT 3 (3 is out of range -> loads garbage -> black screen). We
+; load it into a RAM slot the device isn't serving and switch to it.
+RBCP_STOCK_FLASH_SLOT = 1
 RBCP_STOCK_RAM_SLOT   = 1
 
 ; Scratch in the gap above iec.s's $A9 SECADR and below the KERNAL's $B7
