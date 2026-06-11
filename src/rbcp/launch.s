@@ -117,6 +117,24 @@ rbcp_trampoline:
                                         ; serving the new slot immediately
                                         ; (no polling per the protocol spec)
 
+        ; --- Settle before reading the reset vector ----------------------
+        ; Defensive spin before JMP (FFFC). Without a cartridge the swap is
+        ; reliable (runstock / C=), so this is a no-op there. It was added while
+        ; chasing the cart-present flakiness (shell boots + swaps, then ~80% of
+        ; boots go black) on a hunch the JMP raced a half-finished switch -- but
+        ; lengthening/adding the spin did NOT change the ~2/10 success rate, so
+        ; the cart failure is electrical (the cart loading the bus garbles the
+        ; RBCP swap reads), not a settle race. Kept as cheap insurance; the real
+        ; fix is `onerom control select` (USB slot switch, not yet supported on
+        ; fw 0.6.13) or booting stock directly. See the cart note in reset.s.
+        ldx #$00
+        ldy #$14
+@settle:
+        dex
+        bne @settle
+        dey
+        bne @settle
+
         ; Hand off through the stock-KERNAL reset vector. Without this the
         ; system runs with stock ROMs mapped but with *our* state still
         ; resident -- $D018 still on the lowercase charset, our IRQ vector,

@@ -143,19 +143,17 @@ reset:
         sta CIA2_CRA            ; stop CIA #2 timers A/B
         sta CIA2_CRB
 
-        ; --- Boot stock ROMs if C= is held or a cartridge is present -----
-        ; Two triggers hand the machine to the stock C64 ROMs (via RBCP) instead
-        ; of booting the shell, both checked before anything is drawn:
-        ;   * the Commodore (C=) key held at power-on (manual override), read
-        ;     straight off the keyboard matrix (column PA7, row PB5); and
-        ;   * a cartridge at $8000 carrying the CBM80 autostart signature -- e.g.
-        ;     a game on a Kung Fu Flash. Our KERNAL can't run cartridge software
-        ;     (it calls stock KERNAL routines we don't provide), so we let stock
-        ;     take over; the stock KERNAL reset then does the CBM80 autostart.
+        ; --- Boot ROM selector: hold C= for the stock ROMs --------------
+        ; Read the Commodore (C=) key directly (keyboard column PA7, row PB5)
+        ; before anything is drawn. Held at power-on -> switch the One ROM to the
+        ; stock C64 ROMs (via RBCP) instead of booting the shell. (A cartridge is
+        ; the other stock-swap trigger, but that check is deferred until after the
+        ; screen/IEC init -- see "Cartridge auto-detect" below -- to give a Kung
+        ; Fu Flash time to present its cart and to ride out the One ROM/cart boot
+        ; race that otherwise left the screen black when we swapped too early.)
         ; Boot-time keyboard scan after Holger Gryska's MIT-licensed
         ; c64-bootloader (derived from EasyFlash's crt0). On a shell-only build
-        ; (no host-control plugin / stock slot) the RBCP calls are inert and the
-        ; launcher falls through (FFFC) back into the shell.
+        ; the RBCP call is inert and the launcher falls through (FFFC) to the shell.
         lda #$ff
         sta CIA1_DDRA           ; keyboard columns = outputs
         lda #$00
@@ -168,26 +166,8 @@ reset:
         bne @kb_settle
         lda CIA1_PRB            ; read rows; C= is bit 5
         and #$20
-        beq @boot_stock         ; C= held -> stock ROMs
-
-        ; cartridge present? CBM80 signature ($C3,$C2,$CD,$38,$30) at $8004-$8008
-        lda $8004
-        cmp #$C3
-        bne @boot_shell
-        lda $8005
-        cmp #$C2
-        bne @boot_shell
-        lda $8006
-        cmp #$CD
-        bne @boot_shell
-        lda $8007
-        cmp #$38
-        bne @boot_shell
-        lda $8008
-        cmp #$30
-        bne @boot_shell
-@boot_stock:
-        jmp _rbcp_launch_stock  ; stock ROMs (never returns)
+        bne @boot_shell         ; C= not held -> boot the shell
+        jmp _rbcp_launch_stock  ; C= held -> stock ROMs (never returns)
 @boot_shell:
 
         ; --- VIC-II memory layout, bank, and colors ----------------------
@@ -279,9 +259,38 @@ reset:
 
         cli                     ; allow the timer IRQ (keyboard scan) to run
 
-        ; (Cartridge autostart is handled earlier, before the banner: a CBM80
-        ; cart hands the machine to the stock ROMs -- see "Boot stock ROMs if
-        ; C= is held or a cartridge is present" above.)
+        ; --- Cartridge auto-detect (deferred from the early C= check) -----
+        ; A cartridge at $8000 carrying the CBM80 signature ($C3,$C2,$CD,$38,$30
+        ; at $8004-$8008) -- e.g. a game on a Kung Fu Flash -- hands the machine
+        ; to the stock ROMs, whose KERNAL then does the CBM80 autostart. We check
+        ; HERE, after the full screen/IEC init, rather than at the early C= check:
+        ; a KFF needs time after power-on to present its cart, and the banner
+        ; becomes briefly visible before the swap. Our KERNAL can't run cartridge
+        ; software itself (it expects stock KERNAL routines).
+        ;
+        ; KNOWN-FLAKY (best-effort): with a cart on the bus the RBCP swap only
+        ; succeeds ~2/10 boots -- the cart electrically loads the bus and garbles
+        ; the swap reads; the rest go black (power-cycle to retry). This is not
+        ; software-fixable (a settle delay in launch.s did nothing). The reliable
+        ; route is to serve stock from boot (no swap); the clean toggle will be
+        ; `onerom control select`, unsupported on fw 0.6.13. Kept as-is by choice.
+        lda $8004
+        cmp #$C3
+        bne @no_cart
+        lda $8005
+        cmp #$C2
+        bne @no_cart
+        lda $8006
+        cmp #$CD
+        bne @no_cart
+        lda $8007
+        cmp #$38
+        bne @no_cart
+        lda $8008
+        cmp #$30
+        bne @no_cart
+        jmp _rbcp_launch_stock  ; cartridge present -> stock ROMs (never returns)
+@no_cart:
 
         ; --- Hand control to the C shell ---------------------------------
         ; cc65 expects its data stack pointer initialized to one past the top
@@ -316,7 +325,7 @@ puts_at:
         rts
 
 banner1:
-        .byte "C64 Shell ROM v0.4", 0
+        .byte "C64 Shell ROM v0.6", 0
 banner2:
         .byte "Ready.", 0
 
