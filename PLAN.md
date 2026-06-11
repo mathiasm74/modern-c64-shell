@@ -363,6 +363,88 @@ When working on a phase:
 
 ---
 
+## Backlog / next up (post-hardware bring-up)
+
+Concrete follow-ups from the fast-loader + boot-selector hardware bring-up
+(Phase 7/10). Ordered by leverage and dependency. **RBCP is the keystone** --
+the boot selector, the Phase-9 stock handoff, the `basic`/Simons' swap, and
+likely the lazy-load overlays all ride on it.
+
+### 1. RBCP ROM-swap validation
+
+**Goal:** `runstock` and the C= boot selector actually switch the One ROM to the
+stock ROMs on real hardware (the swap currently never engages).
+
+**What's known:** the C= detection works (reset.s reads keyboard col PA7 / row
+PB5); the host->plugin RBCP handshake doesn't complete. The host-control
+plugin's `command_page` defaults to 0 and only processes reads on the page it
+watches. Our `rbcp_config.s` uses command page `$EE` / back-channel `$EF00`;
+Holger Gryska's proven c64-bootloader uses `$E0` / `$E100`. Our regions also sit
+on top of our KERNAL code.
+
+**Tasks:**
+- Relocate the RBCP command page + 1 KB back-channel into the KERNAL ROM's free
+  `$F2D1-$FC84` block, with controlled progress/response bytes.
+- Reconcile the knock / command-page bootstrap with the plugin (confirm whether
+  the host configures the page via `enter_cmd_resp` or must match a default).
+- Iterate on hardware (`make onerom-stock-flash`); expect several rounds.
+
+**Done when:** holding C= at boot -> stock C64 `READY.`, and `runstock` from the
+shell does the same. Unblocks everything below + Phase 9.
+
+### 2. `basic` command -> Simons' BASIC
+
+**Goal:** a `basic` command (and/or a boot-menu entry) that swaps to Simons'
+BASIC.
+
+**Notes:** Simons' BASIC is a 16 KB autostart cartridge (`$8000-$BFFF`) riding on
+the stock KERNAL/BASIC, so it's another One ROM slot (Simons' cart + stock ROMs)
+and a swap to it -- essentially `runstock` with a different target slot. User
+supplies the Simons' ROM (gitignored, like `stock-roms/`). **Depends on #1.**
+
+### 3. Fast-loader -> `load` integration & polish
+
+**Goal:** make the fast path automatic and safe.
+
+**Tasks:**
+- Fold `fload` into `load`: try the Epyx fast path, fall back to standard IEC if
+  the drive doesn't engage (so a non-Epyx drive isn't handed a stray M-E $01A9).
+- Use `default_device` instead of the hardcoded device 8.
+- Decide whether `fload` stays as an explicit command too.
+
+### 4. Lazy-load + cache command overlays
+
+**Goal:** break past the 8+8 KB ceiling -- keep core commands resident, store
+extra command code in additional One ROM flash slots, and load + cache each
+command's code into C64 RAM on first use.
+
+**Design spike first (not yet a buildable task):**
+- How to pull a command's bytes from an extra flash slot into C64 RAM: is there a
+  fast RBCP "read N bytes from slot X" path, or only the byte-at-a-time NV-peek?
+  If neither, fall back to whole-bank swap via a RAM trampoline.
+- Dispatch table grows a per-command location (resident vs slot+offset).
+- RAM cache region + eviction policy.
+- Relocatable command code, or fixed per-command load addresses (cc65 overlays).
+
+Almost certainly rides on RBCP (#1).
+
+### 5. Fast-loader reliability for large / network files
+
+**Goal:** fix or characterize the GOTD desync (a large dynamic Meatloaf link ends
+at random addresses; small local files are reliable).
+
+**Notes:** the error-rate math points at network/dynamic streaming, not size. The
+first real step needs a clean **large-local** test -- blocked on getting a file
+onto Meatloaf (an SD card). May end up documented as a Meatloaf limit.
+
+### Already in the plan, re-rank as you like
+
+AUTOEXEC (deferred, Phase 8) · broader drive testing -- real 1541 fast-load
+fallback, SD2IEC (Phase 10) · software-compat corpus + stock handoff (Phase 9,
+depends on #1) · release packaging / tagging (Phase 10 done-when).
+
+---
+
 ## Beyond Phase 10
 
 Possible directions if you want to keep going:
