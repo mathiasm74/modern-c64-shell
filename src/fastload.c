@@ -142,12 +142,13 @@ void fastload_epyx_install(void)
     fastload_me(FL_EPYX_ME);
 }
 
-void fastload_epyx_send_header(const char *name, unsigned char namelen)
+unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen)
 {
     unsigned int k;
+    unsigned char rc = epyx_send_begin();
 
-    if (epyx_send_begin() != 0)         /* drive never signalled "ready"     */
-        return;
+    if (rc != 0)                        /* drive never signalled "ready"     */
+        return rc;
 
     /* 256-byte op routine: Meatloaf only sums it (and discards the bytes), so
        send 255 x $00 + $86 = checksum $86 ("V2 load file").                  */
@@ -162,6 +163,7 @@ void fastload_epyx_send_header(const char *name, unsigned char namelen)
         epyx_send_byte((unsigned char)name[--namelen]);
 
     epyx_send_end();
+    return 0;
 }
 
 /* Self-test entry point for test_fastload.py.
@@ -234,36 +236,6 @@ void fastload_selftest_me(void)
     *(unsigned char *)0x0351 = sentinel;
     *(unsigned char *)0x0352 = iec_status();
     *(unsigned char *)0x0350 = 0xAA;
-}
-
-void fastload_selftest_2bit(void)
-{
-    unsigned char b;
-    unsigned char pair_buf[4];
-
-    fastload_install_at(FASTLOAD_DRIVE_ONE_BYTE);
-    *(unsigned char *)0x0362 = iec_status();
-
-    b = epyx_recv_byte();
-    *(unsigned char *)0x0361 = b;
-
-    fastload_mr(0x0600, pair_buf, 4);
-    *(unsigned char *)0x0364 = pair_buf[0];
-    *(unsigned char *)0x0365 = pair_buf[1];
-    *(unsigned char *)0x0366 = pair_buf[2];
-    *(unsigned char *)0x0367 = pair_buf[3];
-
-    *(unsigned char *)0x0360 = 0xAA;
-}
-
-/* Raw-read diagnostic variant: install, M-E one_byte, then capture the 4
- * $DD00 reads at $0370 (set by epyx_recv_raw itself). Footprint:
- *   $0368 = $AA marker  $0370..$0373 = R1..R4 raw reads                  */
-void fastload_selftest_2bit_raw(void)
-{
-    fastload_install_at(FASTLOAD_DRIVE_ONE_BYTE);
-    epyx_recv_raw();
-    *(unsigned char *)0x0368 = 0xAA;
 }
 
 #pragma code-name (pop)

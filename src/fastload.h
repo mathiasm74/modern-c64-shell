@@ -96,8 +96,10 @@ void __fastcall__ epyx_send_end(void);
  * routine whose only checked property is its 8-bit additive checksum ($86 =
  * "V2 load file"; the bytes are discarded), then the filename length and the
  * filename in REVERSE order. After this the drive opens the file and starts
- * streaming it back over the timed 2-bit protocol (step 3).                  */
-void fastload_epyx_send_header(const char *name, unsigned char namelen);
+ * streaming it back over the timed 2-bit protocol (step 3). Returns 0 if the
+ * "ready for header" handshake succeeded, 1 if it timed out (the drive never
+ * entered Epyx mode -- bad fingerprint, or Epyx not enabled on the drive).   */
+unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen);
 
 /* --- Step 3: drive -> host receive over the timed 2-bit protocol
  *               (src/fastload_recv.s) -------------------------------------- */
@@ -109,10 +111,6 @@ unsigned char __fastcall__ epyx_wait_ready(void);
 /* Receive one byte over the timed 2-bit protocol. The sample timing is
  * hardware-calibrated (see the PAD note in fastload_recv.s).                 */
 unsigned char __fastcall__ epyx_recv_byte(void);
-
-/* Timing diagnostic: capture the four raw $DD00 samples to $0370..$0373 so the
- * PAD can be calibrated on hardware.                                         */
-void __fastcall__ epyx_recv_raw(void);
 
 /* Drive-side image embedded in our ROM (see src/fastload_blob.s and
  * src/fastload_drive.s). fastload_install() ships it to the drive.        */
@@ -144,15 +142,5 @@ void fastload_selftest(void);
  *   $0351 = the byte read back from $07FF in drive RAM ($42 on success)
  *   $0352 = ST after the round-trip                                      */
 void fastload_selftest_me(void);
-
-/* Third selftest: install, M-E the one-byte 2-bit sender, receive the byte
- * via epyx_recv_byte. Footprint:
- *   $0360 = $AA when it ran to completion
- *   $0361 = the byte received via the 2-bit protocol ($42 on success)
- *   $0362 = ST after install                                            */
-void fastload_selftest_2bit(void);
-
-/* Raw-read diagnostic: like _2bit but stores R1..R4 to $0370..$0373.    */
-void fastload_selftest_2bit_raw(void);
 
 #endif /* FASTLOAD_H */

@@ -89,12 +89,16 @@ DDST   = $FC            ; our current $DD00 output bits (CLK/DATA we drive)
 .endproc
 
 ; ---------------------------------------------------------------------------
-; _epyx_send_end - release CLK and DATA (hand the bus to the drive for the data
-; download) and re-enable IRQs. void.
+; _epyx_send_end - hand the bus to the drive for the data download. Release CLK
+; (the drive drives it now) but HOLD DATA low = "not ready": the drive's
+; transmitEpyxByte parks on "wait for DATA high" with CLK held high, so the
+; receiver can sync to that held CLK-high and only then release DATA (per byte)
+; to start each timed transfer. Re-enables IRQs. void.
 ; ---------------------------------------------------------------------------
 .proc _epyx_send_end
         lda DD00
-        and #<~(B_CLK | B_DATA)
+        and #<~B_CLK                    ; release CLK
+        ora #B_DATA                     ; hold DATA low ("not ready")
         sta DD00
         cli
         rts

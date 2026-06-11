@@ -393,14 +393,20 @@ void cmd_fload(int argc, char *argv[])
         report_no_device(8);
         return;
     }
-    fastload_epyx_send_header((const char *)namebuf, namelen);
+    if (fastload_epyx_send_header((const char *)namebuf, namelen) != 0) {
+        /* the drive never did the Epyx "ready for header" handshake: it isn't
+           Epyx-capable (or the protocol isn't enabled on it). */
+        puts_raw("fast load not supported");
+        chrout(CR);
+        return;
+    }
 
     /* receive the file in [length][data...] blocks until a zero-length block.
        The first two bytes are the PRG load address. */
     for (;;) {
-        if (epyx_wait_ready() != 0)         /* drive didn't engage / timeout */
+        if (epyx_wait_ready() != 0)         /* drive never signalled a block  */
             break;
-        n = epyx_recv_byte();               /* block length; 0 = end of file */
+        n = epyx_recv_byte();               /* block length; 0 = end of file  */
         if (n == 0)
             break;
         for (i = 0; i < n; ++i) {
