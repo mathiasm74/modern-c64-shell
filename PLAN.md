@@ -497,10 +497,25 @@ overlay-library offsets need no translation. The lib additions
 (`rbcp_cmd_slot_peek`, `rbcp_cmd_exit_cmd_resp`, `rbcp_copy_to_ram`) are the
 building blocks the real loader will reuse.
 
-**Next chunk:** the overlay library + resident loader -- `overlays.bin` packing
-(per-command cc65 modules at a fixed cache address + generated directory), a
-flash chip_set for it in `cfg/onerom-stock.json`, LOAD_SLOT-once-per-boot, and
-the dispatch-miss path (peek loop -> RAM cache -> call).
+**Overlay loader DONE (2026-06-12, v0.11, hardware-verified).** `about` is the
+first shell command whose code is not in the 16KB ROM: src/overlays/about.s ->
+256-byte page in build/overlays.bin (8KB chip_set, loadable ROM set 2) ->
+fetched on first use by `_overlay_fetch_page` (enter CR, LOAD_SLOT overlays ->
+RAM slot 1, SLOT_PEEK page, copy to the $CE00 cache, exit) -> called via the
+thunk in src/commands/overlay.c, which caches the page number (repeat calls
+skip the device). First call is imperceptibly slower than resident; repeats
+indistinguishable. Adding a command = drop a module in src/overlays/, append
+to OVERLAYS in the Makefile (position = page number), add a thunk.
+
+**Remaining for the full tardis vision:**
+- Multi-page overlays (loop pages into a bigger cache; needs a size directory).
+- C overlays (cc65-compiled, own cfg with a small runtime-less setup; overlays
+  call fixed KERNAL entries today -- a shell API jump table at a fixed ROM
+  address would widen what they can do).
+- Generated directory (offset/size per command) once overlays vary in size.
+- Migrate fat residents (help text, future mon/less growth) to overlays to
+  relieve the full BASIC ROM -- note migrated commands become hardware-only
+  unless their VICE tests pre-seed the cache page + tag.
 
 ### 5. Fast-loader reliability for large / network files
 
