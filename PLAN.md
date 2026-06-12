@@ -487,8 +487,20 @@ many slots -- effectively as much command code as the flash holds.
 - Hardware-validated only (VICE doesn't model the One ROM), but it sits on the
   now-proven RBCP layer -- incremental, not blind.
 
-**First buildable step:** add `SLOT_PEEK` to `src/rbcp/`, then a hardware proof:
-peek a known blob from a second RAM slot and read it back at $FA08.
+**Proof of concept DONE (2026-06-12, v0.10, hardware-verified).** The `tardis`
+command (`cmd_tardis` in mem.c + `_rbcp_poc_peek` in launch.s) SLOT_PEEKs 64
+bytes from RAM slot 0 (our own image) into the back-channel window and compares:
+on the real One ROM it printed `matches kernal ($e000)` -- the transport works,
+peeked bytes are readable at $FA08 after exiting command mode, and **slot
+images are kernal-half-first** (offset 0 = kernal byte 0, basic at +$2000), so
+overlay-library offsets need no translation. The lib additions
+(`rbcp_cmd_slot_peek`, `rbcp_cmd_exit_cmd_resp`, `rbcp_copy_to_ram`) are the
+building blocks the real loader will reuse.
+
+**Next chunk:** the overlay library + resident loader -- `overlays.bin` packing
+(per-command cc65 modules at a fixed cache address + generated directory), a
+flash chip_set for it in `cfg/onerom-stock.json`, LOAD_SLOT-once-per-boot, and
+the dispatch-miss path (peek loop -> RAM cache -> call).
 
 ### 5. Fast-loader reliability for large / network files
 
