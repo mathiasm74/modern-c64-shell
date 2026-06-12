@@ -412,21 +412,63 @@ supplies the Simons' ROM (gitignored, like `stock-roms/`). **Depends on #1.**
 - Use `default_device` instead of the hardcoded device 8.
 - Decide whether `fload` stays as an explicit command too.
 
-### 4. Lazy-load + cache command overlays
+### 4. Lazy-load + cache command overlays (the "tardis")
 
 **Goal:** break past the 8+8 KB ceiling -- keep core commands resident, store
-extra command code in additional One ROM flash slots, and load + cache each
-command's code into C64 RAM on first use.
+extra command code in One ROM flash slots, and load + cache each command's code
+on first use. Also relieves the (full) BASIC ROM: fat residents (`help` text,
+`mon`, `less`) can move into overlays.
 
-**Design spike first (not yet a buildable task):**
-- How to pull a command's bytes from an extra flash slot into C64 RAM: is there a
-  fast RBCP "read N bytes from slot X" path, or only the byte-at-a-time NV-peek?
-  If neither, fall back to whole-bank swap via a RAM trampoline.
-- Dispatch table grows a per-command location (resident vs slot+offset).
-- RAM cache region + eviction policy.
-- Relocatable command code, or fixed per-command load addresses (cc65 overlays).
+**Design spike DONE (2026-06-12).** The mechanism was verified by reading the
+host-control plugin source and the RBCP defs; it's better than hoped -- block
+transport straight into executable ROM space, not byte-at-a-time pokes.
 
-Almost certainly rides on RBCP (#1).
+**The mechanism (hot-modifying the active ROM):**
+- `SLOT_PEEK` (GRP_READ $07, device side implements it): args = count (0=256),
+  24-bit offset, source RAM slot. The device copies up to 256 bytes from any
+  RAM slot's image **into the back-channel data section of the ACTIVE slot** --
+  i.e. they appear in our live KERNAL ROM at $FA08+, readable/executable as
+  ordinary ROM. One sub-millisecond command moves 256 bytes (a command's args
+  ride in the low address byte of single command-page reads, ~10 cycles/byte;
+  a 2 KB overlay is 8 peeks -- imperceptible at the prompt).
+- Peeked bytes PERSIST after `EXIT_CMD_RESP` (the exit handler only clears the
+  session flag; nothing restores the original ROM bytes), so the window stays
+  valid after leaving command mode.
+- `SLOT_PEEK` reads from a **RAM slot**, not flash: `LOAD_SLOT` the overlay
+  library (flash -> RAM slot 1) once per boot, lazily; peeks are cheap after.
+- `SLOT_POKE` (1 byte/command) exists too -- right for hot-patching, too slow
+  for bulk. `SLOT_POKE_ALL_BYTE` fills.
+
+**Architecture:**
+- Build: each overlay command is its own cc65 module linked at a fixed cache
+  address; Makefile packs them into `overlays.bin` (a pseudo-ROM chip_set in
+  `cfg/onerom-stock.json`) + a generated directory (offset/size per command)
+  compiled into the resident dispatch table.
+- Resident loader (small, KERNAL ROM): dispatch table gains resident-vs-
+  {offset,size} per command. On miss: SEI -> knock/enter CR -> (LOAD_SLOT once
+  per boot) -> SLOT_PEEK loop -> copy each 256-byte chunk from $FA08 to the RAM
+  cache -> exit CR -> CLI -> call. One-entry cache (remember which command is
+  loaded) makes repeats free.
+- Execution home: start RAM-cache-only (~2 KB around $C800, where the RBCP
+  trampoline already transiently lives) -- one mechanism, any size. Tiny
+  (<=256 B) commands could later run straight out of the window at $FA08
+  (zero RAM cost) if RAM gets precious.
+
+**Capacity:** each flash chip_set holds a 16 KB library and the device takes
+many slots -- effectively as much command code as the flash holds.
+
+**Caveats (all manageable):**
+- In CR mode every read of $E000-$E0FF is command traffic: loader runs with
+  IRQs masked and must not fetch from that page (it lives in upper KERNAL ROM).
+- RAM slot 1 is shared with the stock-swap target -- harmless (swapping to
+  stock means leaving the shell); reload lazily after.
+- Our vendored host lib predates `SLOT_PEEK` (plugin has it, v0.1.0 defs
+  don't) -- add it ourselves, ~20 lines mirroring an existing GRP_READ command.
+- Hardware-validated only (VICE doesn't model the One ROM), but it sits on the
+  now-proven RBCP layer -- incremental, not blind.
+
+**First buildable step:** add `SLOT_PEEK` to `src/rbcp/`, then a hardware proof:
+peek a known blob from a second RAM slot and read it back at $FA08.
 
 ### 5. Fast-loader reliability for large / network files
 
