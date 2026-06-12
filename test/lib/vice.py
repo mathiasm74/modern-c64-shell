@@ -268,9 +268,15 @@ class Vice:
         return vals[0] if vals else None
 
     def write_memory(self, addr, data):
-        """Write a sequence of byte values starting at `addr`."""
-        hexbytes = " ".join("%02x" % (b & 0xFF) for b in data)
-        self._command("> %04x %s" % (addr, hexbytes))
+        """Write a sequence of byte values starting at `addr`.
+
+        Chunked: the text monitor takes the bytes on the command line, and a
+        large block (e.g. seeding a 4KB overlay image) would blow its line
+        length limit as a single command."""
+        for i in range(0, len(data), 64):
+            chunk = data[i:i + 64]
+            hexbytes = " ".join("%02x" % (b & 0xFF) for b in chunk)
+            self._command("> %04x %s" % (addr + i, hexbytes))
 
     def write_byte(self, addr, value):
         self.write_memory(addr, [value])

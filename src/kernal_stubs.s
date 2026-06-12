@@ -37,6 +37,13 @@ LDMODE   = $93                   ; LOAD mode flag: 0 = use file's load addr,
                                  ; nonzero = override with the X/Y argument
 KSAVX    = $96                   ; X/Y save slots for entry points that need
 KSAVY    = $97                   ; to preserve them across an _iec_* call
+WRPEND   = $94                   ; nonzero = a CHROUT byte is buffered for the
+                                 ; IEC output channel (the stock $94 BSOUR-flag
+                                 ; role); the byte itself is in WRBYTE. The
+                                 ; one-byte deferral lets CLRCHN send the FINAL
+                                 ; byte with EOI, so the drive finalizes the
+                                 ; file instead of leaving a splat.
+WRBYTE   = $02BE                 ; the deferred CHROUT byte (page-2 scratch)
 STAL     = $C1                   ; $C1/$C2: save start address (resolved from A's zp ptr)
 MEMUSS   = $C3                   ; $C3/$C4: LOAD start override (X/Y on entry when SA=0)
 LA       = $B8                   ; logical file number (set by SETLFS)
@@ -167,6 +174,8 @@ chkout_impl:
         lda ST
         and #ST_NODEV
         bne @nodev
+        lda #$00
+        sta WRPEND              ; fresh channel: no byte deferred yet
         lda FA
         sta DFLTO
         clc
@@ -174,6 +183,39 @@ chkout_impl:
 @nodev:
         sec
         lda #ERR_DEVICE_NOT_PRESENT
+        rts
+
+; -------------------------------------------------------------------------
+; chrout_route - CHROUT ($FFD2) front door: route by DFLTO. Screen output
+; (DFLTO < 8) goes to chrout_impl as always. With an IEC output channel
+; (after CHKOUT), bytes go to the drive -- deferred by one so the last byte
+; can be sent with EOI at CLRCHN (the stock KERNAL's buffering contract).
+; Preserves A/X/Y per the KERNAL CHROUT contract.
+; -------------------------------------------------------------------------
+chrout_route:
+        pha
+        lda DFLTO
+        cmp #$08
+        bcs @to_iec
+        pla
+        jmp chrout_impl         ; screen path, unchanged
+@to_iec:
+        stx KSAVX
+        sty KSAVY
+        lda WRPEND
+        beq @defer              ; first byte: just buffer it
+        lda WRBYTE
+        jsr _iec_putbyte        ; send the previous byte (more data follows)
+@defer:
+        pla
+        sta WRBYTE
+        pha
+        lda #$80
+        sta WRPEND
+        pla
+        ldx KSAVX
+        ldy KSAVY
+        clc
         rts
 
 ; -------------------------------------------------------------------------
@@ -190,6 +232,14 @@ clrchn_impl:
         lda DFLTO
         cmp #$08
         bcc @no_out
+        lda WRPEND
+        beq @nopend
+        lda #$00
+        sta WRPEND
+        lda WRBYTE
+        jsr _iec_puteoi         ; flush the deferred byte WITH EOI: the drive
+                                ; marks end-of-file and CLOSE finalizes it
+@nopend:
         jsr _iec_unlisten
 @no_out:
         lda #$00
@@ -411,7 +461,7 @@ save_impl:
         jmp chrin_impl          ; $FFCF CHRIN / BASIN
 
 .segment "STUB_CHROUT"           ; linker places this at $FFD2
-        jmp chrout_impl
+        jmp chrout_route        ; screen, or the IEC channel set by CHKOUT
 
 .segment "STUB_LOAD_SAVE"        ; linker places this at $FFD5
         jmp load_impl           ; $FFD5 LOAD

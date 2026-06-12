@@ -90,6 +90,8 @@ scan_keyboard:
         beq @shift              ; right shift
         cpx #61
         beq @cbmkey             ; CBM (Commodore) key
+        cpx #58
+        beq @ctrlkey            ; CTRL key (a modifier, like the stock KERNAL)
         stx found_key           ; remember this key (last pressed wins)
         jmp @next
 @shift:
@@ -100,6 +102,11 @@ scan_keyboard:
 @cbmkey:
         lda SHFLAG
         ora #$02                ; bit1 = the CBM key is held
+        sta SHFLAG
+        jmp @next
+@ctrlkey:
+        lda SHFLAG
+        ora #$04                ; bit2 = CTRL held (matches stock $028D layout)
         sta SHFLAG
 @next:
         inx
@@ -126,12 +133,27 @@ scan_keyboard:
         sta RPTCNT
 @lookup:
         lda SHFLAG
+        and #$04                ; CTRL held?
+        bne @viactrl
+        lda SHFLAG
         and #$01                ; shift held?
         bne @shifted
         lda SHFLAG
         and #$02                ; CBM held?
         bne @viacbm
         lda keytab,x            ; unshifted decode
+        jmp @emit
+@viactrl:
+        ; CTRL+letter emits the ASCII control code ($01-$1A), nano-style:
+        ; ^k = $0B, ^x = $18, ... and ^i = $09 keeps TAB (and so the shell's
+        ; tab completion) reachable. CTRL with a non-letter emits the plain
+        ; unshifted character.
+        lda keytab,x
+        cmp #'a'
+        bcc @emit               ; below 'a': emit as-is
+        cmp #'z'+1
+        bcs @emit               ; above 'z': emit as-is
+        and #$1F                ; fold to the control code
         jmp @emit
 @shifted:
         lda keytab_shift,x      ; shifted decode: uppercase, !"#$ symbols,
@@ -182,7 +204,7 @@ keytab:
         .byte $39,$69,$6A,$30,$6D,$6B,$6F,$6E   ; 9 i j 0 m k o n
         .byte $2B,$70,$6C,$2D,$2E,$3A,$40,$2C   ; + p l - . : @ ,
         .byte $5C,$2A,$3B,$13,$00,$3D,$5E,$2F   ; POUND * ; HOME RSHIFT = ^ /
-        .byte $31,$5F,$09,$32,$20,$00,$71,$03   ; 1 <- CTRL(=TAB) 2 SPC CBM q STOP
+        .byte $31,$5F,$00,$32,$20,$00,$71,$03   ; 1 <- CTRL(mod) 2 SPC CBM q STOP
 
 ; SHIFTed decode, same matrix order. Cursor right/down become left/up ($9D/
 ; $91); HOME becomes CLR ($93). Punctuation/symbol keys with no useful shifted
@@ -195,4 +217,4 @@ keytab_shift:
         .byte $29,$49,$4A,$30,$4D,$4B,$4F,$4E   ; ) I J 0 M K O N
         .byte $2B,$50,$4C,$2D,$3E,$5B,$40,$3C   ; + P L - > [ @ <
         .byte $5C,$2A,$5D,$93,$00,$3D,$5E,$3F   ; POUND * ] CLR RSHIFT = ^ ?
-        .byte $21,$5F,$09,$22,$20,$00,$51,$03   ; ! <- CTRL " SPC CBM Q STOP
+        .byte $21,$5F,$00,$22,$20,$00,$51,$03   ; ! <- CTRL(mod) " SPC CBM Q STOP

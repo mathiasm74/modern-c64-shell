@@ -73,7 +73,21 @@ $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 # loadable ROM set: shell=0, stock=1, overlays=2). Not part of the 16KB shell
 # ROM -- only the onerom-stock firmware carries it. Page order here IS the
 # page numbering the resident thunks use (about = page 0).
-OVERLAYS := $(BUILD)/overlays/about.bin
+OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/edit.bin
+
+# The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;
+# cfg/overlay_edit.cfg). crt0 must link first so the header sits at the base.
+# The binary is padded to a 256 multiple so later overlays stay page-aligned.
+$(BUILD)/overlays/edit.s: src/overlays/edit.c | $(BUILD)
+	@mkdir -p $(BUILD)/overlays
+	$(CC) $(CC65FLAGS) -o $@ $<
+$(BUILD)/overlays/edit_c.o: $(BUILD)/overlays/edit.s
+	$(AS) $(ASFLAGS) -o $@ $<
+$(BUILD)/overlays/edit.bin: $(BUILD)/overlays/crt0.o $(BUILD)/overlays/edit_c.o cfg/overlay_edit.cfg
+	$(LD) -C cfg/overlay_edit.cfg -o $@ $(BUILD)/overlays/crt0.o $(BUILD)/overlays/edit_c.o $(RTLIB)
+	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
+	@echo "  edit overlay: $$(wc -c < $@) bytes"
+
 
 $(BUILD)/overlays/%.o: src/overlays/%.s | $(BUILD)
 	@mkdir -p $(BUILD)/overlays

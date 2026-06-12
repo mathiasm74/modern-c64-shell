@@ -48,6 +48,7 @@ const struct command shell_commands[] = {
     { "device", cmd_device },
     { "dir",    cmd_dir    },
     { "echo",   cmd_echo   },
+    { "edit",   cmd_edit   },
     { "exit",   cmd_exit   },
     { "fload",  cmd_fload  },
     { "help",   cmd_help   },

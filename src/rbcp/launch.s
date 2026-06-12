@@ -168,6 +168,23 @@ _overlay_fetch_page:
         jsr rbcp_copy_to_ram
         jmp rbcp_ovl_tramp      ; rts there returns to our caller
 
+; -------------------------------------------------------------------------
+; _overlay_fetch_multi - fetch N consecutive overlay pages to an arbitrary
+; RAM destination, one RBCP session for the whole run. Parameters go in the
+; page-2 mailbox (it must be RAM the library copy doesn't overwrite, and the
+; caller sets it BEFORE this is called):
+;   OVL_MB_PAGE ($02C0) first overlay page,
+;   OVL_MB_CNT  ($02C1) page count (>= 1),
+;   OVL_MB_DST  ($02C2) destination page (hi byte; lo is always $00).
+; The mailbox is consumed (PAGE/DST step per page, CNT counts down).
+; Returns A: 0 = ok, 1 = enter failed, 2 = load failed, 3 = peek failed,
+; 4 = exit failed.
+; -------------------------------------------------------------------------
+.export _overlay_fetch_multi
+_overlay_fetch_multi:
+        jsr rbcp_copy_to_ram
+        jmp rbcp_ovlm_tramp     ; rts there returns to our caller
+
 ; =========================================================================
 ; RAM-side trampoline. Linked into RBCP_CODE so it lives alongside the
 ; library; after _rbcp_launch_stock's copy it sits in RAM, where it can
@@ -322,3 +339,72 @@ rbcp_ovl_tramp:
         rts
 
 ovl_page: .byte 0               ; written at the RAM run address
+
+; -------------------------------------------------------------------------
+; rbcp_ovlm_tramp - RAM side of _overlay_fetch_multi: one session, looping
+; SLOT_PEEK + copy per page. The destination store's hi byte is patched per
+; page -- this code runs from RAM, so self-modification is fine.
+; -------------------------------------------------------------------------
+OVL_MB_PAGE = $02C0
+OVL_MB_CNT  = $02C1
+OVL_MB_DST  = $02C2
+
+rbcp_ovlm_tramp:
+        sei
+        jsr rbcp_reset
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @enter_fail
+        lda #OVL_RAM_SLOT
+        ldx #OVL_FLASH_SET
+        jsr rbcp_cmd_load_slot
+        bcs @load_fail
+@page:
+        lda #0
+        sta rbcp_arg1           ; offset lo (pages are 256-aligned)
+        sta rbcp_arg3           ; offset hi
+        lda OVL_MB_PAGE
+        sta rbcp_arg2           ; offset mid = page number
+        lda #0                  ; count 0 = 256 bytes
+        ldx #OVL_RAM_SLOT
+        jsr rbcp_cmd_slot_peek
+        bcs @peek_fail
+        lda OVL_MB_DST
+        sta @dst+2              ; patch the store's hi byte (RAM code)
+        ldy #0
+@cp:
+        lda RBCP_DATA_ADDR,y
+@dst:   sta $FF00,y             ; hi byte patched above
+        iny
+        bne @cp
+        inc OVL_MB_PAGE
+        inc OVL_MB_DST
+        dec OVL_MB_CNT
+        bne @page
+        jsr rbcp_cmd_exit_cmd_resp
+        bcs @exit_fail
+        cli
+        lda #0
+        ldx #0
+        rts
+@enter_fail:
+        cli
+        lda #1
+        ldx #0
+        rts
+@load_fail:
+        jsr rbcp_cmd_exit_cmd_resp      ; best effort: leave CR mode
+        cli
+        lda #2
+        ldx #0
+        rts
+@peek_fail:
+        jsr rbcp_cmd_exit_cmd_resp
+        cli
+        lda #3
+        ldx #0
+        rts
+@exit_fail:
+        cli
+        lda #4
+        ldx #0
+        rts

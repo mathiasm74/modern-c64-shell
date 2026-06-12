@@ -507,12 +507,26 @@ skip the device). First call is imperceptibly slower than resident; repeats
 indistinguishable. Adding a command = drop a module in src/overlays/, append
 to OVERLAYS in the Makefile (position = page number), add a thunk.
 
+**Multi-page C overlays DONE (2026-06-12, v0.12): the `edit` command.** A
+nano-like full-screen editor (~4.6KB, 18 pages -- nearly a third of the shell
+ROM's total size) living entirely in the overlay slot: gap-buffer text editing
+of 30KB documents at $0800-$7FFF, line-based cut/copy/paste (^K/^C/^U with
+nano's chain-append), save/load of SEQ files via the fixed KERNAL entry
+points, ^O save (with @0: replace), ^X exit with save prompt. Infrastructure
+that came with it: cc65 C overlays linked standalone at $8800 (own zeropage
+$40-$5F + own C stack, crt0 header with cache-validation magic + page count),
+`_overlay_fetch_multi` (N pages, one RBCP session, mailbox-parameterized),
+CTRL as a real keyboard modifier (SHFLAG bit2, CTRL+letter -> control codes),
+and KERNAL CHROUT now routing to IEC after CHKOUT with stock-style one-byte
+deferral so CLRCHN flushes the last byte with EOI. The editor is fully
+VICE-tested by pre-seeding the cache (test_edit.py); the fetch transport is
+the hardware-proven path `about` uses.
+
 **Remaining for the full tardis vision:**
-- Multi-page overlays (loop pages into a bigger cache; needs a size directory).
-- C overlays (cc65-compiled, own cfg with a small runtime-less setup; overlays
-  call fixed KERNAL entries today -- a shell API jump table at a fixed ROM
-  address would widen what they can do).
-- Generated directory (offset/size per command) once overlays vary in size.
+- Generated directory (offset/size per command) once overlay count grows --
+  today page numbers are positional constants (about=0, edit=1..18).
+- A shell API jump table at a fixed ROM address would widen what overlays can
+  reach beyond the KERNAL entries (e.g. default_device instead of device 8).
 - Migrate fat residents (help text, future mon/less growth) to overlays to
   relieve the full BASIC ROM -- note migrated commands become hardware-only
   unless their VICE tests pre-seed the cache page + tag.
