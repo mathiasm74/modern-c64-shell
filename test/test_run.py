@@ -36,7 +36,7 @@ def test_run_prints_and_returns(v):
     # The program ended in RTS, so the shell must have regained control --
     # a follow-up command still runs.
     _type(v, "ver")
-    assert _wait_for(v, "C64 Shell ROM v0.10"), \
+    assert _wait_for(v, "C64 Shell ROM v0.11"), \
         "shell did not return to the prompt after the program RTS'd\n%s" % v.screen_text()
 
 

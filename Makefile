@@ -38,7 +38,8 @@ SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/ie
          src/fastload_blob.s src/fastload_recv.s src/fastload_send.s \
          src/rbcp/rbcp.s src/rbcp/launch.s
 SRC_C := src/shell.c src/parser.c src/fastload.c \
-         src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c
+         src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c \
+         src/commands/overlay.c
 OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S)) \
          $(patsubst src/%.c,$(BUILD)/%.o,$(SRC_C))
 
@@ -64,6 +65,26 @@ $(BUILD)/%.o: src/%.s | $(BUILD)
 # launch.o, which includes the defs too) if either include changes.
 $(BUILD)/rbcp/rbcp.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
+
+# Tardis overlay library (PLAN.md backlog #4). Each overlay in src/overlays/
+# is linked standalone at the $CE00 cache address and padded to one 256-byte
+# page (cfg/overlay.cfg); the pages concatenate into overlays.bin, padded to
+# 8KB so it can ride in the One ROM firmware as a 2364 chip_set (the third
+# loadable ROM set: shell=0, stock=1, overlays=2). Not part of the 16KB shell
+# ROM -- only the onerom-stock firmware carries it. Page order here IS the
+# page numbering the resident thunks use (about = page 0).
+OVERLAYS := $(BUILD)/overlays/about.bin
+
+$(BUILD)/overlays/%.o: src/overlays/%.s | $(BUILD)
+	@mkdir -p $(BUILD)/overlays
+	$(AS) $(ASFLAGS) -o $@ $<
+$(BUILD)/overlays/%.bin: $(BUILD)/overlays/%.o cfg/overlay.cfg
+	$(LD) -C cfg/overlay.cfg -o $@ $<
+$(BUILD)/overlays.bin: $(OVERLAYS)
+	cat $(OVERLAYS) > $@
+	python3 -c "import sys; f=open('$@','r+b'); f.seek(0,2); n=f.tell(); \
+	  assert n <= 8192, 'overlays.bin overflow'; f.write(b'\xff'*(8192-n))"
+	@echo "  overlays.bin: $$(wc -c < $@) bytes ($(words $(OVERLAYS)) page(s))"
 
 # Drive-side fast-loader image. Assembled separately (origin $0500 in the
 # 1541's RAM) and incbin'd into the host ROM by src/fastload_blob.s. The
@@ -138,7 +159,7 @@ onerom: $(BASIC) $(KERNAL)
 # released sources, drop them in yourself (gitignored).
 ONEROM_STOCK_BASIC  := stock-roms/basic.901226-01.bin
 ONEROM_STOCK_KERNAL := stock-roms/kernal.901227-03.bin
-onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
+onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(BUILD)/overlays.bin
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) \
 		--config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
@@ -147,7 +168,7 @@ onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
 # Build the bank-swap firmware AND flash a connected One ROM, then reboot it
 # into running mode. Same shape as onerom-flash, but uses cfg/onerom-stock.json
 # so the device gets host-control + the stock-ROM second bank.
-onerom-stock-flash: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
+onerom-stock-flash: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(BUILD)/overlays.bin
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin

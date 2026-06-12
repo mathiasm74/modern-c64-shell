@@ -97,3 +97,20 @@ def test_tardis_reports_rbcp_timeout(v):
             break
     assert "rbcp error, stage 1" in v.screen_text(), \
         "tardis did not report the expected stage-1 timeout\n%s" % v.screen_text()
+
+
+def test_overlay_command_fails_gracefully_without_device(v):
+    # `about` is the first overlay command: its code is NOT in the shell ROM
+    # (it lives in the One ROM's overlays flash set), and the resident thunk
+    # fetches it through the same RBCP session machinery as tardis. In VICE
+    # no device answers, so the thunk must report the stage-1 enter failure
+    # rather than jumping into an unfilled cache page.
+    v.run_for(0.3)
+    v.write_memory(0x0277, [ord(c) for c in "about"] + [0x0D])
+    v.write_byte(0x00C6, 6)
+    for _ in range(10):
+        v.run_for(0.5)
+        if "overlay load failed, stage 1" in v.screen_text():
+            break
+    assert "overlay load failed, stage 1" in v.screen_text(), \
+        "about did not report the expected overlay-load failure\n%s" % v.screen_text()

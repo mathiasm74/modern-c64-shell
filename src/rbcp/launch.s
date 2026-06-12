@@ -150,6 +150,24 @@ _rbcp_poc_peek:
         jsr rbcp_copy_to_ram
         jmp rbcp_poc_tramp      ; rts there returns to our caller
 
+; -------------------------------------------------------------------------
+; _overlay_fetch_page - tardis overlay loader (C-callable, fastcall:
+; A = overlay page number). Fetches one 256-byte page from the overlays
+; flash set into the overlay cache at $CE00: enter command-response mode,
+; LOAD_SLOT the overlays flash set into RAM slot 1, SLOT_PEEK page*256 into
+; the back-channel window, copy the 256 bytes to the cache, exit. Returns
+; A: 0 = ok, 1 = enter failed, 2 = load failed, 3 = peek failed,
+; 4 = exit failed. Same RAM-copy discipline as the PoC (see _rbcp_poc_peek).
+;
+; LOAD_SLOT on every fetch is deliberate first-pass simplicity: it also
+; repairs RAM slot 1 after a runstock/cart swap clobbered it with the stock
+; ROMs, at the cost of an in-device 8KB copy (~ms) per cache miss.
+; -------------------------------------------------------------------------
+.export _overlay_fetch_page
+_overlay_fetch_page:
+        jsr rbcp_copy_to_ram
+        jmp rbcp_ovl_tramp      ; rts there returns to our caller
+
 ; =========================================================================
 ; RAM-side trampoline. Linked into RBCP_CODE so it lives alongside the
 ; library; after _rbcp_launch_stock's copy it sits in RAM, where it can
@@ -235,3 +253,72 @@ rbcp_poc_tramp:
         lda #3
         ldx #0
         rts
+
+; -------------------------------------------------------------------------
+; rbcp_ovl_tramp - RAM side of _overlay_fetch_page. The 256-byte copy out
+; of the back-channel window happens while still in command-response mode
+; (back-channel reads are ordinary served-ROM reads, the same thing the
+; library's own polling does); only command-page fetches are off limits,
+; and this runs from the RAM copy.
+; -------------------------------------------------------------------------
+OVERLAY_CACHE  = $CE00          ; free RAM above the RBCP_RAM region
+OVL_FLASH_SET  = 2              ; loadable ROM-set index: shell=0, stock=1,
+                                ; overlays=2 (cfg/onerom-stock.json order;
+                                ; plugins don't count)
+OVL_RAM_SLOT   = 1              ; staging slot (shared with the stock swap)
+
+rbcp_ovl_tramp:
+        sta ovl_page            ; fastcall A = page number
+        sei
+        jsr rbcp_reset
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @enter_fail
+        lda #OVL_RAM_SLOT
+        ldx #OVL_FLASH_SET
+        jsr rbcp_cmd_load_slot
+        bcs @load_fail
+        lda #0
+        sta rbcp_arg1           ; offset lo = 0 (pages are 256-aligned)
+        sta rbcp_arg3           ; offset hi
+        lda ovl_page
+        sta rbcp_arg2           ; offset mid = page number
+        lda #0                  ; count 0 = 256 bytes
+        ldx #OVL_RAM_SLOT
+        jsr rbcp_cmd_slot_peek
+        bcs @peek_fail
+        ldy #0
+@copy:
+        lda RBCP_DATA_ADDR,y
+        sta OVERLAY_CACHE,y
+        iny
+        bne @copy
+        jsr rbcp_cmd_exit_cmd_resp
+        bcs @exit_fail
+        cli
+        lda #0
+        ldx #0
+        rts
+@enter_fail:
+        cli
+        lda #1
+        ldx #0
+        rts
+@load_fail:
+        jsr rbcp_cmd_exit_cmd_resp      ; best effort: leave CR mode
+        cli
+        lda #2
+        ldx #0
+        rts
+@peek_fail:
+        jsr rbcp_cmd_exit_cmd_resp
+        cli
+        lda #3
+        ldx #0
+        rts
+@exit_fail:
+        cli
+        lda #4
+        ldx #0
+        rts
+
+ovl_page: .byte 0               ; written at the RAM run address

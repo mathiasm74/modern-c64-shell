@@ -17,6 +17,7 @@
 #include "commands/fs.h"
 #include "commands/mem.h"
 #include "commands/config.h"
+#include "commands/overlay.h"
 
 #define CR       0x0D            /* RETURN: submit the line                 */
 #define TAB      0x09            /* complete the command word               */
@@ -37,6 +38,7 @@
    BASIC ROM, where the rest of the cc65 output sits. */
 #pragma rodata-name (push, "RODATA2")
 const struct command shell_commands[] = {
+    { "about",  cmd_about  },
     { "bg",     cmd_bg     },
     { "border", cmd_border },
     { "cat",    cmd_cat    },
