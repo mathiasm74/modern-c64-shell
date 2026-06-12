@@ -475,6 +475,37 @@ rbcp_cmd_get_protocol_version:
     lda #0
     jmp rbcp_issue_cmd
 
+; rbcp_cmd_slot_peek: copy device-slot bytes into the back-channel data
+; section, where they appear in the served ROM at RBCP_DATA_ADDR. A = byte
+; count (0 = 256, capped by the back-channel data size), X = source RAM
+; slot. The 24-bit source offset must be pre-loaded into rbcp_arg1..3
+; (lo/mid/hi) by the caller -- after any command that clobbers the args
+; (enter_cmd_resp sets arg0-8). Device-side arg order: count, addr, slot.
+; Each peek writes from data offset 0; peeks don't append.
+.export rbcp_cmd_slot_peek
+rbcp_cmd_slot_peek:
+    sta rbcp_arg0
+    stx rbcp_arg4
+    lda #RBCP_GRP_READ
+    sta rbcp_zp_0
+    lda #RBCP_CMD_SLOT_PEEK
+    sta rbcp_zp_1
+    lda #5
+    jmp rbcp_issue_cmd
+
+; rbcp_cmd_exit_cmd_resp: leave command-response mode with full acknowledge
+; (the device completes the token/progress/response sequence before
+; exiting, so the normal issue_cmd polling applies). After this the device
+; stops intercepting command-page reads; back-channel contents persist.
+.export rbcp_cmd_exit_cmd_resp
+rbcp_cmd_exit_cmd_resp:
+    lda #RBCP_GRP_CTRL
+    sta rbcp_zp_0
+    lda #RBCP_CMD_EXIT_CMD_RESP_ACK
+    sta rbcp_zp_1
+    lda #0
+    jmp rbcp_issue_cmd
+
 .export rbcp_check_protocol_version
 .export rbcp_check_protocol_version_min
 

@@ -19,10 +19,14 @@
 .export _rbcp_launch_stock
 .export rbcp_trampoline               ; exported for tests / inspection only
 
+.include "rbcp_defs.s"          ; constants only (ZP/arg locations, addresses)
+
 .import rbcp_reset
 .import rbcp_cmd_enter_cmd_resp
 .import rbcp_cmd_load_slot
 .import rbcp_cmd_switch_and_exit
+.import rbcp_cmd_slot_peek
+.import rbcp_cmd_exit_cmd_resp
 
 ; Where the library sits in ROM (load) and runs (run); both defined by ld65
 ; when the RBCP_CODE segment has `define = yes`.
@@ -83,8 +87,19 @@ _rbcp_launch_stock:
         sta $DD0E               ; stop CIA2 timer A
         sta $DD0F               ; stop CIA2 timer B
 
-        ; Copy __RBCP_CODE_SIZE__ bytes from __RBCP_CODE_LOAD__ to
-        ; __RBCP_CODE_RUN__ (which puts the library + trampoline in place).
+        jsr rbcp_copy_to_ram
+
+        ; Jump into the in-RAM trampoline. From here on we never come back
+        ; to ROM-side code (rbcp_trampoline ends in a JMP through (FFFC)).
+        jmp rbcp_trampoline
+
+; -------------------------------------------------------------------------
+; rbcp_copy_to_ram - copy __RBCP_CODE_SIZE__ bytes from __RBCP_CODE_LOAD__
+; (KERNAL ROM) to __RBCP_CODE_RUN__ (RAM), putting the library + trampolines
+; at the addresses their internal references were linked for. Idempotent;
+; clobbers A/Y and the copy_* zero-page scratch.
+; -------------------------------------------------------------------------
+rbcp_copy_to_ram:
         lda #<__RBCP_CODE_LOAD__
         sta copy_src
         lda #>__RBCP_CODE_LOAD__
@@ -116,9 +131,24 @@ _rbcp_launch_stock:
 :       dec copy_len
         jmp @copy
 @done:
-        ; Jump into the in-RAM trampoline. From here on we never come back
-        ; to ROM-side code (rbcp_trampoline ends in a JMP through (FFFC)).
-        jmp rbcp_trampoline
+        rts
+
+; -------------------------------------------------------------------------
+; _rbcp_poc_peek - tardis proof-of-concept (C-callable; see cmd_tardis).
+; Knock/enter command-response mode, SLOT_PEEK 64 bytes from RAM slot 0
+; (the active slot, i.e. our own image) offset 0 into the back-channel
+; window, exit command mode. The peeked bytes persist at RBCP_DATA_ADDR
+; ($FA08) for the caller to inspect. Returns A: 0 = ok, 1 = enter failed,
+; 2 = peek failed, 3 = exit failed (rbcp_zp_5 has the library's stage
+; detail). Unlike the stock launch this returns to the caller, but it
+; still runs the session from the RAM copy: in command-response mode every
+; read of the $E0xx command page is command traffic, and KCODE starts at
+; $E000, so ROM-side code must stay out of the conversation.
+; -------------------------------------------------------------------------
+.export _rbcp_poc_peek
+_rbcp_poc_peek:
+        jsr rbcp_copy_to_ram
+        jmp rbcp_poc_tramp      ; rts there returns to our caller
 
 ; =========================================================================
 ; RAM-side trampoline. Linked into RBCP_CODE so it lives alongside the
@@ -157,3 +187,51 @@ rbcp_trampoline:
         ; they can't rely on them, and keeping the handoff a single JMP avoids
         ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
+
+; -------------------------------------------------------------------------
+; rbcp_poc_tramp - RAM side of _rbcp_poc_peek (see the KCODE stub above).
+; Runs entirely from the RAM copy so no instruction fetch can stray into
+; the $E0xx command page while the session is open. Returns to the C
+; caller via rts (the KCODE stub jmp'd here, so the caller's return
+; address is on top of the stack).
+; -------------------------------------------------------------------------
+rbcp_poc_tramp:
+        sei                             ; no IRQ fetches during the session
+        jsr rbcp_reset                  ; reset the device's protocol state
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @enter_fail
+
+        ; SLOT_PEEK 64 bytes from RAM slot 0 (the active slot = our own
+        ; image), source offset 0. enter_cmd_resp clobbered the arg block,
+        ; so the offset bytes are set here, after it.
+        lda #0
+        sta rbcp_arg1                   ; offset lo
+        sta rbcp_arg2                   ; offset mid
+        sta rbcp_arg3                   ; offset hi
+        lda #64                         ; count
+        ldx #0                          ; source RAM slot
+        jsr rbcp_cmd_slot_peek
+        bcs @peek_fail
+
+        jsr rbcp_cmd_exit_cmd_resp
+        bcs @exit_fail
+        cli
+        lda #0                          ; ok; bytes are live at RBCP_DATA_ADDR
+        ldx #0
+        rts
+@enter_fail:
+        cli                             ; never entered CR mode; nothing to undo
+        lda #1
+        ldx #0
+        rts
+@peek_fail:
+        jsr rbcp_cmd_exit_cmd_resp      ; best effort: don't strand the device
+        cli                             ; in command-response mode
+        lda #2
+        ldx #0
+        rts
+@exit_fail:
+        cli
+        lda #3
+        ldx #0
+        rts

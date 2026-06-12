@@ -60,9 +60,10 @@ $(BUILD)/%.o: src/%.s | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 # The RBCP library uses `.include "rbcp_defs.s"` / `.include "rbcp_config.s"`,
-# which ca65 resolves but make doesn't track. Force a rebuild of rbcp.o if
-# either include changes.
+# which ca65 resolves but make doesn't track. Force a rebuild of rbcp.o (and
+# launch.o, which includes the defs too) if either include changes.
 $(BUILD)/rbcp/rbcp.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
+$(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 
 # Drive-side fast-loader image. Assembled separately (origin $0500 in the
 # 1541's RAM) and incbin'd into the host ROM by src/fastload_blob.s. The

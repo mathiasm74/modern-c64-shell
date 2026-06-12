@@ -79,3 +79,21 @@ def test_launch_copies_library_to_ram(v):
     assert rom_first == ram_first, \
         "library first byte mismatch: ROM=$%02X RAM=$%02X" % (rom_first, ram_first)
     assert rom_first == 0xAD, "expected library to start with LDA absolute ($AD)"
+
+
+def test_tardis_reports_rbcp_timeout(v):
+    # The tardis PoC command drives a real RBCP session (knock, enter
+    # command-response mode, SLOT_PEEK 64 bytes, exit). In VICE no device
+    # answers: the back-channel token never increments, enter_cmd_resp
+    # times out, and the command must fail gracefully with its stage-1
+    # message -- exercising the C glue, the library copy to RAM, and the
+    # session call path end-to-end, minus only the device itself.
+    v.run_for(0.3)
+    v.write_memory(0x0277, [ord(c) for c in "tardis"] + [0x0D])
+    v.write_byte(0x00C6, 7)
+    for _ in range(10):
+        v.run_for(0.5)
+        if "rbcp error, stage 1" in v.screen_text():
+            break
+    assert "rbcp error, stage 1" in v.screen_text(), \
+        "tardis did not report the expected stage-1 timeout\n%s" % v.screen_text()
