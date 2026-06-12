@@ -439,6 +439,26 @@ transport straight into executable ROM space, not byte-at-a-time pokes.
 - `SLOT_POKE` (1 byte/command) exists too -- right for hot-patching, too slow
   for bulk. `SLOT_POKE_ALL_BYTE` fills.
 
+**Placement: can overlay bytes land anywhere in the ROM?**
+- Via `SLOT_PEEK`: no. The handler always deposits into the back-channel data
+  section of the active slot, starting at data offset 0 (each peek overwrites
+  from the start -- two peeks can't be appended to build a longer run). Net:
+  <=256 bytes, always at $FA08.
+- Via `SLOT_POKE`: yes, anywhere (24-bit offset) -- but at ~one byte per
+  command it's two orders of magnitude slower than peek (~1 KB in tenths of a
+  second vs milliseconds). Patch tool, not a transport.
+- Loophole for later: the back-channel location is a HOST argument to
+  `ENTER_CMD_RESP`, so the loader can re-knock with a different base and make
+  peeks land elsewhere -- in effect 256-byte pages placeable at any 4-byte-
+  aligned spot, paying a re-knock plus an 8-byte trampled header per location.
+  That would allow several overlay routines resident in ROM at different
+  addresses (paging across the $F6xx-$FBxx free run). Hard limits: whatever a
+  window covers is sacrificed (the device never restores the original bytes),
+  so only free-fill regions qualify -- never live code, never the $E0xx
+  command page -- and code must be linked for the specific window address.
+  Kept in the back pocket; the RAM-cache design below stays primary because
+  RAM placement is free-form and unlimited-size without these gymnastics.
+
 **Architecture:**
 - Build: each overlay command is its own cc65 module linked at a fixed cache
   address; Makefile packs them into `overlays.bin` (a pseudo-ROM chip_set in
