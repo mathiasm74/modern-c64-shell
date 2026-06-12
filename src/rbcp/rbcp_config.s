@@ -27,18 +27,29 @@ CONFIG_ROM_SIZE    = $2000              ; 8KB
 CONFIG_RBCP_CMD_PAGE     = $E0
 CONFIG_RBCP_CMD_PAGE_REL = CONFIG_RBCP_CMD_PAGE - CONFIG_ROM_BASE_HI
 
-; --- Back-channel region ($FA00..$FBFF) ------------------------------------
-; Where the device writes responses (8-byte header + 504 bytes of data). Unlike
-; the command page, the host TELLS the device this location during the enter-CR
-; handshake, so it can sit wherever is convenient. We put it high in the KERNAL
-; ROM's free fill run (currently $F5DF-$FC84, just below the pinned legacy stubs
-; at $FC85) -- all $FF, clear of our code. The $FF fill is also safe for the
-; progress/status header bytes (offsets +$04/+$05), which must not equal $BB/$CC
-; or their inverses $44/$33. (TODO: pin this with a reserved linker segment so
-; growing code can't reach it once the swap is validated.)
-CONFIG_RBCP_BCH_BASE  = $FA00
+; --- Back-channel region ($FE00..$FF0F) ------------------------------------
+; Where the device writes responses (8-byte header + data). Unlike the command
+; page, the host TELLS the device this location during the enter-CR handshake,
+; so it can sit wherever is convenient -- but it MUST be ROM the device may
+; freely overwrite: the writes mutate the served image (persistently, until a
+; reflash), so any code under the window is corrupted by the first session.
+; That bug shipped once: the window sat at $FA00 in the big fill run below
+; the stubs, code silently grew past $FA00, and every overlay fetch sprayed
+; back-channel bytes over live shell code (the v0.12 "about" corruption).
+;
+; $FE00 is structurally safe: it sits in the gap between the pinned legacy-
+; stub segments ($FDA4-$FF5D), which is not on any linker flow path -- code
+; that grows collides with a pinned stub segment and FAILS THE BUILD long
+; before it could reach this window. test_rbcp.py also asserts the window
+; region is $FF fill in the built image.
+;
+; 272 bytes = 8-byte header + 264 data: SLOT_PEEK moves at most 256 bytes per
+; command and needs data_size >= count, so this is the smallest comfortable
+; window. The $FF fill is also safe for the progress/status header bytes
+; (offsets +$04/+$05), which must not equal $BB/$CC or their inverses $44/$33.
+CONFIG_RBCP_BCH_BASE  = $FE00
 CONFIG_RBCP_BCH_START = (CONFIG_RBCP_BCH_BASE - (CONFIG_ROM_BASE_HI * $100))
-CONFIG_RBCP_BCH_SIZE  = 512
+CONFIG_RBCP_BCH_SIZE  = 272
 
 ; --- Sentinel values for progress / status -------------------------------
 ; Both these and their bitwise inverses must not appear in the ROM image at

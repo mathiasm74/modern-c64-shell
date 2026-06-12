@@ -114,3 +114,21 @@ def test_overlay_command_fails_gracefully_without_device(v):
             break
     assert "overlay load failed, stage 1" in v.screen_text(), \
         "about did not report the expected overlay-load failure\n%s" % v.screen_text()
+
+
+def test_back_channel_window_is_free_fill(v):
+    # The RBCP back-channel ($FE00-$FF0F, CONFIG_RBCP_BCH_BASE/_SIZE in
+    # rbcp_config.s) is ROM the One ROM device OVERWRITES in the served
+    # image during every command-response session. Any real content there
+    # gets corrupted on hardware -- persistently, until a reflash. That
+    # shipped once (v0.12: code grew past the old $FA00 window and every
+    # overlay fetch sprayed bytes over live shell code), so this asserts
+    # the built image keeps the window as pure $FF fill.
+    with open(_LABELS.replace("labels.txt", "kernal.bin"), "rb") as f:
+        rom = f.read()
+    base = 0xFE00 - 0xE000
+    window = rom[base:base + 272]
+    bad = [i for i, b in enumerate(window) if b != 0xFF]
+    assert not bad, \
+        "back-channel window has %d non-$FF bytes (first at $%04X) -- " \
+        "code/data grew into device-writable ROM" % (len(bad), 0xFE00 + bad[0])

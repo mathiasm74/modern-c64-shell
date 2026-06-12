@@ -75,7 +75,7 @@ unsigned char rbcp_poc_peek(void);
 
 /* tardis: prove the overlay transport (PLAN.md backlog #4). A successful
    peek of our own image's first 64 bytes must reproduce the KERNAL ROM's
-   first bytes ($E000..) in the back-channel window at $FA08 -- comparing
+   first bytes ($E000..) in the back-channel window at $FE08 -- comparing
    against both halves also tells us the slot image's chip order. Only
    meaningful on One ROM hardware with the host-control plugin; in VICE
    (or on the plain `make onerom` firmware) the handshake times out and
@@ -84,7 +84,7 @@ unsigned char rbcp_poc_peek(void);
 #pragma rodata-name (push, "RODATA2")
 void cmd_tardis(int argc, char *argv[])
 {
-    const unsigned char *win = (const unsigned char *)0xFA08;
+    const unsigned char *win = (const unsigned char *)0xFE08;
     const unsigned char *krn = (const unsigned char *)0xE000;
     const unsigned char *bas = (const unsigned char *)0xA000;
     unsigned char mk = 1, mb = 1;

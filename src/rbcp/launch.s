@@ -138,7 +138,7 @@ rbcp_copy_to_ram:
 ; Knock/enter command-response mode, SLOT_PEEK 64 bytes from RAM slot 0
 ; (the active slot, i.e. our own image) offset 0 into the back-channel
 ; window, exit command mode. The peeked bytes persist at RBCP_DATA_ADDR
-; ($FA08) for the caller to inspect. Returns A: 0 = ok, 1 = enter failed,
+; ($FE08) for the caller to inspect. Returns A: 0 = ok, 1 = enter failed,
 ; 2 = peek failed, 3 = exit failed (rbcp_zp_5 has the library's stage
 ; detail). Unlike the stock launch this returns to the caller, but it
 ; still runs the session from the RAM copy: in command-response mode every

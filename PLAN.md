@@ -427,7 +427,8 @@ transport straight into executable ROM space, not byte-at-a-time pokes.
 - `SLOT_PEEK` (GRP_READ $07, device side implements it): args = count (0=256),
   24-bit offset, source RAM slot. The device copies up to 256 bytes from any
   RAM slot's image **into the back-channel data section of the ACTIVE slot** --
-  i.e. they appear in our live KERNAL ROM at $FA08+, readable/executable as
+  i.e. they appear in our live KERNAL ROM at the back-channel data address
+  (now $FE08 -- see rbcp_config.s), readable/executable as
   ordinary ROM. One sub-millisecond command moves 256 bytes (a command's args
   ride in the low address byte of single command-page reads, ~10 cycles/byte;
   a 2 KB overlay is 8 peeks -- imperceptible at the prompt).
@@ -443,7 +444,7 @@ transport straight into executable ROM space, not byte-at-a-time pokes.
 - Via `SLOT_PEEK`: no. The handler always deposits into the back-channel data
   section of the active slot, starting at data offset 0 (each peek overwrites
   from the start -- two peeks can't be appended to build a longer run). Net:
-  <=256 bytes, always at $FA08.
+  <=256 bytes, always at the back-channel data address ($FE08).
 - Via `SLOT_POKE`: yes, anywhere (24-bit offset) -- but at ~one byte per
   command it's two orders of magnitude slower than peek (~1 KB in tenths of a
   second vs milliseconds). Patch tool, not a transport.
@@ -466,12 +467,12 @@ transport straight into executable ROM space, not byte-at-a-time pokes.
   compiled into the resident dispatch table.
 - Resident loader (small, KERNAL ROM): dispatch table gains resident-vs-
   {offset,size} per command. On miss: SEI -> knock/enter CR -> (LOAD_SLOT once
-  per boot) -> SLOT_PEEK loop -> copy each 256-byte chunk from $FA08 to the RAM
+  per boot) -> SLOT_PEEK loop -> copy each 256-byte chunk from the window to the RAM
   cache -> exit CR -> CLI -> call. One-entry cache (remember which command is
   loaded) makes repeats free.
 - Execution home: start RAM-cache-only (~2 KB around $C800, where the RBCP
   trampoline already transiently lives) -- one mechanism, any size. Tiny
-  (<=256 B) commands could later run straight out of the window at $FA08
+  (<=256 B) commands could later run straight out of the back-channel window
   (zero RAM cost) if RAM gets precious.
 
 **Capacity:** each flash chip_set holds a 16 KB library and the device takes
@@ -491,7 +492,7 @@ many slots -- effectively as much command code as the flash holds.
 command (`cmd_tardis` in mem.c + `_rbcp_poc_peek` in launch.s) SLOT_PEEKs 64
 bytes from RAM slot 0 (our own image) into the back-channel window and compares:
 on the real One ROM it printed `matches kernal ($e000)` -- the transport works,
-peeked bytes are readable at $FA08 after exiting command mode, and **slot
+peeked bytes are readable in the window after exiting command mode, and **slot
 images are kernal-half-first** (offset 0 = kernal byte 0, basic at +$2000), so
 overlay-library offsets need no translation. The lib additions
 (`rbcp_cmd_slot_peek`, `rbcp_cmd_exit_cmd_resp`, `rbcp_copy_to_ram`) are the
@@ -521,6 +522,11 @@ and KERNAL CHROUT now routing to IEC after CHKOUT with stock-style one-byte
 deferral so CLRCHN flushes the last byte with EOI. The editor is fully
 VICE-tested by pre-seeding the cache (test_edit.py); the fetch transport is
 the hardware-proven path `about` uses.
+
+**Editor polish (reported from hardware use):** typing flickers and feels a
+bit slow -- the editor does a full 23-row redraw on every keystroke. Fix:
+dirty-row rendering (plain inserts redraw only the current line; full redraw
+only on scroll/structural changes), already anticipated in the design.
 
 **Remaining for the full tardis vision:**
 - Generated directory (offset/size per command) once overlay count grows --
