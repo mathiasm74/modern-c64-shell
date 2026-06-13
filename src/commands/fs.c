@@ -550,32 +550,27 @@ void cmd_fload(int argc, char *argv[])
 extern unsigned char run_stub[];
 extern unsigned char run_stub_end[];
 
-void cmd_run(int argc, char *argv[])
+/* Hand the most-recently-loaded program to a real stock environment by
+   swapping the One ROM to the stock ROMs, exactly like the cartridge path:
+   plant a CBM80 autostart stub the stock reset jumps to. The stub (run_stub
+   in c_io.s) sets up a BASIC program the way stock LOAD does (init-without-NEW
+   + LINKPRG) and then, per `mode`, either RUNs it (0) or drops to stock BASIC
+   READY. (1) so it can be LISTed / RUN by hand; ML programs JMP through their
+   load address. Hardware-only (needs the host-control plugin); on a shell-only
+   build / VICE the swap is inert and the JMP through (FFFC) re-enters our
+   reset, which re-detects the planted CBM80 -- so this is only meaningful on
+   the onerom-stock firmware. Never returns. */
+static void launch_stock_program(unsigned char mode)
 {
     unsigned char *p = (unsigned char *)0xCF00;     /* run-stub home (RAMTAS-safe) */
     unsigned char *cart = (unsigned char *)0x8000;
     unsigned int i, n;
-    (void)argc; (void)argv;
 
-    if (load_start == 0) {
-        puts_raw("nothing loaded");
-        chrout(CR);
-        return;
-    }
-
-    /* Run a loaded program in a real stock environment by swapping the One
-       ROM to the stock ROMs, exactly like the cartridge path: plant a CBM80
-       autostart stub the stock reset will jump to. The stub (run_stub, in
-       c_io.s) starts the program -- BASIC via init-without-NEW + RUN, ML via
-       JMP through its load address. Hardware-only (needs the host-control
-       plugin); on a shell-only build / VICE the swap is inert and the JMP
-       through (FFFC) re-enters our reset, which would then re-detect the
-       planted CBM80 -- so `run` is only meaningful on the onerom-stock
-       firmware, just like runstock. Lives in CODE2 (KERNAL ROM budget). */
     *(unsigned char *)0xCFF8 = (unsigned char)(load_start & 0xff);
     *(unsigned char *)0xCFF9 = (unsigned char)(load_start >> 8);
     *(unsigned char *)0xCFFA = (unsigned char)(load_end & 0xff);
     *(unsigned char *)0xCFFB = (unsigned char)(load_end >> 8);
+    *(unsigned char *)0xCFFC = mode;                /* 0 = RUN, 1 = READY. */
 
     n = (unsigned int)(run_stub_end - run_stub);
     for (i = 0; i < n; ++i)
@@ -588,16 +583,28 @@ void cmd_run(int argc, char *argv[])
 
     rbcp_launch_stock();                /* swap; never returns */
 }
+
+void cmd_run(int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+    if (load_start == 0) {
+        puts_raw("nothing loaded");
+        chrout(CR);
+        return;
+    }
+    launch_stock_program(0);            /* swap to stock and RUN; never returns */
+}
 #pragma code-name (pop)
 
-/* runstock - swap the One ROM to stock C64 ROMs and JMP through (FFFC) so
-   stock KERNAL's reset path runs. Uses the host-control plugin's RBCP
-   protocol (see src/rbcp/) to load the stock-ROM flash slot into a RAM
-   slot, switch to it, and only then hand off. After the swap the user
-   lands at stock BASIC's READY. prompt; a program previously loaded into
-   RAM via `load` survives the reset, so `RUN` picks it up. Calling without
-   a previous `load` is fine -- the swap itself is the point; the user
-   gets stock BASIC. Real use requires the host-control plugin (the
+/* runstock - swap the One ROM to stock C64 ROMs so stock KERNAL/BASIC take
+   over. Uses the host-control plugin's RBCP protocol (see src/rbcp/) to load
+   the stock-ROM flash slot into a RAM slot, switch to it, and only then hand
+   off. If a program was `load`ed first, it is handed to stock BASIC intact
+   (via the run-stub: init-without-NEW + LINKPRG) and the user lands at READY.
+   able to LIST / RUN it -- without that, the stock reset's cold start would
+   NEW the program away. Calling without a previous `load` is fine -- the swap
+   itself is the point; the user gets a fresh stock BASIC (or the stock reset
+   autostarts a cartridge). Real use requires the host-control plugin (the
    `make onerom-stock` build); on a shell-only OneROM or in VICE the
    protocol calls are inert and the JMP through (FFFC) just re-enters our
    own shell. Never returns; back to the shell needs a power cycle. Lives
@@ -606,6 +613,12 @@ void cmd_run(int argc, char *argv[])
 void cmd_runstock(int argc, char *argv[])
 {
     (void)argc; (void)argv;
+    /* With a program loaded, hand it to stock BASIC intact (init-without-NEW +
+       LINKPRG) and stop at READY. so it can be LISTed / RUN -- a bare cold swap
+       would NEW it away. With nothing loaded, just swap: the user gets a fresh
+       stock BASIC (or the stock reset autostarts a cartridge). */
+    if (load_start != 0)
+        launch_stock_program(1);        /* -> stock BASIC READY., program intact */
     rbcp_launch_stock();                /* never returns */
 }
 #pragma code-name (pop)

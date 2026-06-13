@@ -60,11 +60,68 @@ def test_run_stub_runs_basic_program(v):
         sv.write_memory(0x0300, [0x33] * 0x100)
         sv.write_memory(0x0801, prog)
         sv.write_memory(0xCFF8, [0x01, 0x08, 0x0D, 0x08])  # load $0801, end $080D
+        sv.write_memory(0xCFFC, [0x00])                    # mode 0 = RUN
         sv.write_memory(0xCF00, stub)
         sv.run_at(0xCF00, 1.5)
         rows = [r.strip() for r in sv.screen_text().split("\n")]
         assert "ok" in rows, \
             "stub did not RUN the BASIC program\n%s" % sv.screen_text()
+
+
+def test_run_stub_relinks_broken_link(v):
+    # A real PRG often carries forward-link bytes that don't match the load
+    # address (BASIC's own LOAD rebuilds them). Our stub must do the same via
+    # LINKPRG, or RUN/LIST see a broken line chain -- this is what made FB throw
+    # ?SYNTAX ERROR. Give the program a DELIBERATELY broken link ($FFFF) and
+    # check the stub both rebuilds it and still RUNs the program.
+    if not _HAVE_STOCK:
+        return
+    stub = list(_stub_bytes())
+    # 1 PRINT"OK", but the forward link is garbage ($FFFF) instead of $080B.
+    prog = [0xFF, 0xFF, 0x01, 0x00, 0x99, 0x22, 0x4F, 0x4B, 0x22, 0x00, 0x00, 0x00]
+    with _stock_vice() as sv:
+        sv.run_for(2.0)
+        sv.write_memory(0x0002, [0xAA] * 254)
+        sv.write_memory(0x0300, [0x33] * 0x100)
+        sv.write_memory(0x0801, prog)
+        sv.write_memory(0xCFF8, [0x01, 0x08, 0x0D, 0x08])  # load $0801, end $080D
+        sv.write_memory(0xCFFC, [0x00])                    # mode 0 = RUN
+        sv.write_memory(0xCF00, stub)
+        sv.run_at(0xCF00, 1.5)
+        link = list(sv.read_memory(0x0801, 2))
+        assert link == [0x0B, 0x08], \
+            "LINKPRG did not rebuild the broken line link: %r" % (link,)
+        rows = [r.strip() for r in sv.screen_text().split("\n")]
+        assert "ok" in rows, \
+            "stub did not RUN after relinking\n%s" % sv.screen_text()
+
+
+def test_run_stub_ready_mode_does_not_autorun(v):
+    # mode 1 (used by `runstock` when a program is loaded) sets the program up
+    # like LOAD but stops at BASIC READY. instead of RUNning, so it can be
+    # LISTed by hand. Verify READY. shows, the link is rebuilt, and the program
+    # did NOT auto-run.
+    if not _HAVE_STOCK:
+        return
+    stub = list(_stub_bytes())
+    prog = [0xFF, 0xFF, 0x01, 0x00, 0x99, 0x22, 0x4F, 0x4B, 0x22, 0x00, 0x00, 0x00]
+    with _stock_vice() as sv:
+        sv.run_for(2.0)
+        sv.write_memory(0x0002, [0xAA] * 254)
+        sv.write_memory(0x0300, [0x33] * 0x100)
+        sv.write_memory(0x0801, prog)
+        sv.write_memory(0xCFF8, [0x01, 0x08, 0x0D, 0x08])  # load $0801, end $080D
+        sv.write_memory(0xCFFC, [0x01])                    # mode 1 = READY.
+        sv.write_memory(0xCF00, stub)
+        sv.run_at(0xCF00, 1.5)
+        link = list(sv.read_memory(0x0801, 2))
+        assert link == [0x0B, 0x08], \
+            "LINKPRG did not rebuild the link in READY mode: %r" % (link,)
+        rows = [r.strip() for r in sv.screen_text().split("\n")]
+        assert any("ready" in r for r in rows), \
+            "stub did not drop to BASIC READY.\n%s" % sv.screen_text()
+        assert "ok" not in rows, \
+            "READY mode must not auto-run the program\n%s" % sv.screen_text()
 
 
 def test_run_stub_starts_machine_code(v):

@@ -65,12 +65,18 @@ _soft_reset:
 ; lives at $033C and the params at $0334-$0337, both above RESTOR's $0314-
 ; $0333 range, so IOINIT/RESTOR/CINT don't disturb them.
 ;
-; Dispatch: a BASIC program (load address $0801) is run by initialising
-; BASIC without the NEW that a cold start would do (which zeroes the
-; program's first link bytes) -- $E453 (BASIC vectors) + $E3BF (BASIC RAM
-; init: TXTTAB, CHRGET, $0800=0; preserves $0801+) -- then VARTAB is set to
-; the program end, CLR links the rest, and $A7AE runs it. Anything else is
-; treated as machine code: JMP through its load address.
+; Dispatch: a BASIC program (load address $0801) is set up exactly the way
+; stock BASIC's own LOAD does ($A52A) -- $E453 (BASIC vectors) + $E3BF (BASIC
+; RAM init: TXTTAB, CHRGET, $0800=0; preserves $0801+, no NEW), VARTAB seeded
+; from the program end, $A659 CLR, then $A533 LINKPRG. LINKPRG is the piece a
+; plain "init without NEW" leaves out: it walks the program from TXTTAB and
+; rebuilds every line's forward-link pointer (and re-derives VARTAB). Without
+; it a loaded program runs on whatever stale links the PRG carried, so RUN
+; hits ?SYNTAX ERROR and LIST shows garbage -- which is why a `load` here then
+; a bare swap couldn't RUN/LIST. After LINKPRG the mode byte at $CFFC decides:
+; 0 = JMP $A7AE (RUN the program), nonzero = JMP $A474 (drop to stock BASIC's
+; READY. so the program can be LISTed / RUN by hand). Anything not loading at
+; $0801 is machine code: JMP through its load address (mode is ignored).
 ;
 ; The stub runs at $CF00 and reads its params from $CFF8-$CFFB (above the
 ; RBCP/overlay RAM and the BASIC-ROM ceiling, so RAMTAS -- which the stub
@@ -84,6 +90,7 @@ _soft_reset:
 ; kernal.901227-03 / basic.901226-01.
 ; ---------------------------------------------------------------------------
 RUN_PARAMS = $CFF8              ; load lo/hi, end lo/hi (4 bytes)
+RUN_MODE   = $CFFC              ; 0 = RUN, nonzero = drop to BASIC READY.
 
 .export _run_stub
 .export _run_stub_end
@@ -107,13 +114,19 @@ _run_stub:
         ; RAMTAS already set MEMSTR=$0800 / MEMSIZ=$A000, which E3BF reads.
         jsr $E453               ; init BASIC indirect vectors ($0300-$030B)
         jsr $E3BF               ; init BASIC RAM (TXTTAB=$0801, no NEW)
-        lda RUN_PARAMS+2        ; VARTAB = program end
+        lda RUN_PARAMS+2        ; VARTAB = program end (LINKPRG refines it)
         sta $2D
         lda RUN_PARAMS+3
         sta $2E
         jsr $A659               ; CLR - set TXTPTR, ARYTAB/STREND, FRETOP
+        jsr $A533               ; LINKPRG - rebuild line links + set VARTAB,
+                                ;   exactly as stock BASIC's LOAD tail ($A52A)
+        lda RUN_MODE
+        bne @ready
         cli
         jmp $A7AE               ; RUN
+@ready: cli
+        jmp $A474               ; READY. - stock BASIC immediate mode (LIST/RUN)
 @ml:    ; --- machine-code program: jump through its load address --------
         cli
         jmp (RUN_PARAMS)
