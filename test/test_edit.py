@@ -184,3 +184,31 @@ def test_edit_saves_file_roundtrip(v):
     v.run_for(3.0)
     assert "from ed" in v.screen_text(), \
         "saved file does not read back\n%s" % v.screen_text()
+
+
+def test_edit_lightpath_repaints_only_current_line(v):
+    # Plain typing takes the light path (one-row repaint). Regression for
+    # the v0.13 bug where the cursor row was computed as the LAST window row
+    # matching the cursor line, so light-path repaints landed on row 23.
+    _seed(v)
+    _keys(v, "edit")
+    _keys(v, [CR])
+    v.run_for(0.4)
+    _keys(v, "one")
+    _keys(v, [CR])
+    _keys(v, "two")
+    v.run_for(0.3)
+    _keys(v, [CRSR_UP, CTRL_E])     # up to line 1, line end (full renders)
+    _keys(v, "x")                   # light path: repaint row 1 only
+    v.run_for(0.3)
+    assert "onex" in _row(v, 1), \
+        "light-path insert missing on its row\n%s" % v.screen_text()
+    assert "two" in _row(v, 2), \
+        "light-path repaint disturbed another row\n%s" % v.screen_text()
+    rows = v.screen_rows()
+    assert all(r.strip() == "" for r in rows[3:24]), \
+        "light-path repaint leaked below the text\n%s" % v.screen_text()
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    _keys(v, "n")
+    v.run_for(0.3)

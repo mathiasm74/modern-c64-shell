@@ -183,43 +183,80 @@ static void draw_title(void)
         put_str(t + 32, "modified");
 }
 
-/* Full redraw of the text window plus the cursor cell (inverted). */
+/* Draw one window row (screen row r+1) from logical offset p (a line
+   start); returns the next line's start (or doclen when past the end). */
+static unsigned int render_row(unsigned char r, unsigned int p)
+{
+    unsigned int dl = doclen();
+    unsigned char *row = SCREEN + (r + 1) * COLS;
+    unsigned char c = 0;
+    unsigned char ch;
+
+    while (p < dl) {
+        ch = chat(p);
+        if (ch == CR_CH)
+            break;
+        if (c < COLS) {
+            if (ch < 0x20 || ch > 0x7F)
+                ch = 0x3F;
+            row[c] = sctab[ch - 0x20];
+        }
+        ++c;
+        ++p;
+    }
+    while (c < COLS)
+        row[c++] = 0x20;
+    if (p < dl)
+        ++p;                    /* step past the CR */
+    return p;
+}
+
+static void show_cursor(unsigned char crow, unsigned int cl)
+{
+    unsigned char ccol = (unsigned char)(gs - cl > 39 ? 39 : gs - cl);
+
+    SCREEN[(crow + 1) * COLS + ccol] |= 0x80;
+}
+
+/* Full redraw of the text window plus the cursor cell (inverted). Records
+   the cursor's window row / line start so light-path updates (see the main
+   loop) can repaint just that row on plain typing. */
+static unsigned char cur_row;   /* cursor's window row after last render */
+static unsigned int cur_ls;     /* cursor's line start after last render */
+
 static void render(void)
 {
-    unsigned int p = top, dl = doclen();
-    unsigned char *row = SCREEN + COLS;     /* screen row 1 */
-    unsigned char r, c;
-    unsigned int cl;
-    unsigned char crow = 255, ccol;
-
-    /* cursor row/col relative to the window */
-    cl = line_start(gs);
-    ccol = (unsigned char)(gs - cl > 39 ? 39 : gs - cl);
-    /* crow found while walking below (top is always a line start) */
+    unsigned int p = top;
+    unsigned char r;
+    unsigned char crow = 255;
+    unsigned int cl = line_start(gs);
 
     draw_title();
-    for (r = 0; r < ROWS; ++r, row += COLS) {
-        if (p == cl)
-            crow = r;
-        c = 0;
-        while (p < dl && chat(p) != CR_CH) {
-            if (c < COLS)
-                row[c] = sctab[(chat(p) >= 0x20 && chat(p) <= 0x7F)
-                               ? chat(p) - 0x20 : 0x1F];
-            ++c;
-            ++p;
-        }
-        while (c < COLS)
-            row[c++] = 0x20;
-        if (p < dl)
-            ++p;                /* step past the CR */
-        else if (p == cl && crow == 255)
-            crow = r + 1;       /* cursor on the (empty) line past the end */
+    for (r = 0; r < ROWS; ++r) {
+        if (crow == 255 && p == cl)
+            crow = r;           /* FIRST match only: past the end of the
+                                   document p stops advancing and every
+                                   later row would re-match */
+        p = render_row(r, p);
     }
     if (!msg_hold)
         draw_help();
-    if (crow != 255 && crow < ROWS)
-        SCREEN[(crow + 1) * COLS + ccol] |= 0x80;   /* show the cursor */
+    if (crow != 255) {
+        show_cursor(crow, cl);
+        cur_row = crow;
+        cur_ls = cl;
+    }
+}
+
+/* Light path: the edit touched only the cursor's current line and cannot
+   have scrolled -- repaint that one row (and the title when the modified
+   flag just flipped). ~40 cells instead of ~960: no visible flicker. */
+static void render_line(unsigned char flipped)
+{
+    if (flipped)
+        draw_title();
+    render_row(cur_row, cur_ls);
+    show_cursor(cur_row, cur_ls);
 }
 
 /* Keep the cursor's line inside the window. */
@@ -450,6 +487,7 @@ static void cursor_up_down(unsigned char down)
 void edit_main(void)
 {
     unsigned char c, i;
+    unsigned char light, had_msg, was_mod;
 
     /* fresh session state: a cached overlay re-runs with stale globals */
     gs = 0;
@@ -471,7 +509,10 @@ void edit_main(void)
         c = k_getin();
         if (!c)
             continue;
+        had_msg = msg_hold;
         msg_hold = 0;
+        was_mod = modified;
+        light = 0;
         if (c != 0x0B && c != 0x03)
             chain = 0;          /* any other key breaks a cut/copy chain */
         switch (c) {
@@ -509,17 +550,21 @@ void edit_main(void)
         case 0x01:                          /* ^A line start */
         case K_HOME:
             move_to(line_start(gs));
+            light = 1;
             break;
         case 0x05:                          /* ^E line end */
             move_to(line_end(gs));
+            light = 1;
             break;
         case K_LEFT:
             if (gs)
                 move_to(gs - 1);
+            light = 1;
             break;
         case K_RIGHT:
             if (gs < doclen())
                 move_to(gs + 1);
+            light = 1;
             break;
         case K_UP:
             cursor_up_down(0);
@@ -529,20 +574,34 @@ void edit_main(void)
             break;
         case K_DEL:
             if (gs) {
+                if (chat(gs - 1) != CR_CH)
+                    light = 1;              /* in-line delete */
                 --gs;
                 modified = 1;
             }
             break;
         case CR_CH:
-            insert_ch(CR_CH);
+            insert_ch(CR_CH);               /* structural: full redraw */
             break;
         default:
-            if (c >= 0x20 && c <= 0x7E)
+            if (c >= 0x20 && c <= 0x7E) {
                 insert_ch(c);
+                light = 1;
+            }
             break;
         }
-        ensure_visible();
-        render();
+        /* Light path: the op stayed on the cursor's line (verified by the
+           line start matching the last full render), so nothing scrolled --
+           repaint one row instead of the whole window. Crossing to another
+           line, RETURN, cut/paste, and cursor up/down take the full path. */
+        if (light && line_start(gs) == cur_ls) {
+            if (had_msg)
+                draw_help();
+            render_line(modified != was_mod);
+        } else {
+            ensure_visible();
+            render();
+        }
     }
 out:
     k_chrout(0x93);             /* clear the screen for the shell prompt */
