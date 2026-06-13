@@ -134,18 +134,74 @@ static unsigned char device_present(unsigned char dev)
    time, so they can share it). */
 static char dir_buf[42];
 
+/* dir/ls/pwd read the "$" listing either over the Epyx fast path (when the
+ * drive is fast-capable) or standard IEC. dir_begin picks the source; dir_line
+ * parses one BASIC-directory line from it via the unified dir_getbyte/dir_ended
+ * below. Earlier the directory was kept on standard IEC because a fast listing
+ * came back garbled, but that turned out to be VIC-II badlines corrupting the
+ * timed receive (the dir, generated per-entry, just streams while the screen is
+ * busy); the receiver now paces around badlines (see fastload_recv.s), so the
+ * dynamic listing comes back clean. (Hold CTRL to pause it -- pause_while_ctrl
+ * below; the fast path receives a byte at a time, so it pauses just the same.)
+ *
+ * Fast source: read the Epyx stream a byte at a time, crossing its [length]
+ * [data...] block boundaries transparently -- no whole-directory buffer, so a
+ * listing doesn't clobber a loaded program. */
+static unsigned char dir_fast;          /* 1 = reading the Epyx block stream  */
+static unsigned char fdir_left;         /* bytes left in the current Epyx block */
+static unsigned char fdir_eof;          /* fast stream exhausted / timed out   */
+
+static unsigned char dir_getbyte(void)
+{
+    if (dir_fast) {
+        while (fdir_left == 0) {        /* fetch the next block's length byte  */
+            if (fdir_eof || epyx_wait_ready() != 0) {
+                fdir_eof = 1;
+                return 0;
+            }
+            fdir_left = epyx_recv_byte();
+            if (fdir_left == 0) {       /* a 0-length block marks end-of-file  */
+                fdir_eof = 1;
+                return 0;
+            }
+        }
+        --fdir_left;
+        return epyx_recv_byte();
+    }
+    return iec_getbyte();
+}
+
+static unsigned char dir_ended(void)
+{
+    if (dir_fast)
+        return fdir_eof;
+    return (iec_status() & (ST_EOI | ST_TIMEOUT)) ? 1 : 0;
+}
+
 /* Open the directory of the default device and skip its 2-byte load address.
    Returns 1 if the drive answered, 0 (after reporting it) if no device. */
-/* Directory listing is read over standard IEC, never the Epyx fast path.
- * The directory is generated on the fly by the drive (Meatloaf walks its
- * filesystem per entry), and Meatloaf's Epyx 2-bit send corrupts bytes on
- * dynamically-generated content -- the same desync that makes a dynamic
- * Meatloaf link garble on `fload` (see docs/FASTLOAD-FINGERPRINT.md). A
- * static file streams cleanly; a freshly-computed directory does not. Slow
- * but correct beats fast but garbled for a listing, so this stays on the
- * stock bus. (Hold CTRL to pause it -- see pause_while_ctrl below.)      */
 static unsigned char dir_begin(void)
 {
+    dir_fast = 0;
+    fdir_left = 0;
+    fdir_eof = 0;
+
+    /* Try the Epyx fast path first on a capable drive. */
+    fastload_set_device(default_device);
+    if (fastload_epyx_capable()) {
+        fastload_epyx_install();
+        if (!(iec_status() & ST_NODEV)) {
+            if (fastload_epyx_send_header("$", 1) == 0) {
+                dir_fast = 1;
+                dir_getbyte();          /* load address (2 bytes) */
+                dir_getbyte();
+                return 1;
+            }
+            fastload_epyx_mark_unsupported();
+        }
+    }
+
+    /* Standard IEC fallback. */
     iec_set_fa(default_device);
     iec_set_sa(0);
     iec_setname("$");
@@ -166,21 +222,21 @@ static unsigned char dir_line(unsigned int *blocks)
 {
     unsigned char lo, hi, b, n;
 
-    lo = iec_getbyte();         /* link pointer */
-    if (iec_status() & (ST_EOI | ST_TIMEOUT))
+    lo = dir_getbyte();         /* link pointer */
+    if (dir_ended())
         return 0;
-    hi = iec_getbyte();
+    hi = dir_getbyte();
     if (lo == 0 && hi == 0)
         return 0;               /* $00,$00 link -> end of directory */
 
-    lo = iec_getbyte();         /* line number = block count */
-    hi = iec_getbyte();
+    lo = dir_getbyte();         /* line number = block count */
+    hi = dir_getbyte();
     *blocks = lo | ((unsigned int)hi << 8);
 
     n = 0;
     for (;;) {
-        b = iec_getbyte();
-        if (b == 0 || (iec_status() & (ST_EOI | ST_TIMEOUT)))
+        b = dir_getbyte();
+        if (b == 0 || dir_ended())
             break;
         if (n < sizeof(dir_buf) - 1)
             dir_buf[n++] = b;
@@ -191,6 +247,15 @@ static unsigned char dir_line(unsigned int *blocks)
 
 static void dir_end(void)
 {
+    if (dir_fast) {
+        /* Drain any remaining Epyx blocks to the end-of-stream marker so the
+           bus is left idle for the next command (the parse stops at the
+           directory's $00,$00 link, before the Epyx 0-length EOF block). */
+        while (!fdir_eof)
+            dir_getbyte();
+        dir_fast = 0;
+        return;
+    }
     iec_close();
     iec_clrchn();
     if (iec_status() & ST_TIMEOUT) {
@@ -482,7 +547,6 @@ void cmd_fload(int argc, char *argv[])
     unsigned char namebuf[16];
     unsigned char namelen;
     unsigned int end;
-    unsigned char saved_d011;
 
     if (argc < 2) {
         puts_raw("usage: fload <name>");
@@ -491,31 +555,18 @@ void cmd_fload(int argc, char *argv[])
     }
     namelen = fold_name(namebuf, argv[1]);
 
-    /* Blank the display (DEN = $D011 bit 4 -> 0) for the whole fast operation.
-       The Epyx receive samples each byte on fixed CPU-cycle counts; a VIC-II
-       badline steals ~40 cycles and, landing mid-byte, slides the sample window
-       off the drive's timed bit-pairs -- corrupting the rest of that byte (it's
-       per-byte open-loop: one sync, then 8 bits clocked out with no per-bit
-       handshake). We already mask IRQs per byte, but badlines are VIC DMA that
-       `sei` can't stop -- only disabling the display does, which is exactly why
-       the real Epyx cart blanks the screen during a load. Blanking *before* the
-       (slow, standard-IEC) install means DEN has been 0 across several frames
-       before the timed receive, so no badline is armed for it. Restored on
-       every exit below. */
-    saved_d011 = *(unsigned char *)0xD011;
-    *(unsigned char *)0xD011 = saved_d011 & (unsigned char)~0x10;
-
+    /* No screen-blanking here: the receiver (_epyx_recv_byte) now pauses each
+       byte around VIC-II badlines via the raster, so the display stays visible
+       during the load. */
     fastload_set_device(default_device);
     fastload_epyx_install();
     if (iec_status() & ST_NODEV) {
-        *(unsigned char *)0xD011 = saved_d011;
         report_no_device(default_device);
         return;
     }
     if (fastload_epyx_send_header((const char *)namebuf, namelen) != 0) {
         /* the drive never did the Epyx "ready for header" handshake: it isn't
            Epyx-capable (or the protocol isn't enabled on it). */
-        *(unsigned char *)0xD011 = saved_d011;
         fastload_epyx_mark_unsupported();
         puts_raw("fast load not supported");
         chrout(CR);
@@ -523,7 +574,6 @@ void cmd_fload(int argc, char *argv[])
     }
 
     end = fast_receive_prg();
-    *(unsigned char *)0xD011 = saved_d011;      /* restore the display */
     if (end == 0) {
         puts_raw("fast load failed");
         chrout(CR);

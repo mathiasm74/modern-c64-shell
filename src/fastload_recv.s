@@ -25,6 +25,8 @@
 
 CIA2_PRA = $DD00
 B_DATA   = $20          ; DATA output (1 = pull DATA low)
+VIC_RASTER = $D012      ; VIC-II raster line (low 8 bits) -- for badline avoidance
+YSCROLL  = $03          ; our $D011 = $1B, so badlines fall on (RASTER & 7) == 3
 
 S0 = $02A8              ; four raw samples (unused page-3 KERNAL RAM)
 S1 = $02A9
@@ -71,6 +73,24 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 .proc _epyx_recv_byte
         php
         sei
+        ; --- pause for VIC-II badlines instead of blanking the screen ---------
+        ; The 4-pair sample below runs ~52 cycles on fixed timing; a badline
+        ; (raster line where (RASTER & 7) == YSCROLL) stalls the CPU ~40 cycles
+        ; and would corrupt the byte. The per-byte DATA handshake lets us stall
+        ; first -- the drive blocks on our DATA-high -- so we hold until the
+        ; raster sits at an offset from which the worst-case ~3-line window
+        ; (read -> release -> last sample) can't touch the badline line. With
+        ; YSCROLL=3, offsets {1,2,3} could straddle line 3; {0,4,5,6,7} are
+        ; clear. The raster free-runs (independent of the CPU), so this always
+        ; advances to a clear offset within a few lines. Inside the SEI so no
+        ; IRQ perturbs the read->release->sample gap; screen stays visible.
+@badline:
+        lda VIC_RASTER
+        and #$07
+        beq @clear                      ; offset 0 -> clear
+        cmp #(YSCROLL + 1)              ; offsets 1..3 -> still in the danger band
+        bcc @badline                    ; wait it out (raster advances)
+@clear:
         ; "ready to send": release DATA high. The drive starts its timed send.
         lda CIA2_PRA
         and #<~B_DATA
