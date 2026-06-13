@@ -1,8 +1,14 @@
 """cat dumps a file to the screen; less pages it.
 
-Both read the SEQ file "doc" on the test disk -- 30 lines, "l00".."l29".
-cat is read-only, so this mounts the tracked fixture directly.
+cat/less live in the multi-page "files" tardis overlay (src/overlays/files.c,
+fetched to $8800 on hardware). VICE has no One ROM, so -- like test_edit --
+these tests PRE-SEED the overlay: seed_files writes the image to $8800 and the
+resident thunk validates it by the magic in the header.
+
+Both commands read the SEQ file "doc" on the test disk -- 30 lines, "l00".."l29".
 """
+
+from lib.overlays import seed_files
 
 VICE_DISK = "data/test.d64"
 
@@ -31,6 +37,7 @@ def _wait(v, needle, tries=20, chunk=0.6):
 
 def test_cat_dumps_file(v):
     v.run_for(0.3)
+    seed_files(v)
     _send(v, [CLEAR] + _ch("cat doc") + [CR])
     assert _wait(v, "l29"), "cat did not reach the last line"
     txt = v.screen_text()
@@ -40,6 +47,8 @@ def test_cat_dumps_file(v):
 def test_cat_leaves_prompt_on_fresh_line(v):
     # readme has no trailing newline; cat must still drop the prompt onto a
     # fresh line rather than append it to the file's last line.
+    v.run_for(0.3)
+    seed_files(v)
     v.write_memory(0x0277, [CLEAR] + _ch("cat read"))   # split: 10-byte buffer
     v.write_byte(0x00C6, 9)
     v.run_for(0.3)
@@ -53,6 +62,7 @@ def test_cat_leaves_prompt_on_fresh_line(v):
 
 def test_less_pages_file(v):
     v.run_for(0.3)
+    seed_files(v)
     _send(v, [CLEAR] + _ch("less doc") + [CR])
     assert _wait(v, "more"), "less did not pause with a more prompt"
     txt = v.screen_text()

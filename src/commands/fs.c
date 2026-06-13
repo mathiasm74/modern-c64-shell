@@ -11,6 +11,7 @@
 #include "shell.h"
 #include "iec.h"
 #include "fastload.h"
+#include "commands/overlay.h"     /* overlay_run, for the cat/less thunks */
 
 #define CR    0x0D
 #define CLEAR 0x93
@@ -179,8 +180,11 @@ static unsigned char dir_ended(void)
 }
 
 /* Open the directory of the default device and skip its 2-byte load address.
-   Returns 1 if the drive answered, 0 (after reporting it) if no device. */
-static unsigned char dir_begin(void)
+   Returns 1 if the drive answered, 0 (after reporting it) if no device.
+   `allow_fast` enables the Epyx fast path; pwd passes 0 because it reads only
+   the header and standard IEC can close early, whereas aborting a fast transfer
+   means draining the whole listing. */
+static unsigned char dir_begin(unsigned char allow_fast)
 {
     dir_fast = 0;
     fdir_left = 0;
@@ -188,7 +192,7 @@ static unsigned char dir_begin(void)
 
     /* Try the Epyx fast path first on a capable drive. */
     fastload_set_device(default_device);
-    if (fastload_epyx_capable()) {
+    if (allow_fast && fastload_epyx_capable()) {
         fastload_epyx_install();
         if (!(iec_status() & ST_NODEV)) {
             if (fastload_epyx_send_header("$", 1) == 0) {
@@ -280,7 +284,7 @@ void cmd_dir(int argc, char *argv[])
     unsigned int blocks;
     (void)argc; (void)argv;
 
-    if (!dir_begin())
+    if (!dir_begin(1))
         return;
     while (dir_line(&blocks)) {
         print_uint(blocks);
@@ -333,7 +337,7 @@ void cmd_ls(int argc, char *argv[])
     unsigned char i, q2, t, color, saved, first;
     (void)argc; (void)argv;
 
-    if (!dir_begin())
+    if (!dir_begin(1))
         return;
     saved = *TEXT_COLOR;
     first = 1;
@@ -368,17 +372,26 @@ void cmd_ls(int argc, char *argv[])
 #pragma rodata-name (pop)
 #pragma code-name (pop)
 
-/* pwd - print the current device (number and name, if any) and the disk's
-   name (the quoted title in the directory header), e.g. "9 fd: TEST DISK". */
+/* pwd - print the current device and the disk's name (the quoted header title),
+   e.g. "9 fd: TEST DISK", then -- on a Meatloaf -- the network path it carries
+   in the directory's NFO header lines. Those come as `[<scheme>]` / host /
+   `[PATH]` / path, each value split into 16-char quoted chunks; we concatenate
+   the value chunks (skipping the `[...]` titles) into "<host><path>" -- the
+   path already carries its leading "/". A plain drive has no NFO lines (the
+   first entry is a file), so pwd just shows the disk title. There is no command
+   to query the path directly -- the NFO lines are the only source -- and pwd
+   reads only the header, so it uses standard IEC (no fast-path drain). */
 void cmd_pwd(int argc, char *argv[])
 {
     unsigned int blocks;
-    unsigned char i;
+    unsigned char i, q0, q1;
     const char *name;
+    unsigned char any = 0, first = 1;
     (void)argc; (void)argv;
 
-    if (!dir_begin())
+    if (!dir_begin(0))
         return;
+
     if (dir_line(&blocks)) {            /* first line is the header */
         print_uint(default_device);
         name = current_device_name();
@@ -396,6 +409,36 @@ void cmd_pwd(int argc, char *argv[])
         }
         chrout(CR);
     }
+
+    /* Concatenate the NFO header lines' value chunks into the path. */
+    while (dir_line(&blocks)) {
+        for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
+            ;
+        if (dir_buf[i] != '"')         /* no quoted name -> trailer, done */
+            break;
+        q0 = ++i;
+        while (dir_buf[i] && dir_buf[i] != '"')
+            ++i;
+        q1 = i;
+        while (q1 > q0 && dir_buf[q1 - 1] == ' ')
+            --q1;                       /* trim trailing pad spaces */
+        if (q1 == q0)
+            continue;
+
+        if (dir_buf[q0] == '[') {       /* "[SECTION]" title -> skip */
+            first = 0;
+            continue;
+        }
+        if (dir_buf[q0] == '-')         /* "----" separator -> end of NFO */
+            break;
+        if (first)                      /* first entry isn't NFO: plain drive */
+            break;
+        for (i = q0; i < q1; ++i)        /* a value chunk (host or path) */
+            chrout(dir_buf[i]);
+        any = 1;
+    }
+    if (any)
+        chrout(CR);
     dir_end();
 }
 
@@ -697,29 +740,6 @@ static void send_command(const char *prefix, const char *arg1, const char *arg2)
         report_no_device(default_device);
 }
 
-/* rm <name> - scratch a file via the drive command channel ("S0:<name>"). */
-void cmd_rm(int argc, char *argv[])
-{
-    if (argc < 2) {
-        puts_raw("usage: rm <name>");
-        chrout(CR);
-        return;
-    }
-    send_command("s0:", argv[1], 0);
-}
-
-/* mv <old> <new> - rename a file via the drive command channel
-   ("R0:<new>=<old>"). */
-void cmd_mv(int argc, char *argv[])
-{
-    if (argc < 3) {
-        puts_raw("usage: mv <old> <new>");
-        chrout(CR);
-        return;
-    }
-    send_command("r0:", argv[2], argv[1]);
-}
-
 /* cd <path> - change the working path on the drive ("CD:<path>"). A 1541
    answers ?SYNTAX ERROR and stays put; network-side drives like the Meatloaf
    navigate. Whatever the drive does with it shows up on the next dir / pwd.
@@ -735,169 +755,67 @@ void cmd_cd(int argc, char *argv[])
     send_command("cd:", argv[1], 0);
 }
 
-/* cp <src> <dst> - copy a file. Reads all of src into user RAM at $0800, then
-   writes it to a new PRG dst. Limited to what fits below the I/O area; large
-   files are capped. */
-void cmd_cp(int argc, char *argv[])
+/* cat / less / cp / mv / rm - one multi-page "files" tardis overlay
+   (src/overlays/files.c). The resident side is only these thunks: fill the
+   mailbox and run the overlay, so the file-read / paging / copy / rename /
+   scratch code lives in the overlay flash, not the 16KB ROM. Mailbox at $02D0:
+   [0] command, [1] device, [2] arg1 len + [3..] arg1, [19] arg2 len + [20..]
+   arg2. */
+/* Absolute scalar accessors: a `FB[2] = n` via a base-pointer macro lets cc65
+   reuse a loop-clobbered pointer register, so the length lands in the wrong
+   place. Constant addresses compile to plain absolute stores. */
+#define FB_CMD (*(unsigned char *)0x02D0)
+#define FB_DEV (*(unsigned char *)0x02D1)
+#define FB_A1L (*(unsigned char *)0x02D2)
+#define FB_A1  ((unsigned char *)0x02D3)        /* 16 chars */
+#define FB_A2L (*(unsigned char *)0x02E3)
+#define FB_A2  ((unsigned char *)0x02E4)        /* 16 chars */
+
+static void files_run(unsigned char cmd, const char *a1, const char *a2)
 {
-    unsigned char *buf = (unsigned char *)0x0800;
-    unsigned int len = 0;
-    unsigned int i;
-    static char dst[24];
-    unsigned char j, k;
+    unsigned char n;
 
-    if (argc < 3) {
-        puts_raw("usage: cp <src> <dst>");
-        chrout(CR);
-        return;
-    }
-
-    /* read src (channel 0, load semantics: load address then data) */
-    iec_set_fa(default_device);
-    iec_set_sa(0);
-    iec_setname(argv[1]);
-    iec_open();
-    if (iec_status() & ST_NODEV) {
-        report_no_device(default_device);
-        return;
-    }
-    iec_chkin();
-    for (;;) {
-        if (len >= 0x9000)              /* don't overrun $0800.. into I/O */
-            break;
-        buf[len++] = iec_getbyte();
-        if (iec_status() & (ST_EOI | ST_TIMEOUT))
-            break;
-    }
-    iec_close();
-    iec_clrchn();
-    if (iec_status() & ST_TIMEOUT) {
-        puts_raw("read error");
-        chrout(CR);
-        return;
-    }
-
-    /* build "<dst>,p,w" (folded to uppercase on the way out) */
-    k = 0;
-    for (j = 0; argv[2][j] && k < 16; ++j)
-        dst[k++] = argv[2][j];
-    dst[k++] = ',';
-    dst[k++] = 'p';
-    dst[k++] = ',';
-    dst[k++] = 'w';
-    dst[k] = 0;
-
-    /* write dst (channel 2, a write data channel) */
-    iec_set_sa(2);
-    iec_setname(dst);
-    iec_open();
-    iec_chkout();
-    for (i = 0; i < len; ++i) {
-        if (i + 1 == len)
-            iec_puteoi(buf[i]);     /* last byte with EOI so CLOSE finalizes */
-        else
-            iec_putbyte(buf[i]);
-    }
-    iec_unlisten();
-    iec_close();
-    iec_clrchn();
-
-    puts_raw("copied ");
-    print_uint(len);
-    puts_raw(" bytes");
-    chrout(CR);
+    FB_CMD = cmd;
+    FB_DEV = default_device;
+    n = 0;
+    if (a1)
+        while (a1[n] && n < 16) { FB_A1[n] = a1[n]; ++n; }
+    FB_A1L = n;
+    n = 0;
+    if (a2)
+        while (a2[n] && n < 16) { FB_A2[n] = a2[n]; ++n; }
+    FB_A2L = n;
+    run_files_overlay();
 }
 
-/* cat <name> - dump a file's bytes to the screen. */
 void cmd_cat(int argc, char *argv[])
 {
-    unsigned char b, last = CR;
-
-    if (argc < 2) {
-        puts_raw("usage: cat <name>");
-        chrout(CR);
-        return;
-    }
-    iec_set_fa(default_device);
-    iec_set_sa(2);                  /* a read data channel */
-    iec_setname(argv[1]);
-    iec_open();
-    if (iec_status() & ST_NODEV) {
-        report_no_device(default_device);
-        return;
-    }
-    iec_chkin();
-    for (;;) {
-        b = iec_getbyte();
-        if (iec_status() & ST_TIMEOUT)
-            break;
-        chrout(b);
-        last = b;
-        if (iec_status() & ST_EOI)
-            break;
-    }
-    iec_close();
-    iec_clrchn();
-    if (iec_status() & ST_TIMEOUT) {
-        puts_raw("read error");
-        chrout(CR);
-    } else if (last != CR) {        /* end on a fresh line for the prompt */
-        chrout(CR);
-    }
+    if (argc < 2) { puts_raw("usage: cat <name>"); chrout(CR); return; }
+    files_run(0, argv[1], 0);
 }
 
-/* Block until a key is pressed; return it. */
-static unsigned char wait_key(void)
-{
-    unsigned char c;
-
-    do {
-        c = getin();
-    } while (c == 0);
-    return c;
-}
-
-/* less <name> - page a file: 22 lines at a time, "-- more --" between pages
-   (any key continues, 'q' quits, each page on a fresh screen). */
 void cmd_less(int argc, char *argv[])
 {
-    unsigned char b, lines = 0, last = CR;
+    if (argc < 2) { puts_raw("usage: less <name>"); chrout(CR); return; }
+    files_run(1, argv[1], 0);
+}
 
-    if (argc < 2) {
-        puts_raw("usage: less <name>");
-        chrout(CR);
-        return;
-    }
-    iec_set_fa(default_device);
-    iec_set_sa(2);
-    iec_setname(argv[1]);
-    iec_open();
-    if (iec_status() & ST_NODEV) {
-        report_no_device(default_device);
-        return;
-    }
-    iec_chkin();
-    for (;;) {
-        b = iec_getbyte();
-        if (iec_status() & ST_TIMEOUT)
-            break;
-        chrout(b);
-        last = b;
-        if (b == CR && ++lines >= 22) {
-            puts_raw("-- more --");
-            if (wait_key() == 'q')
-                break;
-            chrout(CLEAR);          /* fresh screen for the next page */
-            lines = 0;
-            last = CR;
-        }
-        if (iec_status() & ST_EOI)
-            break;
-    }
-    iec_close();
-    iec_clrchn();
-    if (last != CR)                 /* end on a fresh line for the prompt */
-        chrout(CR);
+void cmd_cp(int argc, char *argv[])
+{
+    if (argc < 3) { puts_raw("usage: cp <src> <dst>"); chrout(CR); return; }
+    files_run(2, argv[1], argv[2]);
+}
+
+void cmd_mv(int argc, char *argv[])
+{
+    if (argc < 3) { puts_raw("usage: mv <old> <new>"); chrout(CR); return; }
+    files_run(3, argv[1], argv[2]);     /* overlay builds r0:<new>=<old> */
+}
+
+void cmd_rm(int argc, char *argv[])
+{
+    if (argc < 2) { puts_raw("usage: rm <name>"); chrout(CR); return; }
+    files_run(4, argv[1], 0);
 }
 
 /* device <n> [name] - set the device ls/load/run talk to (default 8). The bus

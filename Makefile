@@ -25,7 +25,7 @@ ONEROM_CFG   := cfg/onerom.json
 ASFLAGS   := --cpu 6502
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
-CC65FLAGS := -t none -O --cpu 6502 -I src
+CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
 
 # cc65 runtime library: the `none` target carries the runtime helpers (stack,
 # zerobss, copydata, ...) without any platform startup or conio. Located
@@ -71,9 +71,10 @@ $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 # page (cfg/overlay.cfg); the pages concatenate into overlays.bin, padded to
 # 8KB so it can ride in the One ROM firmware as a 2364 chip_set (the third
 # loadable ROM set: shell=0, stock=1, overlays=2). Not part of the 16KB shell
-# ROM -- only the onerom-stock firmware carries it. Page order here IS the
-# page numbering the resident thunks use (about = page 0).
-OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/edit.bin
+# ROM -- only the onerom-stock firmware carries it. Page order here defines the
+# page numbering; rather than hardcode it, build/overlay_pages.h is generated
+# from the actual .bin sizes (see below) and the resident thunks include it.
+OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/edit.bin
 
 # The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;
 # cfg/overlay_edit.cfg). crt0 must link first so the header sits at the base.
@@ -88,12 +89,32 @@ $(BUILD)/overlays/edit.bin: $(BUILD)/overlays/crt0.o $(BUILD)/overlays/edit_c.o 
 	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
 	@echo "  edit overlay: $$(wc -c < $@) bytes"
 
+# The files overlay (cat/less/cp/mv/rm), same multi-page C recipe as edit.
+$(BUILD)/overlays/files.s: src/overlays/files.c | $(BUILD)
+	@mkdir -p $(BUILD)/overlays
+	$(CC) $(CC65FLAGS) -o $@ $<
+$(BUILD)/overlays/files_c.o: $(BUILD)/overlays/files.s
+	$(AS) $(ASFLAGS) -o $@ $<
+$(BUILD)/overlays/files.bin: $(BUILD)/overlays/crt0_files.o $(BUILD)/overlays/files_c.o cfg/overlay_files.cfg
+	$(LD) -C cfg/overlay_files.cfg -o $@ $(BUILD)/overlays/crt0_files.o $(BUILD)/overlays/files_c.o $(RTLIB)
+	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
+	@echo "  files overlay: $$(wc -c < $@) bytes"
+
 
 $(BUILD)/overlays/%.o: src/overlays/%.s | $(BUILD)
 	@mkdir -p $(BUILD)/overlays
 	$(AS) $(ASFLAGS) -o $@ $<
 $(BUILD)/overlays/%.bin: $(BUILD)/overlays/%.o cfg/overlay.cfg
 	$(LD) -C cfg/overlay.cfg -o $@ $<
+# Generated overlay page-number map (start page of each overlay), derived from
+# the actual .bin sizes. The resident overlay thunks include it; their .s
+# therefore depend on it, and it depends on the overlay .bin -- so the page
+# numbers are always consistent with what's in overlays.bin.
+$(BUILD)/overlay_pages.h: $(OVERLAYS) tools/gen_overlay_pages.py
+	@python3 tools/gen_overlay_pages.py $(BUILD) > $@
+$(BUILD)/commands/overlay.s: $(BUILD)/overlay_pages.h
+$(BUILD)/commands/fs.s: $(BUILD)/overlay_pages.h
+
 $(BUILD)/overlays.bin: $(OVERLAYS)
 	cat $(OVERLAYS) > $@
 	python3 -c "import sys; f=open('$@','r+b'); f.seek(0,2); n=f.tell(); \
@@ -146,7 +167,7 @@ check-tools:
 run: all
 	SKIP_BUILD=1 VICE=$(VICE) DISK=$(DISK) ./run.sh $(VICEFLAGS)
 
-test: all
+test: all $(BUILD)/overlays.bin
 	$(PYTHON) test/run_tests.py
 
 # Build a One ROM firmware image holding both halves as a single multi-ROM set

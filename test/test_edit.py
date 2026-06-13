@@ -18,6 +18,8 @@ Disk-writing tests run against a throwaway copy of the fixture.
 import os
 import shutil
 
+from lib.overlays import seed_files
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 shutil.copy(os.path.join(_HERE, "data", "test.d64"),
             os.path.join(_HERE, "data", "_scratch_edit.d64"))
@@ -188,6 +190,7 @@ def test_edit_saves_file_roundtrip(v):
         "no wrote confirmation\n%s" % v.screen_text()
     _keys(v, [CTRL_X])          # saved -> unmodified -> exits clean
     v.run_for(0.5)
+    seed_files(v)               # cat shares $8800 with edit; re-seed it
     _keys(v, "cat nb")
     _keys(v, [CR])
     _wait(v, "from ed")

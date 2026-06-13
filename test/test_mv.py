@@ -9,6 +9,8 @@ scratch copy is gitignored.
 import os
 import shutil
 
+from lib.overlays import seed_files
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 shutil.copy(os.path.join(_HERE, "data", "test.d64"),
             os.path.join(_HERE, "data", "_scratch_mv.d64"))
@@ -38,6 +40,7 @@ def test_mv_renames_file(v):
     assert "PROG" in v.screen_text(), "fixture should start with PROG"
 
     # "mv prog x" is 9 chars + CR = 10, fits the keyboard buffer.
+    seed_files(v)               # mv is in the files overlay
     _type(v, "mv prog x")
     v.run_for(1.0)
 

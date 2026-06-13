@@ -9,6 +9,8 @@ exists and its payload is byte-identical.
 import os
 import shutil
 
+from lib.overlays import seed_files
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 shutil.copy(os.path.join(_HERE, "data", "test.d64"),
             os.path.join(_HERE, "data", "_scratch_cp.d64"))
@@ -35,6 +37,7 @@ def _ls(v):
 
 def test_cp_copies_file(v):
     v.run_for(0.3)
+    seed_files(v)               # cp is in the files overlay
     # "cp readme r2" is 12 chars; split across two keyboard-buffer loads.
     v.write_memory(0x0277, _ch("cp readme"))
     v.write_byte(0x00C6, 9)

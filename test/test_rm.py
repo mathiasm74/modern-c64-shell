@@ -8,6 +8,8 @@ than the committed fixture. The scratch copy is gitignored.
 import os
 import shutil
 
+from lib.overlays import seed_files
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 shutil.copy(os.path.join(_HERE, "data", "test.d64"),
             os.path.join(_HERE, "data", "_scratch_rm.d64"))
@@ -36,6 +38,7 @@ def test_rm_scratches_file(v):
     assert _ls(v), "ls did not complete"
     assert "PROG" in v.screen_text(), "fixture should start with PROG"
 
+    seed_files(v)               # rm is in the files overlay
     _type(v, "rm prog")
     v.run_for(1.0)
 
