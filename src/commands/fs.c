@@ -347,8 +347,6 @@ void cmd_load(int argc, char *argv[])
 {
     unsigned char lo, hi;
     unsigned char *p;
-    unsigned char namebuf[16];
-    unsigned int end;
 
     if (argc < 2) {
         puts_raw("usage: load <name>");
@@ -356,32 +354,12 @@ void cmd_load(int argc, char *argv[])
         return;
     }
 
-    /* Try the Epyx fast path first on a capable drive (probed and cached
-       per device -- a real 1541 never gets the fingerprint install). Any
-       failure falls through to the standard load below.                  */
-    fastload_set_device(default_device);
-    if (fastload_epyx_capable()) {
-        fastload_epyx_install();
-        if (!(iec_status() & ST_NODEV)) {
-            if (fastload_epyx_send_header((const char *)namebuf,
-                    fold_name(namebuf, argv[1])) == 0) {
-                end = fast_receive_prg();
-                if (end != 0) {
-                    puts_raw("loaded $");
-                    print_hex16(load_start);
-                    puts_raw("-$");
-                    print_hex16(end);
-                    chrout(CR);
-                    return;
-                }
-                /* engaged but no data: the file doesn't exist */
-                puts_raw("file not found");
-                chrout(CR);
-                return;
-            }
-            fastload_epyx_mark_unsupported();
-        }
-    }
+    /* Standard IEC load: per-byte handshaked, so it is bit-perfect. The Epyx
+       fast path is split out into `fload` -- its timed 2-bit receiver is only
+       reliable on some drives/links, and on the user's Meatloaf it jitters
+       bits and scatters corruption through the file (bogus BASIC line numbers,
+       mangled tokens), which a per-byte program then trips over. `load` stays
+       the safe, always-correct default, so `run` builds on a clean program. */
 
     iec_set_fa(default_device);
     iec_set_sa(0);              /* channel 0: a program load */
