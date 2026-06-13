@@ -1,13 +1,32 @@
-"""The run command: load a program and start it like SYS (Phase 6/8).
+"""load, and the run autostart stub (Phase 6/8 + the run-to-stock swap).
 
-run calls the loaded program as a subroutine, so a program that ends in RTS
-returns to the shell. The fixture (test/data/test.d64 "prog") loads at $2000,
-prints "hello from prog" via CHROUT, then RTSes -- so a successful run shows
-the message and the shell regains the prompt. Its own module keeps it isolated
-in case a future test program takes over the machine instead of returning.
+`run` now starts a loaded program in a real STOCK environment: it plants a
+CBM80 autostart stub in the tape buffer, points a CBM80 structure at $8000
+to it, and swaps the One ROM to the stock ROMs via the RBCP protocol -- the
+stock KERNAL reset then autostarts the stub. Like runstock, the swap is
+hardware-only (VICE has no One ROM model, so the swap is inert and the JMP
+through (FFFC) would re-enter our reset and re-detect the planted CBM80).
+So we can't exercise `run` end-to-end in VICE; instead we verify `load`
+works and that the run-stub is assembled correctly (read out of ROM, like
+test_keyboard checks the keytab). The stub's execution is hardware-tested.
 """
 
+import os
+
 VICE_DISK = "data/test.d64"
+
+_LABELS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "..", "build", "labels.txt")
+
+
+def _labels():
+    out = {}
+    with open(_LABELS) as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) >= 3 and parts[0] == "al":
+                out[parts[2].lstrip(".")] = int(parts[1], 16) & 0xFFFF
+    return out
 
 
 def _type(v, text):
@@ -23,21 +42,11 @@ def _wait_for(v, needle, tries=8, chunk=0.5):
     return False
 
 
-def test_run_prints_and_returns(v):
+def test_load_completes(v):
     v.run_for(0.3)
     _type(v, "load prog")
-    if not _wait_for(v, "loaded $"):
-        raise AssertionError("load never completed\n%s" % v.screen_text())
-
-    _type(v, "run")
-    assert _wait_for(v, "hello from prog"), \
-        "run did not print the program's output\n%s" % v.screen_text()
-
-    # The program ended in RTS, so the shell must have regained control --
-    # a follow-up command still runs.
-    _type(v, "ver")
-    assert _wait_for(v, "C64 Shell ROM v0.19"), \
-        "shell did not return to the prompt after the program RTS'd\n%s" % v.screen_text()
+    assert _wait_for(v, "loaded $"), \
+        "load never completed\n%s" % v.screen_text()
 
 
 def test_load_missing_reports_not_found(v):
@@ -52,3 +61,30 @@ def test_load_missing_reports_not_found(v):
         "missing-file load printed a bogus load range\n%s" % txt
     assert found, \
         "missing-file load did not report 'file not found'\n%s" % txt
+
+
+def _find(seq, sub):
+    for i in range(len(seq) - len(sub) + 1):
+        if list(seq[i:i + len(sub)]) == sub:
+            return i
+    return -1
+
+
+def test_run_stub_assembled_correctly(v):
+    # Can't run the swap in VICE; read the stub out of KERNAL ROM and check
+    # the key structure: takes the machine (SEI), inits via the KERNAL
+    # vectors, has the BASIC init-without-NEW ($E3BF) + RUN ($A7AE), and the
+    # machine-code fallback JMP ($0334).
+    L = _labels()
+    start = L["_run_stub"]
+    end = L["_run_stub_end"]
+    assert 0xE000 <= start < end <= 0xFFFF, \
+        "run_stub not in KERNAL ROM ($%04X-$%04X)" % (start, end)
+    b = v.read_memory(start, end - start)
+    assert b[0] == 0x78, "run_stub must start with SEI, got $%02X" % b[0]
+    assert _find(b, [0x20, 0x84, 0xFF]) >= 0, "no JSR $FF84 (IOINIT)"
+    assert _find(b, [0x20, 0x8A, 0xFF]) >= 0, "no JSR $FF8A (RESTOR)"
+    assert _find(b, [0x20, 0x81, 0xFF]) >= 0, "no JSR $FF81 (CINT)"
+    assert _find(b, [0x20, 0xBF, 0xE3]) >= 0, "no JSR $E3BF (BASIC init)"
+    assert _find(b, [0x4C, 0xAE, 0xA7]) >= 0, "no JMP $A7AE (RUN)"
+    assert _find(b, [0x6C, 0x34, 0x03]) >= 0, "no JMP ($0334) ML fallback"
