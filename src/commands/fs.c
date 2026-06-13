@@ -482,6 +482,7 @@ void cmd_fload(int argc, char *argv[])
     unsigned char namebuf[16];
     unsigned char namelen;
     unsigned int end;
+    unsigned char saved_d011;
 
     if (argc < 2) {
         puts_raw("usage: fload <name>");
@@ -490,15 +491,31 @@ void cmd_fload(int argc, char *argv[])
     }
     namelen = fold_name(namebuf, argv[1]);
 
+    /* Blank the display (DEN = $D011 bit 4 -> 0) for the whole fast operation.
+       The Epyx receive samples each byte on fixed CPU-cycle counts; a VIC-II
+       badline steals ~40 cycles and, landing mid-byte, slides the sample window
+       off the drive's timed bit-pairs -- corrupting the rest of that byte (it's
+       per-byte open-loop: one sync, then 8 bits clocked out with no per-bit
+       handshake). We already mask IRQs per byte, but badlines are VIC DMA that
+       `sei` can't stop -- only disabling the display does, which is exactly why
+       the real Epyx cart blanks the screen during a load. Blanking *before* the
+       (slow, standard-IEC) install means DEN has been 0 across several frames
+       before the timed receive, so no badline is armed for it. Restored on
+       every exit below. */
+    saved_d011 = *(unsigned char *)0xD011;
+    *(unsigned char *)0xD011 = saved_d011 & (unsigned char)~0x10;
+
     fastload_set_device(default_device);
     fastload_epyx_install();
     if (iec_status() & ST_NODEV) {
+        *(unsigned char *)0xD011 = saved_d011;
         report_no_device(default_device);
         return;
     }
     if (fastload_epyx_send_header((const char *)namebuf, namelen) != 0) {
         /* the drive never did the Epyx "ready for header" handshake: it isn't
            Epyx-capable (or the protocol isn't enabled on it). */
+        *(unsigned char *)0xD011 = saved_d011;
         fastload_epyx_mark_unsupported();
         puts_raw("fast load not supported");
         chrout(CR);
@@ -506,6 +523,7 @@ void cmd_fload(int argc, char *argv[])
     }
 
     end = fast_receive_prg();
+    *(unsigned char *)0xD011 = saved_d011;      /* restore the display */
     if (end == 0) {
         puts_raw("fast load failed");
         chrout(CR);
