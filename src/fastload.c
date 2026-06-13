@@ -19,7 +19,9 @@
 #include "fastload.h"
 #include "iec.h"
 
-#define FA_DEFAULT 8        /* matches shell default; future: pass it in   */
+/* The device the fast-loader helpers target; set per command invocation
+   (the shell's default_device) via fastload_set_device().               */
+static unsigned char fl_dev = 8;
 
 /* Working buffer big enough for the longest frame we send:
  *   "M-W" + addr_lo + addr_hi + len + 34-byte body  = 40 bytes.            */
@@ -54,7 +56,7 @@ void fastload_mw(unsigned int addr, const unsigned char *data,
     for (j = 0; j < len; ++j)
         buf[i++] = data[j];
 
-    iec_set_fa(FA_DEFAULT);
+    iec_set_fa(fl_dev);
     iec_set_fnadr(buf);
     iec_set_fnlen(i);
     iec_command_raw();
@@ -64,7 +66,7 @@ void fastload_me(unsigned int addr)
 {
     unsigned char i = fill_prefix('E', addr);
 
-    iec_set_fa(FA_DEFAULT);
+    iec_set_fa(fl_dev);
     iec_set_fnadr(buf);
     iec_set_fnlen(i);
     iec_command_raw();
@@ -80,7 +82,7 @@ void fastload_mr(unsigned int addr, unsigned char *dst, unsigned char len)
        Including it costs us one byte and helps with SD2IEC and friends.   */
     buf[i++] = len;
 
-    iec_set_fa(FA_DEFAULT);
+    iec_set_fa(fl_dev);
     iec_set_fnadr(buf);
     iec_set_fnlen(i);
     iec_command_raw();
@@ -89,7 +91,7 @@ void fastload_mr(unsigned int addr, unsigned char *dst, unsigned char len)
 
     /* TALK the command channel; the drive places `len` response bytes
        there. Read them and UNTALK.                                        */
-    iec_set_fa(FA_DEFAULT);
+    iec_set_fa(fl_dev);
     iec_set_sa(15);
     iec_chkin();
     if (iec_status() & ST_NODEV) {
@@ -126,6 +128,45 @@ const unsigned char fastload_epyx_upload[3 * FL_EPYX_CHUNK] = {
     EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F,
     EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, EPYX_F, 0x9F,
 };
+
+void fastload_set_device(unsigned char d)
+{
+    if (d >= 8 && d <= 15)
+        fl_dev = d;
+}
+
+/* Per-device Epyx capability cache: 0 = not probed, 1 = no, 2 = yes.
+   BSS, so a reboot re-probes.                                            */
+static unsigned char epyx_cap[8];
+
+unsigned char fastload_epyx_capable(void)
+{
+    unsigned char buf[2];
+    unsigned char i = fl_dev - 8;
+
+    if (epyx_cap[i] == 0) {
+        /* Probe with a harmless M-R of the drive's reset vector ($FFFC).
+           Every real-DOS drive (1541 family, JiffyDOS, Pi1541, ...) returns
+           its ROM vector -- never $0000 -- and must NOT get the fingerprint
+           install: it would EXECUTE our fake bytes (M-E) and crash. Meatloaf
+           backs M-R with a small zero-initialized emulated RAM, so ROM
+           addresses read as $00,$00: only that answer enables the fast path.
+           A faking SD2IEC merely loses the speedup, never crashes.        */
+        buf[0] = 0xEE;
+        buf[1] = 0xEE;
+        fastload_mr(0xFFFC, buf, 2);
+        if (iec_status() & (ST_NODEV | ST_TIMEOUT))
+            epyx_cap[i] = 1;
+        else
+            epyx_cap[i] = (buf[0] == 0 && buf[1] == 0) ? 2 : 1;
+    }
+    return epyx_cap[i] == 2;
+}
+
+void fastload_epyx_mark_unsupported(void)
+{
+    epyx_cap[fl_dev - 8] = 1;
+}
 
 void fastload_epyx_install(void)
 {
@@ -164,78 +205,6 @@ unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen)
 
     epyx_send_end();
     return 0;
-}
-
-/* Self-test entry point for test_fastload.py.
- *
- * Writes a known pattern into the drive's free buffer space, reads it back
- * with M-R, and leaves a footprint at a fixed RAM address so the test can
- * grade the result without a serial channel back to Python:
- *
- *   $0340       = $AA when this function ran to completion (poisoned by
- *                 the test to $00 before invocation)
- *   $0341..$0348 = the 8 bytes that came back via M-R
- *   $0349       = ST after the round-trip (0 if no error)
- *
- * We use the page-3 KERNAL working area, well clear of the cc65 stack.    */
-static const unsigned char selftest_pattern[8] = {
-    0xAB, 0xCD, 0xEF, 0x42, 0x55, 0xAA, 0x00, 0xFF
-};
-
-void fastload_selftest(void)
-{
-    unsigned char readback[8];
-    unsigned char i;
-
-    fastload_mw(0x0500, selftest_pattern, 8);
-    fastload_mr(0x0500, readback, 8);
-
-    for (i = 0; i < 8; ++i)
-        *(unsigned char *)(0x0341 + i) = readback[i];
-    *(unsigned char *)0x0349 = iec_status();
-    *(unsigned char *)0x0340 = 0xAA;
-}
-
-/* Upload the drive-side blob in 34-byte M-W chunks, then M-E `entry`. */
-#define FL_MW_CHUNK 34
-void fastload_install_at(unsigned int entry)
-{
-    unsigned int remaining = fastload_drive_code_size;
-    unsigned int src = 0;
-    unsigned int dst = 0x0500;          /* blob load address in 1541 RAM   */
-    unsigned char this_chunk;
-
-    while (remaining != 0) {
-        this_chunk = (remaining > FL_MW_CHUNK) ? FL_MW_CHUNK
-                                               : (unsigned char)remaining;
-        fastload_mw(dst, fastload_drive_code + src, this_chunk);
-        if (iec_status() & ST_NODEV)
-            return;
-        src += this_chunk;
-        dst += this_chunk;
-        remaining -= this_chunk;
-    }
-    fastload_me(entry);
-}
-
-void fastload_install(void)
-{
-    fastload_install_at(FASTLOAD_DRIVE_SENTINEL);
-}
-
-void fastload_selftest_me(void)
-{
-    unsigned char sentinel = 0;
-
-    /* Poison the drive's sentinel cell first so a no-op M-E is detectable
-       (the drive code's job is to write $42; we want to see that change). */
-    fastload_mw(0x07FF, selftest_pattern, 1);   /* writes $AB at $07FF    */
-    fastload_install();
-    fastload_mr(0x07FF, &sentinel, 1);
-
-    *(unsigned char *)0x0351 = sentinel;
-    *(unsigned char *)0x0352 = iec_status();
-    *(unsigned char *)0x0350 = 0xAA;
 }
 
 #pragma code-name (pop)

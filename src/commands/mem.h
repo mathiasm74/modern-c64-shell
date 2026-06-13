@@ -4,6 +4,5 @@
 
 void cmd_peek(int argc, char *argv[]);   /* peek $addr      - show a byte  */
 void cmd_poke(int argc, char *argv[]);   /* poke $addr $val - write a byte */
-void cmd_tardis(int argc, char *argv[]); /* tardis overlay proof-of-concept */
 
 #endif /* MEM_H */

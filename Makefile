@@ -35,7 +35,7 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s \
-         src/fastload_blob.s src/fastload_recv.s src/fastload_send.s \
+         src/fastload_recv.s src/fastload_send.s \
          src/rbcp/rbcp.s src/rbcp/launch.s
 SRC_C := src/shell.c src/parser.c src/fastload.c \
          src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c \
@@ -100,14 +100,6 @@ $(BUILD)/overlays.bin: $(OVERLAYS)
 	  assert n <= 8192, 'overlays.bin overflow'; f.write(b'\xff'*(8192-n))"
 	@echo "  overlays.bin: $$(wc -c < $@) bytes ($(words $(OVERLAYS)) page(s))"
 
-# Drive-side fast-loader image. Assembled separately (origin $0500 in the
-# 1541's RAM) and incbin'd into the host ROM by src/fastload_blob.s. The
-# blob's object depends on the bin so make tracks the dep graph correctly.
-$(BUILD)/fastload_drive.bin: src/fastload_drive.s cfg/fastload_drive.cfg | $(BUILD)
-	$(AS) $(ASFLAGS) -o $(BUILD)/fastload_drive.o src/fastload_drive.s
-	$(LD) -C cfg/fastload_drive.cfg $(BUILD)/fastload_drive.o -o $@
-	@echo "  fastload_drive.bin: $$(wc -c < $@) bytes"
-$(BUILD)/fastload_blob.o: $(BUILD)/fastload_drive.bin
 
 # C is compiled to assembly by cc65, then assembled by ca65 (keep the .s so a
 # build leaves the generated assembly around for inspection).

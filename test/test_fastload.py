@@ -36,10 +36,6 @@ def _jsr_then_spin(symbol):
     ]
 
 
-def _selftest_stub():
-    return _jsr_then_spin("_fastload_selftest")
-
-
 def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
     """Step 1: the drive-side Epyx handshake. Meatloaf recognises the cartridge
     by three 25-byte M-W chunks whose 8-bit additive checksums are $53/$A6/$8F
@@ -58,88 +54,3 @@ def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
         assert got == expect, \
             "Epyx chunk %d ($%04X) sum = $%02X, expected $%02X" \
             % (k + 1, [0x0180, 0x0199, 0x01B2][k], got, expect)
-
-
-def test_fastload_selftest_roundtrips_pattern_through_drive_ram(v):
-    """M-W an 8-byte pattern to $0500 in the drive, M-R it back, compare.
-
-    The C-side fastload_selftest() drives the round-trip and stamps its
-    result at $0340-$0349 in main RAM (which it owns -- nothing else in the
-    shell writes there). We poison the area with $00 first so a hung
-    selftest (no $AA marker) is distinguishable from a passed selftest.
-    """
-    # Poison the result area + put the stub in user RAM.
-    v.write_memory(0x0340, [0x00] * 10)
-    v.write_memory(0x1000, _selftest_stub())
-
-    # Generous timeout: M-W frame send + UNLISTEN + TALK + M-R reply +
-    # UNTALK over slow IEC, with the bit-banged ATN handshake at each step,
-    # is comfortably under a second but the drive can take its time to
-    # answer.
-    v.run_at(0x1000, 3.0)
-
-    marker = v.read_byte(0x0340)
-    assert marker == 0xAA, (
-        "fastload_selftest did not complete: $0340 = $%02X (expected $AA). "
-        "Either the M-W or M-R hung, or the cc65 calling convention is off."
-        % marker
-    )
-
-    got = v.read_memory(0x0341, 8)
-    want = [0xAB, 0xCD, 0xEF, 0x42, 0x55, 0xAA, 0x00, 0xFF]
-    assert got == want, (
-        "Round-tripped bytes don't match: got %s, want %s. "
-        "If got is all zero, no-device timed out (is the disk attached?). "
-        "If only some bytes match, the M-W payload was truncated or the "
-        "lowercase-fold leaked into the binary body."
-        % (["$%02X" % b for b in got], ["$%02X" % b for b in want])
-    )
-
-    st = v.read_byte(0x0349)
-    # ST_NODEV ($80) is the only bit we'd see; the read path doesn't set EOI
-    # for the per-byte loop of an M-R reply. A timeout from the data wait
-    # ($02) is also possible if the drive is slow.
-    assert (st & 0x80) == 0, (
-        "ST after selftest = $%02X; ST_NODEV bit set -- the drive didn't "
-        "answer. Confirm -drive8truedrive and that the disk fixture exists."
-        % st
-    )
-
-
-def test_fastload_install_runs_drive_code(v):
-    """End-to-end M-E: upload the drive blob, run it, M-R the sentinel.
-
-    The drive-side stub (src/fastload_drive.s) writes $42 to $07FF in drive
-    RAM and RTSes. The selftest_me() helper poisons $07FF with $AB first,
-    M-Ws+M-Es the drive code, then M-Rs $07FF -- a result of $42 means M-E
-    actually entered our code (a result of $AB would mean M-E silently
-    failed; a result of $00 would mean M-R itself failed).
-    """
-    v.write_memory(0x0350, [0x00] * 4)
-    v.write_memory(0x1000, _jsr_then_spin("_fastload_selftest_me"))
-
-    # Slightly more generous: install does 1 M-W + 1 M-E + 1 M-R (3 IEC
-    # round-trips through the slow-bus command channel) plus the drive's
-    # M-E latency.
-    v.run_at(0x1000, 4.0)
-
-    marker = v.read_byte(0x0350)
-    assert marker == 0xAA, (
-        "fastload_selftest_me did not complete: $0350 = $%02X (expected $AA)"
-        % marker
-    )
-
-    sentinel = v.read_byte(0x0351)
-    assert sentinel == 0x42, (
-        "Drive sentinel = $%02X (expected $42). "
-        "$AB means the M-E never executed our code (we poisoned $07FF with "
-        "$AB beforehand). $00 means the M-R reply was empty (no-device or "
-        "command-channel timeout). Anything else is genuine corruption."
-        % sentinel
-    )
-
-    st = v.read_byte(0x0352)
-    assert (st & 0x80) == 0, (
-        "ST after selftest_me = $%02X; ST_NODEV bit set." % st
-    )
-

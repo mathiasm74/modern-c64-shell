@@ -135,8 +135,83 @@ static char dir_buf[42];
 
 /* Open the directory of the default device and skip its 2-byte load address.
    Returns 1 if the drive answered, 0 (after reporting it) if no device. */
+/* --- fast directory streaming (Epyx) ------------------------------------
+ *
+ * The stock serial bus moves ~450 bytes/s, so a screenful of directory
+ * costs seconds. On an Epyx-capable drive (Meatloaf; see
+ * fastload_epyx_capable) the same listing rides the 2-bit protocol: the
+ * drive serves "$" like any file, in [length][data] blocks, and since
+ * every byte is host-paced we can parse line by line mid-stream -- no
+ * buffer, same dir_line logic. The 1541-family is excluded by the probe
+ * (the fingerprint install would crash a real drive's DOS).             */
+static unsigned char dir_fast;  /* this listing rides the fast protocol  */
+static unsigned char fast_rem;  /* bytes left in the current block       */
+static unsigned char fast_eof;
+
+#pragma code-name (push, "CODE2")
+static unsigned char fast_dir_byte(void)
+{
+    if (fast_eof)
+        return 0;
+    if (fast_rem == 0) {
+        if (epyx_wait_ready() != 0) {       /* no further block */
+            fast_eof = 1;
+            return 0;
+        }
+        fast_rem = epyx_recv_byte();        /* block length; 0 = end */
+        if (fast_rem == 0) {
+            fast_eof = 1;
+            return 0;
+        }
+    }
+    --fast_rem;
+    return epyx_recv_byte();
+}
+
+/* One byte of directory stream, whichever transport is live. */
+static unsigned char dgetc(void)
+{
+    if (dir_fast)
+        return fast_dir_byte();
+    return iec_getbyte();
+}
+
+/* 1 when the directory stream has ended (or broke). */
+static unsigned char dstream_end(void)
+{
+    if (dir_fast)
+        return fast_eof;
+    return (iec_status() & (ST_EOI | ST_TIMEOUT)) != 0;
+}
+
+/* Try to open "$" over the fast path; 1 = streaming (load address already
+   consumed), 0 = caller should use the standard path. */
+static unsigned char dir_begin_fast(void)
+{
+    fastload_set_device(default_device);
+    if (!fastload_epyx_capable())
+        return 0;
+    fastload_epyx_install();
+    if (iec_status() & ST_NODEV)
+        return 0;
+    if (fastload_epyx_send_header("$", 1) != 0) {
+        fastload_epyx_mark_unsupported();   /* don't retry every listing */
+        return 0;
+    }
+    dir_fast = 1;
+    fast_rem = 0;
+    fast_eof = 0;
+    fast_dir_byte();                        /* the PRG load address */
+    fast_dir_byte();
+    return 1;
+}
+#pragma code-name (pop)
+
 static unsigned char dir_begin(void)
 {
+    dir_fast = 0;
+    if (dir_begin_fast())
+        return 1;
     iec_set_fa(default_device);
     iec_set_sa(0);
     iec_setname("$");
@@ -157,21 +232,21 @@ static unsigned char dir_line(unsigned int *blocks)
 {
     unsigned char lo, hi, b, n;
 
-    lo = iec_getbyte();         /* link pointer */
-    if (iec_status() & (ST_EOI | ST_TIMEOUT))
+    lo = dgetc();               /* link pointer */
+    if (dstream_end())
         return 0;
-    hi = iec_getbyte();
+    hi = dgetc();
     if (lo == 0 && hi == 0)
         return 0;               /* $00,$00 link -> end of directory */
 
-    lo = iec_getbyte();         /* line number = block count */
-    hi = iec_getbyte();
+    lo = dgetc();               /* line number = block count */
+    hi = dgetc();
     *blocks = lo | ((unsigned int)hi << 8);
 
     n = 0;
     for (;;) {
-        b = iec_getbyte();
-        if (b == 0 || (iec_status() & (ST_EOI | ST_TIMEOUT)))
+        b = dgetc();
+        if (b == 0 || dstream_end())
             break;
         if (n < sizeof(dir_buf) - 1)
             dir_buf[n++] = b;
@@ -182,6 +257,13 @@ static unsigned char dir_line(unsigned int *blocks)
 
 static void dir_end(void)
 {
+    if (dir_fast) {
+        while (!fast_eof)
+            fast_dir_byte();    /* drain to the end block: the drive leaves
+                                   Epyx mode parked and back on normal IEC */
+        dir_fast = 0;
+        return;
+    }
     iec_close();
     iec_clrchn();
     if (iec_status() & ST_TIMEOUT) {
@@ -331,15 +413,47 @@ void cmd_pwd(int argc, char *argv[])
    BASIC ROM over budget. */
 #pragma code-name (push, "CODE2")
 #pragma rodata-name (push, "RODATA2")
+static unsigned char fold_name(unsigned char *buf, const char *src);
+static unsigned int fast_receive_prg(void);
+
 void cmd_load(int argc, char *argv[])
 {
     unsigned char lo, hi;
     unsigned char *p;
+    unsigned char namebuf[16];
+    unsigned int end;
 
     if (argc < 2) {
         puts_raw("usage: load <name>");
         chrout(CR);
         return;
+    }
+
+    /* Try the Epyx fast path first on a capable drive (probed and cached
+       per device -- a real 1541 never gets the fingerprint install). Any
+       failure falls through to the standard load below.                  */
+    fastload_set_device(default_device);
+    if (fastload_epyx_capable()) {
+        fastload_epyx_install();
+        if (!(iec_status() & ST_NODEV)) {
+            if (fastload_epyx_send_header((const char *)namebuf,
+                    fold_name(namebuf, argv[1])) == 0) {
+                end = fast_receive_prg();
+                if (end != 0) {
+                    puts_raw("loaded $");
+                    print_hex16(load_start);
+                    puts_raw("-$");
+                    print_hex16(end);
+                    chrout(CR);
+                    return;
+                }
+                /* engaged but no data: the file doesn't exist */
+                puts_raw("file not found");
+                chrout(CR);
+                return;
+            }
+            fastload_epyx_mark_unsupported();
+        }
     }
 
     iec_set_fa(default_device);
@@ -404,44 +518,33 @@ void cmd_load(int argc, char *argv[])
    Lives in CODE2/RODATA2 (KERNAL ROM). */
 #pragma code-name (push, "CODE2")
 #pragma rodata-name (push, "RODATA2")
-void cmd_fload(int argc, char *argv[])
+/* Fold a filename to uppercase PETSCII (CBM convention) into buf[16];
+   returns the length. */
+static unsigned char fold_name(unsigned char *buf, const char *src)
 {
-    unsigned char namebuf[16];
-    unsigned char namelen = 0, i, n, b;
+    unsigned char n = 0, i;
+    char c;
+
+    for (i = 0; src[i] != 0 && n < 16; ++i) {
+        c = src[i];
+        if (c >= 'a' && c <= 'z')
+            c = (char)(c - 32);
+        buf[n++] = (unsigned char)c;
+    }
+    return n;
+}
+
+/* Receive a PRG over the Epyx stream into its embedded load address, in
+   [length][data...] blocks until a zero-length block. Sets load_start and
+   returns the last written address, or 0 if fewer than 3 bytes arrived
+   (missing file / broken stream). Caller already sent install + header. */
+static unsigned int fast_receive_prg(void)
+{
+    unsigned char i, n, b;
     unsigned int count = 0;
     unsigned char *dst = (unsigned char *)0x0800;
     unsigned char lo = 0, hi = 0;
-    char c;
 
-    if (argc < 2) {
-        puts_raw("usage: fload <name>");
-        chrout(CR);
-        return;
-    }
-
-    /* fold the name to uppercase PETSCII (CBM convention), max 16 chars */
-    for (i = 0; argv[1][i] != 0 && namelen < sizeof(namebuf); ++i) {
-        c = argv[1][i];
-        if (c >= 'a' && c <= 'z')
-            c = (char)(c - 32);
-        namebuf[namelen++] = (unsigned char)c;
-    }
-
-    fastload_epyx_install();
-    if (iec_status() & ST_NODEV) {
-        report_no_device(8);
-        return;
-    }
-    if (fastload_epyx_send_header((const char *)namebuf, namelen) != 0) {
-        /* the drive never did the Epyx "ready for header" handshake: it isn't
-           Epyx-capable (or the protocol isn't enabled on it). */
-        puts_raw("fast load not supported");
-        chrout(CR);
-        return;
-    }
-
-    /* receive the file in [length][data...] blocks until a zero-length block.
-       The first two bytes are the PRG load address. */
     for (;;) {
         if (epyx_wait_ready() != 0)         /* drive never signalled a block  */
             break;
@@ -460,17 +563,50 @@ void cmd_fload(int argc, char *argv[])
             ++count;
         }
     }
+    if (count < 3)                          /* nothing (or only an address)  */
+        return 0;
+    load_start = (unsigned int)(lo | ((unsigned int)hi << 8));
+    return (unsigned int)(dst - 1);
+}
 
-    if (count < 3) {                        /* nothing (or only an address)  */
+void cmd_fload(int argc, char *argv[])
+{
+    unsigned char namebuf[16];
+    unsigned char namelen;
+    unsigned int end;
+
+    if (argc < 2) {
+        puts_raw("usage: fload <name>");
+        chrout(CR);
+        return;
+    }
+    namelen = fold_name(namebuf, argv[1]);
+
+    fastload_set_device(default_device);
+    fastload_epyx_install();
+    if (iec_status() & ST_NODEV) {
+        report_no_device(default_device);
+        return;
+    }
+    if (fastload_epyx_send_header((const char *)namebuf, namelen) != 0) {
+        /* the drive never did the Epyx "ready for header" handshake: it isn't
+           Epyx-capable (or the protocol isn't enabled on it). */
+        fastload_epyx_mark_unsupported();
+        puts_raw("fast load not supported");
+        chrout(CR);
+        return;
+    }
+
+    end = fast_receive_prg();
+    if (end == 0) {
         puts_raw("fast load failed");
         chrout(CR);
         return;
     }
-    load_start = (unsigned int)(lo | ((unsigned int)hi << 8));
     puts_raw("floaded $");
     print_hex16(load_start);
     puts_raw("-$");
-    print_hex16((unsigned int)(dst - 1));
+    print_hex16(end);
     chrout(CR);
 }
 #pragma rodata-name (pop)

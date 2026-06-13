@@ -402,15 +402,19 @@ the stock KERNAL/BASIC, so it's another One ROM slot (Simons' cart + stock ROMs)
 and a swap to it -- essentially `runstock` with a different target slot. User
 supplies the Simons' ROM (gitignored, like `stock-roms/`). **Depends on #1.**
 
-### 3. Fast-loader -> `load` integration & polish
+### 3. Fast-loader -> `load` integration & polish -- DONE (2026-06-13, v0.18)
 
-**Goal:** make the fast path automatic and safe.
-
-**Tasks:**
-- Fold `fload` into `load`: try the Epyx fast path, fall back to standard IEC if
-  the drive doesn't engage (so a non-Epyx drive isn't handed a stray M-E $01A9).
-- Use `default_device` instead of the hardcoded device 8.
-- Decide whether `fload` stays as an explicit command too.
+`load`, `ls`, `dir`, and `pwd` all ride the Epyx fast path automatically on a
+capable drive and fall back to standard IEC otherwise. Safety probe: M-R of
+the drive reset vector ($FFFC), cached per device -- real-DOS drives (1541
+family, JiffyDOS, Pi1541) answer their ROM vector and never receive the
+fingerprint install (M-E on a real drive would execute our fake bytes);
+Meatloaf's zero-initialized emulated memory answers $00,$00, which is the
+only answer that enables the fast path. Directory listings stream the "$"
+file over the 2-bit protocol parsed line-by-line mid-stream (host-paced, no
+buffer). `fload` stays as the explicit/diagnostic form; both use
+default_device. The Phase-7b/7c drive-blob scaffolding and the tardis PoC
+command were evicted to make ROM room (both ROM halves were full).
 
 ### 4. Lazy-load + cache command overlays (the "tardis")
 

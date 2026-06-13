@@ -76,6 +76,20 @@ extern const unsigned char fastload_epyx_upload[3 * FL_EPYX_CHUNK];
  * ST_NODEV if the drive doesn't answer.                                      */
 void fastload_epyx_install(void);
 
+/* Select the device the fastload helpers target (the shell passes its
+   default_device before each fast operation). 8-15; default 8.          */
+void fastload_set_device(unsigned char d);
+
+/* 1 if the current device takes the Epyx fast path. First call probes with
+   a harmless M-R of the drive reset vector and caches per device: real-DOS
+   drives answer their ROM vector and are excluded (the fingerprint install
+   would crash them); Meatloaf's emulated memory reads back $00,$00.       */
+unsigned char fastload_epyx_capable(void);
+
+/* Demote the current device to "no fast path" (e.g. after the post-install
+   header handshake timed out) so listings don't keep retrying.            */
+void fastload_epyx_mark_unsupported(void);
+
 /* --- Step 2: host -> drive transmit over the Epyx wire (src/fastload_send.s)
  *
  * After install the drive runs receiveEpyxHeader and clocks bytes IN from us
@@ -111,36 +125,5 @@ unsigned char __fastcall__ epyx_wait_ready(void);
 /* Receive one byte over the timed 2-bit protocol. The sample timing is
  * hardware-calibrated (see the PAD note in fastload_recv.s).                 */
 unsigned char __fastcall__ epyx_recv_byte(void);
-
-/* Drive-side image embedded in our ROM (see src/fastload_blob.s and
- * src/fastload_drive.s). fastload_install() ships it to the drive.        */
-extern const unsigned char fastload_drive_code[];
-extern const unsigned int fastload_drive_code_size;
-
-/* Entry points within the drive blob (see src/fastload_drive.s jump table). */
-#define FASTLOAD_DRIVE_SENTINEL 0x0500   /* Phase 7b: $42 -> $07FF, RTS    */
-#define FASTLOAD_DRIVE_ONE_BYTE 0x0503   /* Phase 7c2: send $42 via 2-bit  */
-
-/* Upload the drive-side image to the 1541 and M-E `entry`. After this
- * returns, the drive is running the code at that entry.
- *
- * Chunks the upload into 34-byte M-W frames. Sets ST_NODEV on no-device.   */
-void fastload_install_at(unsigned int entry);
-
-/* Convenience wrapper: install + M-E the Phase 7b sentinel entry.          */
-void fastload_install(void);
-
-/* Self-test entry point for test_fastload.py. Round-trips a known pattern
- * through drive RAM via M-W + M-R and leaves a footprint at $0340 onwards.
- * See fastload.c for the protocol; the test invokes this via run_at after
- * stamping $0340 with $00.                                                 */
-void fastload_selftest(void);
-
-/* Second selftest: M-W + M-E the drive code, then M-R the sentinel it
- * writes ($07FF -> $42). Footprint:
- *   $0350 = $AA when it ran to completion
- *   $0351 = the byte read back from $07FF in drive RAM ($42 on success)
- *   $0352 = ST after the round-trip                                      */
-void fastload_selftest_me(void);
 
 #endif /* FASTLOAD_H */

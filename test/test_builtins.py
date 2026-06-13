@@ -48,7 +48,7 @@ def test_help_lists_every_command(v):
 
 def test_ver_prints_version(v):
     _type(v, "ver")
-    v.assert_screen_contains("C64 Shell ROM v0.17")
+    v.assert_screen_contains("C64 Shell ROM v0.18")
 
 
 def test_echo_prints_arguments(v):
@@ -76,6 +76,6 @@ def test_clear_command_wipes_screen(v):
 def test_leading_whitespace_still_dispatches(v):
     # The parser skips leading whitespace, so " ver" still finds ver.
     _type(v, " ver")
-    v.assert_screen_contains("C64 Shell ROM v0.17")
+    v.assert_screen_contains("C64 Shell ROM v0.18")
     assert "Command not found" not in v.screen_text(), \
         "leading space should not turn a known command into an unknown one"
