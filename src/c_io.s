@@ -72,11 +72,19 @@ _soft_reset:
 ; the program end, CLR links the rest, and $A7AE runs it. Anything else is
 ; treated as machine code: JMP through its load address.
 ;
-; Assembled in KERNAL ROM but position-independent (only PC-relative
-; branches internally; all absolute refs are fixed stock addresses or the
-; $0334 params), so the copy to $033C runs correctly. Addresses verified
-; against kernal.901227-03 / basic.901226-01.
+; The stub runs at $CF00 and reads its params from $CFF8-$CFFB (above the
+; RBCP/overlay RAM and the BASIC-ROM ceiling, so RAMTAS -- which the stub
+; calls -- leaves them alone; RAMTAS clears pages 0-3, which is exactly why
+; neither the stub nor its params can live in the tape buffer). RAMTAS gives
+; BASIC the clean zero page it needs (our shell leaves cc65 leftovers there,
+; which made the BASIC path fail unpredictably) and sets MEMSTR/MEMSIZ; its
+; RAM test is non-destructive, so the loaded program survives. Position-
+; independent (only PC-relative branches internally; all absolute refs are
+; fixed stock addresses or the $CFF8 params). Addresses verified against
+; kernal.901227-03 / basic.901226-01.
 ; ---------------------------------------------------------------------------
+RUN_PARAMS = $CFF8              ; load lo/hi, end lo/hi (4 bytes)
+
 .export _run_stub
 .export _run_stub_end
 
@@ -86,33 +94,27 @@ _run_stub:
         txs
         cld
         jsr $FF84               ; IOINIT  - CIA/VIC/SID
+        jsr $FF87               ; RAMTAS  - clear ZP/pages 2-3, set MEMSTR/SIZ
         jsr $FF8A               ; RESTOR  - $0314-$0333 RAM vectors
         jsr $FF81               ; CINT    - screen editor (clears the screen)
-        lda $0334               ; load address lo
+        lda RUN_PARAMS+0        ; load address lo
         cmp #$01
         bne @ml
-        lda $0335               ; load address hi
+        lda RUN_PARAMS+1        ; load address hi
         cmp #$08
         bne @ml
         ; --- BASIC program at $0801 -------------------------------------
-        lda #$00
-        sta $0281               ; MEMSTR = $0800 (read by E3BF's MEMBOT)
-        lda #$08
-        sta $0282
-        lda #$00
-        sta $0283               ; MEMSIZ = $A000 (read by E3BF's MEMTOP)
-        lda #$A0
-        sta $0284
+        ; RAMTAS already set MEMSTR=$0800 / MEMSIZ=$A000, which E3BF reads.
         jsr $E453               ; init BASIC indirect vectors ($0300-$030B)
         jsr $E3BF               ; init BASIC RAM (TXTTAB=$0801, no NEW)
-        lda $0336               ; VARTAB = program end
+        lda RUN_PARAMS+2        ; VARTAB = program end
         sta $2D
-        lda $0337
+        lda RUN_PARAMS+3
         sta $2E
         jsr $A659               ; CLR - set TXTPTR, ARYTAB/STREND, FRETOP
         cli
         jmp $A7AE               ; RUN
 @ml:    ; --- machine-code program: jump through its load address --------
         cli
-        jmp ($0334)
+        jmp (RUN_PARAMS)
 _run_stub_end:

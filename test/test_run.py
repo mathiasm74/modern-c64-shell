@@ -74,7 +74,7 @@ def test_run_stub_assembled_correctly(v):
     # Can't run the swap in VICE; read the stub out of KERNAL ROM and check
     # the key structure: takes the machine (SEI), inits via the KERNAL
     # vectors, has the BASIC init-without-NEW ($E3BF) + RUN ($A7AE), and the
-    # machine-code fallback JMP ($0334).
+    # machine-code fallback JMP ($CFF8).
     L = _labels()
     start = L["_run_stub"]
     end = L["_run_stub_end"]
@@ -87,4 +87,4 @@ def test_run_stub_assembled_correctly(v):
     assert _find(b, [0x20, 0x81, 0xFF]) >= 0, "no JSR $FF81 (CINT)"
     assert _find(b, [0x20, 0xBF, 0xE3]) >= 0, "no JSR $E3BF (BASIC init)"
     assert _find(b, [0x4C, 0xAE, 0xA7]) >= 0, "no JMP $A7AE (RUN)"
-    assert _find(b, [0x6C, 0x34, 0x03]) >= 0, "no JMP ($0334) ML fallback"
+    assert _find(b, [0x6C, 0xF8, 0xCF]) >= 0, "no JMP ($CFF8) ML fallback"

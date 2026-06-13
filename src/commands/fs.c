@@ -552,7 +552,7 @@ extern unsigned char run_stub_end[];
 
 void cmd_run(int argc, char *argv[])
 {
-    unsigned char *p = (unsigned char *)0x033C;     /* tape buffer */
+    unsigned char *p = (unsigned char *)0xCF00;     /* run-stub home (RAMTAS-safe) */
     unsigned char *cart = (unsigned char *)0x8000;
     unsigned int i, n;
     (void)argc; (void)argv;
@@ -572,17 +572,17 @@ void cmd_run(int argc, char *argv[])
        through (FFFC) re-enters our reset, which would then re-detect the
        planted CBM80 -- so `run` is only meaningful on the onerom-stock
        firmware, just like runstock. Lives in CODE2 (KERNAL ROM budget). */
-    *(unsigned char *)0x0334 = (unsigned char)(load_start & 0xff);
-    *(unsigned char *)0x0335 = (unsigned char)(load_start >> 8);
-    *(unsigned char *)0x0336 = (unsigned char)(load_end & 0xff);
-    *(unsigned char *)0x0337 = (unsigned char)(load_end >> 8);
+    *(unsigned char *)0xCFF8 = (unsigned char)(load_start & 0xff);
+    *(unsigned char *)0xCFF9 = (unsigned char)(load_start >> 8);
+    *(unsigned char *)0xCFFA = (unsigned char)(load_end & 0xff);
+    *(unsigned char *)0xCFFB = (unsigned char)(load_end >> 8);
 
     n = (unsigned int)(run_stub_end - run_stub);
     for (i = 0; i < n; ++i)
         p[i] = run_stub[i];
 
-    cart[0] = 0x3C; cart[1] = 0x03;     /* cold-start vector -> $033C */
-    cart[2] = 0x3C; cart[3] = 0x03;     /* warm/NMI vector   -> $033C */
+    cart[0] = 0x00; cart[1] = 0xCF;     /* cold-start vector -> $CF00 */
+    cart[2] = 0x00; cart[3] = 0xCF;     /* warm/NMI vector   -> $CF00 */
     cart[4] = 0xC3; cart[5] = 0xC2;     /* "CBM80" autostart signature */
     cart[6] = 0xCD; cart[7] = 0x38; cart[8] = 0x30;
 
