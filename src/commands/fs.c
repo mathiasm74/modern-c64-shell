@@ -549,6 +549,7 @@ static void launch_stock_program(unsigned char mode)
     *(unsigned char *)0xCFFA = (unsigned char)(load_end & 0xff);
     *(unsigned char *)0xCFFB = (unsigned char)(load_end >> 8);
     *(unsigned char *)0xCFFC = mode;                /* 0 = RUN, 1 = READY. */
+    *(unsigned char *)0xCFFD = default_device;      /* FA: PEEK(186) for the program */
 
     n = (unsigned int)(run_stub_end - run_stub);
     for (i = 0; i < n; ++i)

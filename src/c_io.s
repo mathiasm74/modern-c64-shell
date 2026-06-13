@@ -91,6 +91,7 @@ _soft_reset:
 ; ---------------------------------------------------------------------------
 RUN_PARAMS = $CFF8              ; load lo/hi, end lo/hi (4 bytes)
 RUN_MODE   = $CFFC              ; 0 = RUN, nonzero = drop to BASIC READY.
+RUN_DEV    = $CFFD              ; current device (FA) to restore -- see below
 
 .export _run_stub
 .export _run_stub_end
@@ -104,6 +105,13 @@ _run_stub:
         jsr $FF87               ; RAMTAS  - clear ZP/pages 2-3, set MEMSTR/SIZ
         jsr $FF8A               ; RESTOR  - $0314-$0333 RAM vectors
         jsr $FF81               ; CINT    - screen editor (clears the screen)
+        ; RAMTAS cleared $BA (current device / FA) to 0. A real LOAD"name",dev
+        ; leaves it = dev, and programs read it (PEEK(186)) to choose the drive
+        ; to OPEN -- with it 0 (= keyboard) an OPEN raises ?ILLEGAL DEVICE
+        ; NUMBER. Restore the device the program was loaded from. (E453/E3BF
+        ; below don't touch $BA, so once here is enough for both paths.)
+        lda RUN_DEV
+        sta $BA
         lda RUN_PARAMS+0        ; load address lo
         cmp #$01
         bne @ml

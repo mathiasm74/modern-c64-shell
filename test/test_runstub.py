@@ -61,8 +61,11 @@ def test_run_stub_runs_basic_program(v):
         sv.write_memory(0x0801, prog)
         sv.write_memory(0xCFF8, [0x01, 0x08, 0x0D, 0x08])  # load $0801, end $080D
         sv.write_memory(0xCFFC, [0x00])                    # mode 0 = RUN
+        sv.write_memory(0xCFFD, [0x08])                    # device (FA) to restore
         sv.write_memory(0xCF00, stub)
         sv.run_at(0xCF00, 1.5)
+        assert sv.read_byte(0x00BA) == 0x08, \
+            "stub did not restore $BA -- PEEK(186) would be wrong (?ILLEGAL DEVICE NUMBER)"
         rows = [r.strip() for r in sv.screen_text().split("\n")]
         assert "ok" in rows, \
             "stub did not RUN the BASIC program\n%s" % sv.screen_text()

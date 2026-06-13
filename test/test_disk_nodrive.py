@@ -24,7 +24,7 @@ def test_ls_without_disk_stays_responsive(v):
     ok = False
     for _ in range(5):
         v.run_for(0.4)
-        if "C64 Shell ROM v0.22" in v.screen_text():
+        if "C64 Shell ROM v" in v.screen_text():
             ok = True
             break
     assert ok, "shell did not respond after `ls` with no disk (it wedged)"
