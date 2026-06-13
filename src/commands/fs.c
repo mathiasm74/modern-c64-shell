@@ -209,8 +209,19 @@ void cmd_dir(int argc, char *argv[])
 
 /* The text color for a directory entry of the given type, keyed on the first
    letter of its 3-letter type word; 0 = not a file line (skip it). */
+/* ls (and its type matcher) park in the KERNAL ROM: the BASIC ROM is full. */
+#pragma code-name (push, "CODE2")
+#pragma rodata-name (push, "RODATA2")
 static unsigned char type_color(char t)
 {
+    /* Fold the type letter before matching: a 1541 sends uppercase ASCII
+       ('S'), but other drives differ -- Meatloaf can deliver lowercase or
+       shifted-PETSCII uppercase ($C1-$DA), and ls was silently hiding
+       those files (the line got skipped as "not a file"). */
+    if (t >= 'a' && t <= 'z')
+        t -= 0x20;
+    if ((unsigned char)t >= 0xC1 && (unsigned char)t <= 0xDA)
+        t -= 0x80;
     switch (t) {
     case 'P': return 0x0D;      /* PRG - light green */
     case 'S': return 0x03;      /* SEQ - cyan */
@@ -243,6 +254,8 @@ void cmd_ls(int argc, char *argv[])
             continue;
         for (t = q2 + 1; dir_buf[t] == ' '; ++t)  /* type follows the quote */
             ;
+        if (dir_buf[t] == '*')          /* splat (improperly closed file): */
+            ++t;                        /* still a file -- list it         */
         color = type_color(dir_buf[t]);
         if (color == 0)                 /* header line (id/dostype): skip */
             continue;
@@ -254,6 +267,8 @@ void cmd_ls(int argc, char *argv[])
     *TEXT_COLOR = saved;                /* restore so the prompt is white */
     dir_end();
 }
+#pragma rodata-name (pop)
+#pragma code-name (pop)
 
 /* pwd - print the current device (number and name, if any) and the disk's
    name (the quoted title in the directory header), e.g. "9 fd: TEST DISK". */

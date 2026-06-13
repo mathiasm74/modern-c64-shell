@@ -212,3 +212,27 @@ def test_edit_lightpath_repaints_only_current_line(v):
     v.run_for(0.3)
     _keys(v, "n")
     v.run_for(0.3)
+
+
+def test_saved_file_appears_in_ls(v):
+    # Companion to the user-reported Meatloaf issue where an editor-saved
+    # file showed in `dir` but not `ls` (ls hid lines whose type token it
+    # didn't recognize -- splat-marked or non-uppercase). VICE's 1541 sends
+    # clean uppercase, so this covers the regression path we can reach;
+    # the tolerant parsing (splat '*', lowercase, shifted PETSCII) is
+    # exercised by review on hardware.
+    _seed(v)
+    _keys(v, "edit me.txt")
+    _keys(v, [CR])
+    v.run_for(2.0)
+    _keys(v, "x")
+    v.run_for(0.2)
+    _keys(v, [CTRL_O])
+    v.run_for(3.0)
+    _keys(v, [CTRL_X])
+    v.run_for(0.5)
+    _keys(v, "ls")
+    _keys(v, [CR])
+    v.run_for(3.0)
+    assert "ME.TXT" in v.screen_text(), \
+        "editor-saved file missing from ls\n%s" % v.screen_text()
