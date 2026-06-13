@@ -332,7 +332,7 @@ puts_at:
         rts
 
 banner1:
-        .byte "C64 Shell ROM v0.27", 0
+        .byte "C64 Shell ROM v0.28", 0
 banner2:
         .byte "Ready.", 0
 

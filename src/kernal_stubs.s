@@ -469,24 +469,3 @@ save_impl:
 
 .segment "STUB_GETIN"            ; linker places this at $FFE4
         jmp getin_impl
-
-; --- Legacy KERNAL implementation addresses ------------------------------
-; Carts and old ML software JSR directly to these implementation addresses
-; (e.g. JSR $FDA3 for IOINIT) instead of the official jump table at $FF81+.
-; Our reset.s already handles the equivalent setup, so an RTS here lets the
-; caller continue. If a specific routine turns out to need real work, swap
-; the RTS for a JMP to the actual implementation.
-.segment "STUB_LEGACY_FC85"      ; (internal): some carts JSR here
-        rts
-.segment "STUB_LEGACY_FD15"      ; RESTOR  ($FD15): restore default vectors
-        rts
-.segment "STUB_LEGACY_FD50"      ; RAMTAS  ($FD50): RAM test / screen init
-        rts
-.segment "STUB_LEGACY_FD8C"      ; (internal): SET_MEMTOP-like setup
-        rts
-.segment "STUB_LEGACY_FDA3"      ; IOINIT  ($FDA3): init CIAs / VIC / keys
-        rts
-.segment "STUB_LEGACY_FF5E"      ; (internal): another scratch entry
-        rts
-.segment "STUB_LEGACY_FF81"      ; CINT    ($FF81): init the screen editor
-        rts
