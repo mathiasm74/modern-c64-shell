@@ -1,5 +1,30 @@
 # Epyx fast-receive reliability on dynamic content
 
+## RESOLUTION (2026-06-13): it was VIC-II badlines
+
+The scattered corruption was **not** the Meatloaf, the block boundaries, or the
+inter-byte gap (the candidates explored below). It was **VIC-II badlines**: the
+receiver samples each byte on fixed CPU-cycle counts, and a badline (~40 cycles
+stolen, on every raster line where `(RASTER & 7) == YSCROLL`, only in the
+$30-$F7 display window) landing mid-byte slides the sample window off the
+drive's timed pairs and corrupts the rest of that byte. `sei` can't stop
+badlines -- they're VIC DMA, not interrupts.
+
+**Fix (v0.24 then v0.25):** v0.24 blanked the display (`DEN`) during the load --
+what the real Epyx cart does -- which the user confirmed works. v0.25 replaced
+the blank with **badline pacing** so the screen stays visible: the per-byte DATA
+handshake lets the host stall before each byte (the drive blocks on our
+DATA-high), so `_epyx_recv_byte` waits until the raster offset `(RASTER&7)` is
+`{0,4,5,6,7}` -- clear of a window that could touch a badline line (YSCROLL=3) --
+then releases DATA and samples. This also unblocked fast `ls`/`dir` (the dynamic
+directory was garbling for the same badline reason, not its dynamic nature).
+
+The analysis below is the original exploration; kept for the protocol details.
+The block-boundary handshake (candidate that survived) is the next thing to
+check **if** fast `ls`/`dir` still garbles on hardware despite badline pacing.
+
+---
+
 Status: **analysis for hardware iteration** (the fast receiver is hardware-only;
 VICE has no Epyx-capable drive model). Written 2026-06-13 after the user
 observed that a **real Epyx FastLoad cartridge** on their Kung Fu Flash loads
