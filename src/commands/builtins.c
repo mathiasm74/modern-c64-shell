@@ -84,7 +84,7 @@ void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Kept in step with the boot banner in reset.s. */
-    puts_raw("C64 Shell ROM v0.21");
+    puts_raw("C64 Shell ROM v0.22");
     chrout(CR);
 }
 

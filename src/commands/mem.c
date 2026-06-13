@@ -45,16 +45,53 @@ static void print_hex8(unsigned char b)
     print_hex_nybble(b);
 }
 
+static void print_hex16(unsigned int v)
+{
+    print_hex8((unsigned char)(v >> 8));
+    print_hex8((unsigned char)(v & 0xff));
+}
+
 void cmd_peek(int argc, char *argv[])
 {
+    unsigned int addr, count, i;
+    unsigned char c, col;
+
     if (argc < 2) {
-        puts_raw("usage: peek $addr");
+        puts_raw("usage: peek $addr [count]");
         chrout(CR);
         return;
     }
-    chrout('$');
-    print_hex8(*(unsigned char *)parse_hex(argv[1]));
-    chrout(CR);
+    addr = parse_hex(argv[1]);
+
+    /* peek $addr        -> one byte (back-compatible)
+       peek $addr $count -> hexdump `count` bytes, 8 per row with an address
+                            label, so you can read a loaded program's bytes. */
+    if (argc < 3) {
+        chrout('$');
+        print_hex8(*(unsigned char *)addr);
+        chrout(CR);
+        return;
+    }
+    count = parse_hex(argv[2]);
+    if (count == 0)
+        count = 1;
+    col = 0;
+    for (i = 0; i < count; ++i) {
+        if (col == 0) {
+            chrout('$');
+            print_hex16(addr + i);
+            chrout(':');
+        }
+        chrout(' ');
+        c = *(unsigned char *)(addr + i);
+        print_hex8(c);
+        if (++col == 8) {
+            chrout(CR);
+            col = 0;
+        }
+    }
+    if (col != 0)
+        chrout(CR);
 }
 
 void cmd_poke(int argc, char *argv[])

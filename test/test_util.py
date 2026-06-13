@@ -37,6 +37,16 @@ def test_peek_reads_memory(v):
     v.assert_screen_contains("$3c")
 
 
+def test_peek_hexdump_range(v):
+    # `peek $addr $count` hexdumps a range -- 8 bytes per row with an address
+    # label, for reading a loaded program's bytes (e.g. a BASIC line).
+    v.write_memory(0x0340, [0xAA, 0xBB, 0xCC, 0xDD])
+    _send(v, [CLEAR] + _ch("peek 340 4") + [CR])
+    txt = v.screen_text()
+    assert "$0340:" in txt, "hexdump missing the address label: " + txt
+    assert "aa bb cc dd" in txt, "hexdump bytes missing: " + txt
+
+
 def test_reset_reboots(v):
     _send(v, _ch("reset") + [CR])
     v.run_for(0.5)
