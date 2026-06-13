@@ -209,6 +209,7 @@ reset:
 
         ; --- Startup banner ----------------------------------------------
         PRINT banner1, SCREEN_RAM + 40 * 1 + 1
+        PRINT freemem, SCREEN_RAM + 40 * 2 + 1   ; ROM free bytes (patched in)
         PRINT banner2, SCREEN_RAM + 40 * 3 + 1
 
         ; --- Keyboard port: PA outputs (columns), PB inputs (rows) -------
@@ -331,9 +332,15 @@ puts_at:
         rts
 
 banner1:
-        .byte "C64 Shell ROM v0.26", 0
+        .byte "C64 Shell ROM v0.27", 0
 banner2:
         .byte "Ready.", 0
+
+; The "----" fields are patched with the per-ROM free byte counts after the
+; link (tools/patch_freemem.py); .export so the patcher can find this string.
+.export freemem
+freemem:
+        .byte "rom free  basic ----  kernal ----", 0
 
 ; --- 6502 hardware vectors ($FFFA-$FFFF) ---------------------------------
 .segment "VECTORS"

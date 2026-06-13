@@ -139,8 +139,9 @@ $(BUILD)/%.o: $(BUILD)/%.s | $(BUILD)
 # compiled C pulls in.
 # -Ln writes a VICE label file (build/labels.txt) for monitor debugging and so
 # tests can locate exported symbols (e.g. keytab_shift) in the ROM.
-$(KERNAL): $(OBJ) $(CFG) | $(BUILD)
-	$(LD) -C $(CFG) $(OBJ) $(RTLIB) -Ln $(BUILD)/labels.txt
+$(KERNAL): $(OBJ) $(CFG) tools/patch_freemem.py | $(BUILD)
+	$(LD) -C $(CFG) $(OBJ) $(RTLIB) -Ln $(BUILD)/labels.txt -m $(BUILD)/rom.map
+	@python3 tools/patch_freemem.py $(BUILD)   # fill the boot-screen "rom free" line
 	@echo "  basic.bin : $$(wc -c < $(BASIC)) bytes"
 	@echo "  kernal.bin: $$(wc -c < $(KERNAL)) bytes"
 
