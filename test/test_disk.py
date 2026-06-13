@@ -11,6 +11,8 @@ match a previous command's output still on screen.
 
 VICE_DISK = "data/test.d64"
 
+from lib.overlays import seed_dir
+
 CLEAR = 0x93
 
 
@@ -44,6 +46,7 @@ def test_boots_clean_with_drive_attached(v):
 
 def test_dir_lists_directory(v):
     # "dir" is the full 1541-style listing: block counts, names, types, free.
+    seed_dir(v)
     _type(v, "dir", clear=True)
     done = _wait_for(v, "BLOCKS FREE")
     txt = v.screen_text()
@@ -56,6 +59,7 @@ def test_dir_lists_directory(v):
 def test_ls_colors_names_by_type(v):
     # "ls" lists just the names, each colored by type. PROG/README are PRG and
     # DOC is SEQ, so the PRG and SEQ names get different text colors.
+    seed_dir(v)
     _type(v, "ls", clear=True)
     assert _wait_for(v, "DOC"), "ls did not list the files"
     rows = v.screen_rows()
@@ -74,6 +78,7 @@ def test_ls_colors_names_by_type(v):
 
 def test_pwd_prints_device_and_disk_name(v):
     # pwd prefixes the current device (8, no name set here) before the title.
+    seed_dir(v)
     _type(v, "pwd", clear=True)
     assert _wait_for(v, "TEST DISK"), "pwd did not print the disk name"
     assert "8: TEST DISK" in v.screen_text(), \

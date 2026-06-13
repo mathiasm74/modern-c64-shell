@@ -130,317 +130,36 @@ static unsigned char device_present(unsigned char dev)
     iec_clrchn();
     return absent ? 0 : 1;
 }
+/* dir / ls / pwd -- the "dir" tardis overlay (src/overlays/dir.c). These need
+   the lower-level IEC bus and the badline-paced Epyx receiver (not KERNAL
+   entry points), so the overlay reaches them through the $FF80 services table
+   (src/svc.s); the resident side is just these thunks, which pass the device
+   and its remembered name in the mailbox at $02D0. */
+#define DB_CMD  (*(unsigned char *)0x02D0)       /* 0 dir, 1 ls, 2 pwd */
+#define DB_DEV  (*(unsigned char *)0x02D1)
+#define DB_NLEN (*(unsigned char *)0x02D2)
+#define DB_NAME ((unsigned char *)0x02D3)
 
-/* Scratch buffer for one directory line's text (dir/ls/pwd run one at a
-   time, so they can share it). */
-static char dir_buf[42];
-
-/* dir/ls/pwd read the "$" listing either over the Epyx fast path (when the
- * drive is fast-capable) or standard IEC. dir_begin picks the source; dir_line
- * parses one BASIC-directory line from it via the unified dir_getbyte/dir_ended
- * below. Earlier the directory was kept on standard IEC because a fast listing
- * came back garbled, but that turned out to be VIC-II badlines corrupting the
- * timed receive (the dir, generated per-entry, just streams while the screen is
- * busy); the receiver now paces around badlines (see fastload_recv.s), so the
- * dynamic listing comes back clean. (Hold CTRL to pause it -- pause_while_ctrl
- * below; the fast path receives a byte at a time, so it pauses just the same.)
- *
- * Fast source: read the Epyx stream a byte at a time, crossing its [length]
- * [data...] block boundaries transparently -- no whole-directory buffer, so a
- * listing doesn't clobber a loaded program. */
-static unsigned char dir_fast;          /* 1 = reading the Epyx block stream  */
-static unsigned char fdir_left;         /* bytes left in the current Epyx block */
-static unsigned char fdir_eof;          /* fast stream exhausted / timed out   */
-
-static unsigned char dir_getbyte(void)
+static void dir_run(unsigned char cmd)
 {
-    if (dir_fast) {
-        while (fdir_left == 0) {        /* fetch the next block's length byte  */
-            if (fdir_eof || epyx_wait_ready() != 0) {
-                fdir_eof = 1;
-                return 0;
-            }
-            fdir_left = epyx_recv_byte();
-            if (fdir_left == 0) {       /* a 0-length block marks end-of-file  */
-                fdir_eof = 1;
-                return 0;
-            }
-        }
-        --fdir_left;
-        return epyx_recv_byte();
-    }
-    return iec_getbyte();
-}
-
-static unsigned char dir_ended(void)
-{
-    if (dir_fast)
-        return fdir_eof;
-    return (iec_status() & (ST_EOI | ST_TIMEOUT)) ? 1 : 0;
-}
-
-/* Open the directory of the default device and skip its 2-byte load address.
-   Returns 1 if the drive answered, 0 (after reporting it) if no device.
-   `allow_fast` enables the Epyx fast path; pwd passes 0 because it reads only
-   the header and standard IEC can close early, whereas aborting a fast transfer
-   means draining the whole listing. */
-static unsigned char dir_begin(unsigned char allow_fast)
-{
-    dir_fast = 0;
-    fdir_left = 0;
-    fdir_eof = 0;
-
-    /* Try the Epyx fast path first on a capable drive. */
-    fastload_set_device(default_device);
-    if (allow_fast && fastload_epyx_capable()) {
-        fastload_epyx_install();
-        if (!(iec_status() & ST_NODEV)) {
-            if (fastload_epyx_send_header("$", 1) == 0) {
-                dir_fast = 1;
-                dir_getbyte();          /* load address (2 bytes) */
-                dir_getbyte();
-                return 1;
-            }
-            fastload_epyx_mark_unsupported();
-        }
-    }
-
-    /* Standard IEC fallback. */
-    iec_set_fa(default_device);
-    iec_set_sa(0);
-    iec_setname("$");
-    iec_open();
-    if (iec_status() & ST_NODEV) {
-        report_no_device(default_device);
-        return 0;
-    }
-    iec_chkin();
-    iec_getbyte();              /* load address */
-    iec_getbyte();
-    return 1;
-}
-
-/* Read the next directory line into dir_buf (NUL-terminated) and its block
-   count into *blocks. Returns 1 for a line, 0 at the end of the directory. */
-static unsigned char dir_line(unsigned int *blocks)
-{
-    unsigned char lo, hi, b, n;
-
-    lo = dir_getbyte();         /* link pointer */
-    if (dir_ended())
-        return 0;
-    hi = dir_getbyte();
-    if (lo == 0 && hi == 0)
-        return 0;               /* $00,$00 link -> end of directory */
-
-    lo = dir_getbyte();         /* line number = block count */
-    hi = dir_getbyte();
-    *blocks = lo | ((unsigned int)hi << 8);
-
-    n = 0;
-    for (;;) {
-        b = dir_getbyte();
-        if (b == 0 || dir_ended())
-            break;
-        if (n < sizeof(dir_buf) - 1)
-            dir_buf[n++] = b;
-    }
-    dir_buf[n] = 0;
-    return 1;
-}
-
-static void dir_end(void)
-{
-    if (dir_fast) {
-        /* Drain any remaining Epyx blocks to the end-of-stream marker so the
-           bus is left idle for the next command (the parse stops at the
-           directory's $00,$00 link, before the Epyx 0-length EOF block). */
-        while (!fdir_eof)
-            dir_getbyte();
-        dir_fast = 0;
-        return;
-    }
-    iec_close();
-    iec_clrchn();
-    if (iec_status() & ST_TIMEOUT) {
-        puts_raw("read error");     /* drive present but no disk / no data */
-        chrout(CR);
-    }
-}
-
-/* dir - the full 1541-style listing: block count, name, type, blocks free. */
-/* Hold CTRL to pause a listing (the classic C64 slow-scroll key). The IRQ
-   keyboard scan keeps SHFLAG ($028D) current while we spin, and the IEC
-   transfer is host-paced, so the drive simply waits between bytes. */
-#define SHFLAG_REG (*(volatile unsigned char *)0x028D)
-static void pause_while_ctrl(void)
-{
-    while (SHFLAG_REG & 0x04)
-        ;
-}
-
-void cmd_dir(int argc, char *argv[])
-{
-    unsigned int blocks;
-    (void)argc; (void)argv;
-
-    if (!dir_begin(1))
-        return;
-    while (dir_line(&blocks)) {
-        print_uint(blocks);
-        chrout(' ');
-        puts_raw(dir_buf);
-        chrout(CR);
-        pause_while_ctrl();
-    }
-    dir_end();
-}
-
-/* The text color for a directory entry of the given type, keyed on the first
-   letter of its 3-letter type word; 0 = not a file line (skip it). */
-/* ls (and its type matcher) park in the KERNAL ROM: the BASIC ROM is full. */
-#pragma code-name (push, "CODE2")
-#pragma rodata-name (push, "RODATA2")
-static unsigned char type_color(char t)
-{
-    /* Fold the type letter before matching: a 1541 sends uppercase ASCII
-       ('S'), but other drives differ -- Meatloaf can deliver lowercase or
-       shifted-PETSCII uppercase ($C1-$DA), and ls was silently hiding
-       those files (the line got skipped as "not a file"). */
-    if (t >= 'a' && t <= 'z')
-        t -= 0x20;
-    if ((unsigned char)t >= 0xC1 && (unsigned char)t <= 0xDA)
-        t -= 0x80;
-    switch (t) {
-    case 'P': return 0x0D;      /* PRG - light green */
-    case 'S': return 0x03;      /* SEQ - cyan */
-    case 'U': return 0x07;      /* USR - yellow */
-    case 'R': return 0x0A;      /* REL - light red */
-    case 'D': return 0x0C;      /* DEL - grey */
-    default:  return 0x00;      /* header / blocks-free: not a file */
-    }
-}
-
-/* ls - just the file names, colored by type where we know it.
- *
- * Every quoted-name line after the header is a file. The header is always
- * the FIRST line of the listing (dir/pwd rely on that too), so it's
- * skipped positionally -- NOT by whitelisting type tokens: a 1541 only
- * ever says PRG/SEQ/USR/REL/DEL, but Meatloaf synthesizes the type from
- * the filename extension (TXT, D64, DIR, SID, ...), and keying visibility
- * on known types silently hid those files (user report: a saved
- * "test12.txt" appeared in dir but not ls). Unknown types list in the
- * current text color; known ones keep their colors.                     */
-void cmd_ls(int argc, char *argv[])
-{
-    unsigned int blocks;
-    unsigned char i, q2, t, color, saved, first;
-    (void)argc; (void)argv;
-
-    if (!dir_begin(1))
-        return;
-    saved = *TEXT_COLOR;
-    first = 1;
-    while (dir_line(&blocks)) {
-        if (first) {
-            first = 0;                  /* the disk-name header line */
-            continue;
-        }
-        for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
-            ;
-        if (dir_buf[i] != '"')          /* no quoted name -> blocks-free line */
-            continue;
-        ++i;                            /* name runs from i to the next quote */
-        for (q2 = i; dir_buf[q2] && dir_buf[q2] != '"'; ++q2)
-            ;
-        if (dir_buf[q2] != '"')
-            continue;
-        for (t = q2 + 1; dir_buf[t] == ' '; ++t)  /* type follows the quote */
-            ;
-        if (dir_buf[t] == '*')          /* splat (improperly closed file): */
-            ++t;                        /* still a file -- list it         */
-        color = type_color(dir_buf[t]);
-        *TEXT_COLOR = color ? color : saved;
-        while (i < q2)
-            chrout(dir_buf[i++]);       /* the name */
-        chrout(CR);
-        pause_while_ctrl();
-    }
-    *TEXT_COLOR = saved;                /* restore so the prompt is white */
-    dir_end();
-}
-#pragma rodata-name (pop)
-#pragma code-name (pop)
-
-/* pwd - print the current device and the disk's name (the quoted header title),
-   e.g. "9 fd: TEST DISK", then -- on a Meatloaf -- the network path it carries
-   in the directory's NFO header lines. Those come as `[<scheme>]` / host /
-   `[PATH]` / path, each value split into 16-char quoted chunks; we concatenate
-   the value chunks (skipping the `[...]` titles) into "<host><path>" -- the
-   path already carries its leading "/". A plain drive has no NFO lines (the
-   first entry is a file), so pwd just shows the disk title. There is no command
-   to query the path directly -- the NFO lines are the only source -- and pwd
-   reads only the header, so it uses standard IEC (no fast-path drain). */
-void cmd_pwd(int argc, char *argv[])
-{
-    unsigned int blocks;
-    unsigned char i, q0, q1;
     const char *name;
-    unsigned char any = 0, first = 1;
-    (void)argc; (void)argv;
+    unsigned char n = 0;
 
-    if (!dir_begin(0))
-        return;
-
-    if (dir_line(&blocks)) {            /* first line is the header */
-        print_uint(default_device);
-        name = current_device_name();
-        if (name[0]) {
-            chrout(' ');
-            puts_raw(name);
-        }
-        puts_raw(": ");
-        for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
-            ;
-        if (dir_buf[i] == '"') {
-            ++i;
-            while (dir_buf[i] && dir_buf[i] != '"')
-                chrout(dir_buf[i++]);
-        }
-        chrout(CR);
+    DB_CMD = cmd;
+    DB_DEV = default_device;
+    name = current_device_name();
+    while (name[n] && n < 16) {
+        DB_NAME[n] = name[n];
+        ++n;
     }
-
-    /* Concatenate the NFO header lines' value chunks into the path. */
-    while (dir_line(&blocks)) {
-        for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
-            ;
-        if (dir_buf[i] != '"')         /* no quoted name -> trailer, done */
-            break;
-        q0 = ++i;
-        while (dir_buf[i] && dir_buf[i] != '"')
-            ++i;
-        q1 = i;
-        while (q1 > q0 && dir_buf[q1 - 1] == ' ')
-            --q1;                       /* trim trailing pad spaces */
-        if (q1 == q0)
-            continue;
-
-        if (dir_buf[q0] == '[') {       /* "[SECTION]" title -> skip */
-            first = 0;
-            continue;
-        }
-        if (dir_buf[q0] == '-')         /* "----" separator -> end of NFO */
-            break;
-        if (first)                      /* first entry isn't NFO: plain drive */
-            break;
-        for (i = q0; i < q1; ++i)        /* a value chunk (host or path) */
-            chrout(dir_buf[i]);
-        any = 1;
-    }
-    if (any)
-        chrout(CR);
-    dir_end();
+    DB_NLEN = n;
+    run_dir_overlay();
 }
+
+void cmd_dir(int argc, char *argv[]) { (void)argc; (void)argv; dir_run(0); }
+void cmd_ls(int argc, char *argv[])  { (void)argc; (void)argv; dir_run(1); }
+void cmd_pwd(int argc, char *argv[]) { (void)argc; (void)argv; dir_run(2); }
+
 
 /* load <name> - read a PRG into memory at the load address stored in its
    first two bytes, and report the range. The program is not started. Lives in

@@ -55,10 +55,16 @@
       ]
     },
     {
-      "type": "single",
+      "type": "multi",
+      "serve_alg": "two_cs_one_addr",
       "chips": [
         {
-          "file": "build/overlays.bin",
+          "file": "build/overlays.0.bin",
+          "type": "Chip2364",
+          "cs1": "active_low"
+        },
+        {
+          "file": "build/overlays.1.bin",
           "type": "Chip2364",
           "cs1": "active_low"
         }

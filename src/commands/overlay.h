@@ -9,4 +9,7 @@ void cmd_edit(int argc, char *argv[]);   /* nano-like editor (multi-page) */
    thunks fill the mailbox at $02D0 first. */
 void run_files_overlay(void);
 
+/* Fetch (if needed) and run the dir overlay (dir/ls/pwd). */
+void run_dir_overlay(void);
+
 #endif /* OVERLAY_H */

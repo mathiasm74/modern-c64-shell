@@ -35,7 +35,7 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s \
-         src/fastload_recv.s src/fastload_send.s \
+         src/fastload_recv.s src/fastload_send.s src/svc.s \
          src/rbcp/rbcp.s src/rbcp/launch.s
 SRC_C := src/shell.c src/parser.c src/fastload.c \
          src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c \
@@ -74,7 +74,7 @@ $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 # ROM -- only the onerom-stock firmware carries it. Page order here defines the
 # page numbering; rather than hardcode it, build/overlay_pages.h is generated
 # from the actual .bin sizes (see below) and the resident thunks include it.
-OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/edit.bin
+OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/dir.bin $(BUILD)/overlays/edit.bin
 
 # The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;
 # cfg/overlay_edit.cfg). crt0 must link first so the header sits at the base.
@@ -100,6 +100,18 @@ $(BUILD)/overlays/files.bin: $(BUILD)/overlays/crt0_files.o $(BUILD)/overlays/fi
 	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
 	@echo "  files overlay: $$(wc -c < $@) bytes"
 
+# The dir overlay (dir/ls/pwd); calls the resident IEC/Epyx via the $FF80 table
+# (cfg/overlay_dir.cfg binds the svc_* symbols there).
+$(BUILD)/overlays/dir.s: src/overlays/dir.c src/overlays/svc.h | $(BUILD)
+	@mkdir -p $(BUILD)/overlays
+	$(CC) $(CC65FLAGS) -o $@ $<
+$(BUILD)/overlays/dir_c.o: $(BUILD)/overlays/dir.s
+	$(AS) $(ASFLAGS) -o $@ $<
+$(BUILD)/overlays/dir.bin: $(BUILD)/overlays/crt0_dir.o $(BUILD)/overlays/dir_c.o cfg/overlay_dir.cfg
+	$(LD) -C cfg/overlay_dir.cfg -o $@ $(BUILD)/overlays/crt0_dir.o $(BUILD)/overlays/dir_c.o $(RTLIB)
+	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
+	@echo "  dir overlay: $$(wc -c < $@) bytes"
+
 
 $(BUILD)/overlays/%.o: src/overlays/%.s | $(BUILD)
 	@mkdir -p $(BUILD)/overlays
@@ -115,11 +127,18 @@ $(BUILD)/overlay_pages.h: $(OVERLAYS) tools/gen_overlay_pages.py
 $(BUILD)/commands/overlay.s: $(BUILD)/overlay_pages.h
 $(BUILD)/commands/fs.s: $(BUILD)/overlay_pages.h
 
+# The overlays flash is 16KB: two 8KB chips (the fire-24-e board has no 16KB
+# chip, but the overlays are SLOT_PEEK'd, never bus-served, so two chips read as
+# one contiguous 16KB image). overlays.bin is the full 16KB; overlays.0/1.bin
+# are its 8KB halves for the One ROM overlays chip_set (cfg/onerom-stock.json).
 $(BUILD)/overlays.bin: $(OVERLAYS)
 	cat $(OVERLAYS) > $@
 	python3 -c "import sys; f=open('$@','r+b'); f.seek(0,2); n=f.tell(); \
-	  assert n <= 8192, 'overlays.bin overflow'; f.write(b'\xff'*(8192-n))"
-	@echo "  overlays.bin: $$(wc -c < $@) bytes ($(words $(OVERLAYS)) page(s))"
+	  assert n <= 16384, 'overlays.bin overflow'; f.write(b'\xff'*(16384-n))"
+	python3 -c "d=open('$@','rb').read(); \
+	  open('$(BUILD)/overlays.0.bin','wb').write(d[:8192]); \
+	  open('$(BUILD)/overlays.1.bin','wb').write(d[8192:])"
+	@echo "  overlays.bin: $$(wc -c < $@) bytes ($(words $(OVERLAYS)) overlays, 2x8K)"
 
 
 # C is compiled to assembly by cc65, then assembled by ca65 (keep the .s so a

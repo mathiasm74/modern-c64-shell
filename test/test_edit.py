@@ -18,7 +18,7 @@ Disk-writing tests run against a throwaway copy of the fixture.
 import os
 import shutil
 
-from lib.overlays import seed_files
+from lib.overlays import seed_files, seed_dir
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 shutil.copy(os.path.join(_HERE, "data", "test.d64"),
@@ -243,6 +243,7 @@ def test_saved_file_appears_in_ls(v):
     _wait(v, "wrote")
     _keys(v, [CTRL_X])
     v.run_for(0.5)
+    seed_dir(v)
     _keys(v, "ls")
     _keys(v, [CR])
     _wait(v, "ME.TXT")

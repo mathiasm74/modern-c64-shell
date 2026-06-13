@@ -150,5 +150,17 @@ void run_files_overlay(void)
     OVL8_ENTRY();
 }
 
+/* Run the dir overlay (dir/ls/pwd). The fs.c thunk fills the mailbox first. */
+void run_dir_overlay(void)
+{
+    unsigned char rc = mp_fetch(DIR_FIRST_PAGE, "dir1");
+
+    if (rc != 0) {
+        mp_failed(rc);
+        return;
+    }
+    OVL8_ENTRY();
+}
+
 #pragma rodata-name (pop)
 #pragma code-name (pop)
