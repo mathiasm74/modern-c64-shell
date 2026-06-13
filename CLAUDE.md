@@ -177,7 +177,12 @@ The test harness lives in `test/lib/vice.py`. The `Vice` class is a context mana
 A test is a function `test_<name>(v)` in a `test_*.py` module that asserts on the
 passed-in `Vice`. `test/run_tests.py` discovers the modules, runs every test
 function (one fresh VICE per module, for isolation), and prints a pass/fail
-summary. `make test` runs it headless; `make test-verbose` (or `VICE_VERBOSE=1`)
+summary. `make test` runs it headless; modules run **in parallel** (one VICE each,
+up to 8 workers -- `VICE_JOBS=1` restores serial for debugging) and each
+module's wall time is printed for spotting slowpokes. Prefer polled waits
+(loop `run_for` until the expected text appears) over long fixed sleeps --
+VICE runs `-warp`, so completion usually beats the timeout by a lot.
+`make test-verbose` (or `VICE_VERBOSE=1`)
 shows the launch command, monitor traffic, and tracebacks. `VICE_HEADLESS=0`
 opens the GUI window for debugging.
 

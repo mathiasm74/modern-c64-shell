@@ -58,12 +58,21 @@ def _row(v, n):
     return v.screen_rows()[n]
 
 
+def _wait(v, needle, tries=12, chunk=0.4):
+    """Poll until `needle` appears on screen; early-exits long waits."""
+    for _ in range(tries):
+        if needle in v.screen_text():
+            return True
+        v.run_for(chunk)
+    return needle in v.screen_text()
+
+
 def test_edit_opens_and_exits(v):
     v.run_for(0.3)
     _seed(v)
     _keys(v, "edit")
     _keys(v, [CR])
-    v.run_for(0.5)
+    _wait(v, "edit: (new)")
     assert "edit: (new)" in _row(v, 0), \
         "editor title row missing\n%s" % v.screen_text()
     assert "^x exit" in _row(v, 24), \
@@ -157,7 +166,7 @@ def test_edit_loads_existing_file(v):
     _seed(v)
     _keys(v, "edit doc")
     _keys(v, [CR])
-    v.run_for(3.0)              # IEC read of 30 lines takes a moment
+    _wait(v, "l22")             # IEC read of 30 lines takes a moment
     assert "l00" in _row(v, 1), \
         "first file line not shown\n%s" % v.screen_text()
     assert "l22" in _row(v, 23), \
@@ -170,18 +179,18 @@ def test_edit_saves_file_roundtrip(v):
     _seed(v)
     _keys(v, "edit nb")
     _keys(v, [CR])
-    v.run_for(2.0)              # tries to load "nb" (not found -> new file)
+    _wait(v, "edit: nb")        # tries to load "nb" (not found -> new file)
     _keys(v, "from ed")
     v.run_for(0.3)
     _keys(v, [CTRL_O])
-    v.run_for(3.0)              # IEC write + close
+    _wait(v, "wrote")           # IEC write + close
     assert "wrote" in _row(v, 24), \
         "no wrote confirmation\n%s" % v.screen_text()
     _keys(v, [CTRL_X])          # saved -> unmodified -> exits clean
     v.run_for(0.5)
     _keys(v, "cat nb")
     _keys(v, [CR])
-    v.run_for(3.0)
+    _wait(v, "from ed")
     assert "from ed" in v.screen_text(), \
         "saved file does not read back\n%s" % v.screen_text()
 
@@ -224,15 +233,15 @@ def test_saved_file_appears_in_ls(v):
     _seed(v)
     _keys(v, "edit me.txt")
     _keys(v, [CR])
-    v.run_for(2.0)
+    _wait(v, "edit: me.txt")
     _keys(v, "x")
     v.run_for(0.2)
     _keys(v, [CTRL_O])
-    v.run_for(3.0)
+    _wait(v, "wrote")
     _keys(v, [CTRL_X])
     v.run_for(0.5)
     _keys(v, "ls")
     _keys(v, [CR])
-    v.run_for(3.0)
+    _wait(v, "ME.TXT")
     assert "ME.TXT" in v.screen_text(), \
         "editor-saved file missing from ls\n%s" % v.screen_text()

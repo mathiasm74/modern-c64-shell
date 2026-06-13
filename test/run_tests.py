@@ -51,36 +51,71 @@ def test_functions(mod):
             if n.startswith("test_") and callable(getattr(mod, n))]
 
 
+def run_module(modname):
+    """Run one module in its own VICE; returns (passes, failures, lines).
+
+    Each module already gets a fresh VICE on its own monitor port, so
+    modules are fully independent -- which is what lets the runner execute
+    them in parallel worker processes.
+    """
+    t0 = time.time()
+    lines = []
+    passed = 0
+    failures = []
+    mod = load_module(modname)
+    fns = test_functions(mod)
+    if not fns:
+        return passed, failures, lines
+    # A module may request a disk image (mounted on device 8, true drive)
+    # by setting VICE_DISK to a path relative to the test directory.
+    disk = getattr(mod, "VICE_DISK", None)
+    if disk is not None:
+        disk = os.path.join(TEST_DIR, disk)
+    try:
+        with Vice(disk=disk) as v:
+            for name, fn in fns:
+                label = "%s::%s" % (modname, name)
+                try:
+                    fn(v)
+                    lines.append("PASS  %s" % label)
+                    passed += 1
+                except Exception as exc:  # noqa: BLE001 (report everything)
+                    lines.append("FAIL  %s" % label)
+                    failures.append((label, repr(exc), traceback.format_exc()))
+    except ViceError as exc:
+        label = "%s (launch)" % modname
+        lines.append("ERROR %s: %s" % (label, exc))
+        failures.append((label, repr(exc), traceback.format_exc()))
+    if lines:
+        lines.append("      (%s: %.1fs)" % (modname, time.time() - t0))
+    return passed, failures, lines
+
+
 def main():
     start = time.time()
     passed = 0
     failures = []
+    modules = discover_modules()
 
-    for modname in discover_modules():
-        mod = load_module(modname)
-        fns = test_functions(mod)
-        if not fns:
-            continue
-        # A module may request a disk image (mounted on device 8, true drive)
-        # by setting VICE_DISK to a path relative to the test directory.
-        disk = getattr(mod, "VICE_DISK", None)
-        if disk is not None:
-            disk = os.path.join(TEST_DIR, disk)
-        try:
-            with Vice(disk=disk) as v:
-                for name, fn in fns:
-                    label = "%s::%s" % (modname, name)
-                    try:
-                        fn(v)
-                        print("PASS  %s" % label)
-                        passed += 1
-                    except Exception as exc:  # noqa: BLE001 (report everything)
-                        print("FAIL  %s" % label)
-                        failures.append((label, exc, traceback.format_exc()))
-        except ViceError as exc:
-            label = "%s (launch)" % modname
-            print("ERROR %s: %s" % (label, exc))
-            failures.append((label, exc, traceback.format_exc()))
+    # Parallel by default: one VICE per module, one module per worker.
+    # VICE_JOBS=1 restores the old serial behavior (e.g. for debugging);
+    # the cap keeps a pile of warp-mode VICEs from starving each other.
+    jobs = int(os.environ.get("VICE_JOBS", "0") or "0")
+    if jobs <= 0:
+        jobs = min(8, os.cpu_count() or 1, len(modules))
+
+    if jobs == 1:
+        results = [run_module(m) for m in modules]
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=jobs) as pool:
+            results = list(pool.map(run_module, modules))
+
+    for p, f, lines in results:
+        passed += p
+        failures.extend(f)
+        for line in lines:
+            print(line)
 
     elapsed = time.time() - start
     print("-" * 56)
@@ -88,7 +123,8 @@ def main():
         print("FAILED %s: %s" % (label, exc))
         if VERBOSE:
             print(tb)
-    print("%d passed, %d failed in %.1fs" % (passed, len(failures), elapsed))
+    print("%d passed, %d failed in %.1fs (%d jobs)"
+          % (passed, len(failures), elapsed, jobs))
     return 1 if failures else 0
 
 
