@@ -402,19 +402,27 @@ the stock KERNAL/BASIC, so it's another One ROM slot (Simons' cart + stock ROMs)
 and a swap to it -- essentially `runstock` with a different target slot. User
 supplies the Simons' ROM (gitignored, like `stock-roms/`). **Depends on #1.**
 
-### 3. Fast-loader -> `load` integration & polish -- DONE (2026-06-13, v0.18)
+### 3. Fast-loader -> `load` integration & polish -- DONE (2026-06-13, v0.19)
 
-`load`, `ls`, `dir`, and `pwd` all ride the Epyx fast path automatically on a
-capable drive and fall back to standard IEC otherwise. Safety probe: M-R of
-the drive reset vector ($FFFC), cached per device -- real-DOS drives (1541
-family, JiffyDOS, Pi1541) answer their ROM vector and never receive the
-fingerprint install (M-E on a real drive would execute our fake bytes);
-Meatloaf's zero-initialized emulated memory answers $00,$00, which is the
-only answer that enables the fast path. Directory listings stream the "$"
-file over the 2-bit protocol parsed line-by-line mid-stream (host-paced, no
-buffer). `fload` stays as the explicit/diagnostic form; both use
-default_device. The Phase-7b/7c drive-blob scaffolding and the tardis PoC
-command were evicted to make ROM room (both ROM halves were full).
+`load` rides the Epyx fast path automatically on a capable drive and falls
+back to standard IEC otherwise; `fload` stays as the explicit/diagnostic
+form; both use default_device. Safety probe: M-R of the drive reset vector
+($FFFC), cached per device -- real-DOS drives (1541 family, JiffyDOS, Pi1541)
+answer their ROM vector and never receive the fingerprint install (M-E on a
+real drive would execute our fake bytes); Meatloaf's zero-initialized
+emulated memory answers $00,$00, the only answer that enables the fast path.
+
+Fast directory listings were tried (v0.18) and reverted (v0.19): the
+directory is generated on the fly, and Meatloaf's Epyx send corrupts
+dynamically-generated content (the same desync as a dynamic `fload` link --
+see #5 / docs), so a fast listing came back garbled on hardware. `ls`/`dir`/
+`pwd` stay on standard IEC -- slow but correct. A fast static-file `load` is
+clean because the file bytes already exist; only on-the-fly content desyncs.
+A reliable fast directory would need either a checksum/retry layer or an
+upstream Meatloaf fix (issue #45 territory).
+
+The Phase-7b/7c drive-blob scaffolding and the tardis PoC command were
+evicted to make ROM room (both ROM halves were full).
 
 ### 4. Lazy-load + cache command overlays (the "tardis")
 

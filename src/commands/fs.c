@@ -135,83 +135,16 @@ static char dir_buf[42];
 
 /* Open the directory of the default device and skip its 2-byte load address.
    Returns 1 if the drive answered, 0 (after reporting it) if no device. */
-/* --- fast directory streaming (Epyx) ------------------------------------
- *
- * The stock serial bus moves ~450 bytes/s, so a screenful of directory
- * costs seconds. On an Epyx-capable drive (Meatloaf; see
- * fastload_epyx_capable) the same listing rides the 2-bit protocol: the
- * drive serves "$" like any file, in [length][data] blocks, and since
- * every byte is host-paced we can parse line by line mid-stream -- no
- * buffer, same dir_line logic. The 1541-family is excluded by the probe
- * (the fingerprint install would crash a real drive's DOS).             */
-static unsigned char dir_fast;  /* this listing rides the fast protocol  */
-static unsigned char fast_rem;  /* bytes left in the current block       */
-static unsigned char fast_eof;
-
-#pragma code-name (push, "CODE2")
-static unsigned char fast_dir_byte(void)
-{
-    if (fast_eof)
-        return 0;
-    if (fast_rem == 0) {
-        if (epyx_wait_ready() != 0) {       /* no further block */
-            fast_eof = 1;
-            return 0;
-        }
-        fast_rem = epyx_recv_byte();        /* block length; 0 = end */
-        if (fast_rem == 0) {
-            fast_eof = 1;
-            return 0;
-        }
-    }
-    --fast_rem;
-    return epyx_recv_byte();
-}
-
-/* One byte of directory stream, whichever transport is live. */
-static unsigned char dgetc(void)
-{
-    if (dir_fast)
-        return fast_dir_byte();
-    return iec_getbyte();
-}
-
-/* 1 when the directory stream has ended (or broke). */
-static unsigned char dstream_end(void)
-{
-    if (dir_fast)
-        return fast_eof;
-    return (iec_status() & (ST_EOI | ST_TIMEOUT)) != 0;
-}
-
-/* Try to open "$" over the fast path; 1 = streaming (load address already
-   consumed), 0 = caller should use the standard path. */
-static unsigned char dir_begin_fast(void)
-{
-    fastload_set_device(default_device);
-    if (!fastload_epyx_capable())
-        return 0;
-    fastload_epyx_install();
-    if (iec_status() & ST_NODEV)
-        return 0;
-    if (fastload_epyx_send_header("$", 1) != 0) {
-        fastload_epyx_mark_unsupported();   /* don't retry every listing */
-        return 0;
-    }
-    dir_fast = 1;
-    fast_rem = 0;
-    fast_eof = 0;
-    fast_dir_byte();                        /* the PRG load address */
-    fast_dir_byte();
-    return 1;
-}
-#pragma code-name (pop)
-
+/* Directory listing is read over standard IEC, never the Epyx fast path.
+ * The directory is generated on the fly by the drive (Meatloaf walks its
+ * filesystem per entry), and Meatloaf's Epyx 2-bit send corrupts bytes on
+ * dynamically-generated content -- the same desync that makes a dynamic
+ * Meatloaf link garble on `fload` (see docs/FASTLOAD-FINGERPRINT.md). A
+ * static file streams cleanly; a freshly-computed directory does not. Slow
+ * but correct beats fast but garbled for a listing, so this stays on the
+ * stock bus. (Hold CTRL to pause it -- see pause_while_ctrl below.)      */
 static unsigned char dir_begin(void)
 {
-    dir_fast = 0;
-    if (dir_begin_fast())
-        return 1;
     iec_set_fa(default_device);
     iec_set_sa(0);
     iec_setname("$");
@@ -232,21 +165,21 @@ static unsigned char dir_line(unsigned int *blocks)
 {
     unsigned char lo, hi, b, n;
 
-    lo = dgetc();               /* link pointer */
-    if (dstream_end())
+    lo = iec_getbyte();         /* link pointer */
+    if (iec_status() & (ST_EOI | ST_TIMEOUT))
         return 0;
-    hi = dgetc();
+    hi = iec_getbyte();
     if (lo == 0 && hi == 0)
         return 0;               /* $00,$00 link -> end of directory */
 
-    lo = dgetc();               /* line number = block count */
-    hi = dgetc();
+    lo = iec_getbyte();         /* line number = block count */
+    hi = iec_getbyte();
     *blocks = lo | ((unsigned int)hi << 8);
 
     n = 0;
     for (;;) {
-        b = dgetc();
-        if (b == 0 || dstream_end())
+        b = iec_getbyte();
+        if (b == 0 || (iec_status() & (ST_EOI | ST_TIMEOUT)))
             break;
         if (n < sizeof(dir_buf) - 1)
             dir_buf[n++] = b;
@@ -257,13 +190,6 @@ static unsigned char dir_line(unsigned int *blocks)
 
 static void dir_end(void)
 {
-    if (dir_fast) {
-        while (!fast_eof)
-            fast_dir_byte();    /* drain to the end block: the drive leaves
-                                   Epyx mode parked and back on normal IEC */
-        dir_fast = 0;
-        return;
-    }
     iec_close();
     iec_clrchn();
     if (iec_status() & ST_TIMEOUT) {

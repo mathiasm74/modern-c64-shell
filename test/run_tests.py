@@ -102,7 +102,11 @@ def main():
     # the cap keeps a pile of warp-mode VICEs from starving each other.
     jobs = int(os.environ.get("VICE_JOBS", "0") or "0")
     if jobs <= 0:
-        jobs = min(8, os.cpu_count() or 1, len(modules))
+        # Conservative by default: a few timing-sensitive tests wait on
+        # cycle-based drive timeouts (device probe, no-disk read timeout),
+        # and oversubscribing -warp VICEs starves those past their budget.
+        # Leave headroom; VICE_JOBS overrides for a faster (riskier) run.
+        jobs = min(4, os.cpu_count() or 1, len(modules))
 
     if jobs == 1:
         results = [run_module(m) for m in modules]
