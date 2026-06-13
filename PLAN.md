@@ -551,6 +551,8 @@ only on scroll/structural changes), already anticipated in the design.
 
 ### 5. Fast-loader reliability for large / network files
 
+**Root cause analysis (2026-06-13): see `docs/EPYX-RECEIVER.md`.** The user's real Epyx cart loads GOTD from the Meatloaf fine, so the send is correct -- our receiver is marginal on dynamic content (the Meatloaf's ESP32 watchdog interrupts jitter the per-byte detect latency, pushing our fixed-offset samples out of the window). Top candidate: buffer the directory then parse, so fast `ls`/`dir` uses the tight receive loop.
+
 **Goal:** fix or characterize the GOTD desync (a large dynamic Meatloaf link ends
 at random addresses; small local files are reliable).
 
