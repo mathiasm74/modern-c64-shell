@@ -232,17 +232,31 @@ static unsigned char type_color(char t)
     }
 }
 
-/* ls - just the file names, each colored by its type. */
+/* ls - just the file names, colored by type where we know it.
+ *
+ * Every quoted-name line after the header is a file. The header is always
+ * the FIRST line of the listing (dir/pwd rely on that too), so it's
+ * skipped positionally -- NOT by whitelisting type tokens: a 1541 only
+ * ever says PRG/SEQ/USR/REL/DEL, but Meatloaf synthesizes the type from
+ * the filename extension (TXT, D64, DIR, SID, ...), and keying visibility
+ * on known types silently hid those files (user report: a saved
+ * "test12.txt" appeared in dir but not ls). Unknown types list in the
+ * current text color; known ones keep their colors.                     */
 void cmd_ls(int argc, char *argv[])
 {
     unsigned int blocks;
-    unsigned char i, q2, t, color, saved;
+    unsigned char i, q2, t, color, saved, first;
     (void)argc; (void)argv;
 
     if (!dir_begin())
         return;
     saved = *TEXT_COLOR;
+    first = 1;
     while (dir_line(&blocks)) {
+        if (first) {
+            first = 0;                  /* the disk-name header line */
+            continue;
+        }
         for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
             ;
         if (dir_buf[i] != '"')          /* no quoted name -> blocks-free line */
@@ -257,9 +271,7 @@ void cmd_ls(int argc, char *argv[])
         if (dir_buf[t] == '*')          /* splat (improperly closed file): */
             ++t;                        /* still a file -- list it         */
         color = type_color(dir_buf[t]);
-        if (color == 0)                 /* header line (id/dostype): skip */
-            continue;
-        *TEXT_COLOR = color;
+        *TEXT_COLOR = color ? color : saved;
         while (i < q2)
             chrout(dir_buf[i++]);       /* the name */
         chrout(CR);
