@@ -191,6 +191,16 @@ static void dir_end(void)
 }
 
 /* dir - the full 1541-style listing: block count, name, type, blocks free. */
+/* Hold CTRL to pause a listing (the classic C64 slow-scroll key). The IRQ
+   keyboard scan keeps SHFLAG ($028D) current while we spin, and the IEC
+   transfer is host-paced, so the drive simply waits between bytes. */
+#define SHFLAG_REG (*(volatile unsigned char *)0x028D)
+static void pause_while_ctrl(void)
+{
+    while (SHFLAG_REG & 0x04)
+        ;
+}
+
 void cmd_dir(int argc, char *argv[])
 {
     unsigned int blocks;
@@ -203,6 +213,7 @@ void cmd_dir(int argc, char *argv[])
         chrout(' ');
         puts_raw(dir_buf);
         chrout(CR);
+        pause_while_ctrl();
     }
     dir_end();
 }
@@ -275,6 +286,7 @@ void cmd_ls(int argc, char *argv[])
         while (i < q2)
             chrout(dir_buf[i++]);       /* the name */
         chrout(CR);
+        pause_while_ctrl();
     }
     *TEXT_COLOR = saved;                /* restore so the prompt is white */
     dir_end();
