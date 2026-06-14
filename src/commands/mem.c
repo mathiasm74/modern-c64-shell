@@ -1,34 +1,46 @@
 /* mem.c - direct memory inspection: peek and poke.
  *
- * Addresses and values are hex, with an optional leading '$' (so `peek $d020`
- * and `peek d020` are the same). These read and write the live machine, so
- * they double as a quick way to poke I/O registers.
+ * Numbers are DECIMAL by default and hex when prefixed with '$' -- the C64
+ * convention. So `poke 53280 0` (the BASIC address everyone has memorized)
+ * works, and `poke $d020 0` is the same register in hex. These read and write
+ * the live machine, so they double as a quick way to poke I/O registers.
  */
 #include "shell.h"
 #include "commands/mem.h"
 
 #define CR 0x0D
 
-/* Parse a hex number, skipping a leading '$'; stops at the first non-hex
-   digit. No range checking -- the result wraps at 16 bits. */
-static unsigned int parse_hex(const char *s)
+/* Parse a number: hex if it starts with '$', else decimal. Stops at the first
+   character that isn't a digit of the chosen base. No range checking -- the
+   result wraps at 16 bits. Bare = decimal matches stock BASIC (POKE 53280,0);
+   '$' marks hex (POKE $D020) -- so a bare hex-looking value like "53280" is
+   read as the decimal the user meant, not silently as $53280. */
+static unsigned int parse_num(const char *s)
 {
     unsigned int v = 0;
     unsigned char d;
 
-    if (*s == '$')
+    if (*s == '$') {
         ++s;
-    for (;;) {
-        d = *s++;
-        if (d >= '0' && d <= '9')
-            d -= '0';
-        else if (d >= 'a' && d <= 'f')
-            d -= 'a' - 10;
-        else if (d >= 'A' && d <= 'F')
-            d -= 'A' - 10;
-        else
-            break;
-        v = (v << 4) | d;
+        for (;;) {
+            d = *s++;
+            if (d >= '0' && d <= '9')
+                d -= '0';
+            else if (d >= 'a' && d <= 'f')
+                d -= 'a' - 10;
+            else if (d >= 'A' && d <= 'F')
+                d -= 'A' - 10;
+            else
+                break;
+            v = (v << 4) | d;
+        }
+    } else {
+        for (;;) {
+            d = *s++;
+            if (d < '0' || d > '9')
+                break;
+            v = v * 10 + (d - '0');
+        }
     }
     return v;
 }
@@ -57,22 +69,22 @@ void cmd_peek(int argc, char *argv[])
     unsigned char c, col;
 
     if (argc < 2) {
-        puts_raw("usage: peek $addr [count]");
+        puts_raw("usage: peek <addr> [count] ($=hex)");
         chrout(CR);
         return;
     }
-    addr = parse_hex(argv[1]);
+    addr = parse_num(argv[1]);
 
-    /* peek $addr        -> one byte (back-compatible)
-       peek $addr $count -> hexdump `count` bytes, 8 per row with an address
-                            label, so you can read a loaded program's bytes. */
+    /* peek <addr>         -> one byte
+       peek <addr> <count> -> hexdump `count` bytes, 8 per row with an address
+                              label, so you can read a loaded program's bytes. */
     if (argc < 3) {
         chrout('$');
         print_hex8(*(unsigned char *)addr);
         chrout(CR);
         return;
     }
-    count = parse_hex(argv[2]);
+    count = parse_num(argv[2]);
     if (count == 0)
         count = 1;
     col = 0;
@@ -97,10 +109,10 @@ void cmd_peek(int argc, char *argv[])
 void cmd_poke(int argc, char *argv[])
 {
     if (argc < 3) {
-        puts_raw("usage: poke $addr $val");
+        puts_raw("usage: poke <addr> <val> ($=hex)");
         chrout(CR);
         return;
     }
-    *(unsigned char *)parse_hex(argv[1]) = (unsigned char)parse_hex(argv[2]);
+    *(unsigned char *)parse_num(argv[1]) = (unsigned char)parse_num(argv[2]);
 }
 
