@@ -6,7 +6,12 @@ has no CD command and answers "31, SYNTAX ERROR", which is what we can assert
 under VICE; network drives (Meatloaf) navigate and only error on a missing
 path (hardware-verified). A successful cd is silent. The 1541 rejects CD so
 nothing is written -- read-only, tracked fixture.
+
+cd now lives in the files overlay (it reuses the overlay's command_channel +
+status read, the same path mv/rm use), so the tests seed that overlay.
 """
+
+from lib.overlays import seed_files
 
 VICE_DISK = "data/test.d64"
 
@@ -38,7 +43,9 @@ def _wait(v, needle, tries=14, chunk=0.5):
 def test_cd_reports_drive_error(v):
     # The 1541 has no CD command -> "31, SYNTAX ERROR"; cd must surface it
     # (readably: just the message, no raw ",00,00" suffix), not stay silent.
+    # cd is now in the files overlay (it reuses command_channel), so seed it.
     v.run_for(0.3)
+    seed_files(v)
     _type_cmd(v, "cd nowhere", clear=True)
     assert _wait(v, "SYNTAX ERROR"), \
         "cd did not report the drive error\n%s" % v.screen_text()

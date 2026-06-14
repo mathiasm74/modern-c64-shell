@@ -11,7 +11,7 @@
  * edit overlay's load/save do.
  *
  * Mailbox from the thunk ($02D0):
- *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 5 save, 6 status
+ *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 5 save, 6 status, 7 cd
  *   [1]   device (FA)
  *   [2]   arg1 length, [3..18] arg1 (<=16 chars)
  *   [19]  arg2 length, [20..35] arg2 (<=16 chars)
@@ -371,6 +371,14 @@ static void rename_file(void)
     command_channel(c, i, "mv: ", 0);
 }
 
+/* cd <path> -> "cd:<path>", prebuilt by the resident thunk at $0340 with its
+   length in A1L (paths can exceed the 16-char mailbox args). Reports a bad
+   target as "cd: <message>"; success is silent. */
+static void cd_path(void)
+{
+    command_channel((const char *)0x0340, A1L, "cd: ", 0);
+}
+
 void files_main(void)
 {
     unsigned char cmd = MB_CMD;
@@ -388,6 +396,8 @@ void files_main(void)
         save_mem();
     else if (cmd == 6)
         status_read();
+    else if (cmd == 7)
+        cd_path();
     else
         scratch();                      /* rm */
 }
