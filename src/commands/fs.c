@@ -450,7 +450,7 @@ void cmd_runstock(int argc, char *argv[])
 #pragma code-name (pop)
 
 /* Send "<prefix><arg1>[=<arg2>]" on the default device's command channel.
-   Shared by rm ("S0:name"), cd ("CD:path"), and mv ("R0:new=old"). The IEC
+   Used by cd ("CD:path"); rm/mv send theirs from the files overlay. The IEC
    layer folds the name to uppercase PETSCII as it sends. */
 static char cmd_buf[40];
 
@@ -476,11 +476,54 @@ static void send_command(const char *prefix, const char *arg1, const char *arg2)
         report_no_device(default_device);
 }
 
+/* After a drive command, read the error channel (15) and, on a non-"00" DOS
+   code, print "<what><message>" -- e.g. a bad cd shows "cd: file not found".
+   Success ("00") is silent. Only the message field is shown (not the code or
+   track/sector); run `status` for the raw detail. Streams the reply tracking
+   the comma fields, so no buffer is needed -- cheap enough to stay resident. */
+static void report_drive_status(const char *what)
+{
+    unsigned char b0, b1, b, err, field = 0, started = 0;
+
+    iec_set_fa(default_device);
+    iec_set_sa(15);
+    iec_setname("");
+    iec_open();
+    if (iec_status() & ST_NODEV)
+        return;
+    iec_chkin();
+    b0 = iec_getbyte();
+    b1 = iec_getbyte();
+    err = !(b0 == '0' && b1 == '0');    /* DOS code 00 = OK */
+    if (err)
+        puts_raw(what);
+    while (!(iec_status() & (ST_EOI | ST_TIMEOUT))) {
+        b = iec_getbyte();
+        if (iec_status() & ST_TIMEOUT)
+            break;
+        if (b == ',') {                 /* field 0 code, 1 message, 2/3 trk/sec */
+            ++field;
+            continue;
+        }
+        if (err && field == 1 && b != CR && b != 0) {
+            if (b == ' ' && !started)
+                continue;               /* trim the ", OK" leading space */
+            started = 1;
+            chrout(b);
+        }
+    }
+    iec_close();
+    iec_clrchn();
+    if (err)
+        chrout(CR);
+}
+
 /* cd <path> - change the working path on the drive ("CD:<path>"). A 1541
-   answers ?SYNTAX ERROR and stays put; network-side drives like the Meatloaf
-   navigate. Whatever the drive does with it shows up on the next dir / pwd.
-   Note the IEC layer folds the path to uppercase, so case-sensitive URL
-   segments may need a follow-up. */
+   answers SYNTAX ERROR and stays put; network-side drives like the Meatloaf
+   navigate. After sending it we read the drive's error channel and report a
+   failure (a missing path, or "cd: syntax error" on a drive without CD), so cd
+   isn't silent on a bad target. Note the IEC layer folds the path to uppercase,
+   so case-sensitive URL segments may need a follow-up. */
 void cmd_cd(int argc, char *argv[])
 {
     if (argc < 2) {
@@ -489,6 +532,8 @@ void cmd_cd(int argc, char *argv[])
         return;
     }
     send_command("cd:", argv[1], 0);
+    if (!(iec_status() & ST_NODEV))     /* send_command already reported NODEV */
+        report_drive_status("cd: ");
 }
 
 /* cat / less / cp / mv / rm - one multi-page "files" tardis overlay
