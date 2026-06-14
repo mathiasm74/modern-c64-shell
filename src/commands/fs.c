@@ -304,27 +304,27 @@ static unsigned int fast_receive_prg(void)
     return (unsigned int)(dst - 1);
 }
 
-void cmd_fload(int argc, char *argv[])
+/* Fast-load `name` over the Epyx path into RAM at the PRG's embedded load
+   address; sets load_start/load_end. Returns the last written address (the
+   value `floaded`/`run` report), or 0 on any failure -- which it has already
+   reported (no device / not Epyx-capable / broken stream). Shared by `fload`
+   and `run <name>`.
+
+   No screen-blanking: the receiver (_epyx_recv_byte) paces each byte around
+   VIC-II badlines via the raster, so the display stays visible during the
+   load. */
+static unsigned int fload_program(const char *name)
 {
     unsigned char namebuf[16];
     unsigned char namelen;
-    unsigned int end;
 
-    if (argc < 2) {
-        puts_raw("usage: fload <name>");
-        chrout(CR);
-        return;
-    }
-    namelen = fold_name(namebuf, argv[1]);
+    namelen = fold_name(namebuf, name);
 
-    /* No screen-blanking here: the receiver (_epyx_recv_byte) now pauses each
-       byte around VIC-II badlines via the raster, so the display stays visible
-       during the load. */
     fastload_set_device(default_device);
     fastload_epyx_install();
     if (iec_status() & ST_NODEV) {
         report_no_device(default_device);
-        return;
+        return 0;
     }
     if (fastload_epyx_send_header((const char *)namebuf, namelen) != 0) {
         /* the drive never did the Epyx "ready for header" handshake: it isn't
@@ -332,15 +332,28 @@ void cmd_fload(int argc, char *argv[])
         fastload_epyx_mark_unsupported();
         puts_raw("fast load not supported");
         chrout(CR);
-        return;
+        return 0;
     }
-
-    end = fast_receive_prg();
-    if (end == 0) {
+    if (fast_receive_prg() == 0) {
         puts_raw("fast load failed");
+        chrout(CR);
+        return 0;
+    }
+    return load_end - 1;
+}
+
+void cmd_fload(int argc, char *argv[])
+{
+    unsigned int end;
+
+    if (argc < 2) {
+        puts_raw("usage: fload <name>");
         chrout(CR);
         return;
     }
+    end = fload_program(argv[1]);
+    if (end == 0)
+        return;                 /* fload_program already reported the failure */
     puts_raw("floaded $");
     print_hex16(load_start);
     puts_raw("-$");
@@ -395,8 +408,12 @@ static void launch_stock_program(unsigned char mode)
 
 void cmd_run(int argc, char *argv[])
 {
-    (void)argc; (void)argv;
-    if (load_start == 0) {
+    /* `run <name>` fast-loads the named PRG (the Epyx path, like `fload`) and
+       then runs it. Bare `run` re-runs whatever was loaded last. */
+    if (argc > 1) {
+        if (fload_program(argv[1]) == 0)
+            return;                     /* load failed: already reported */
+    } else if (load_start == 0) {
         puts_raw("nothing loaded");
         chrout(CR);
         return;
