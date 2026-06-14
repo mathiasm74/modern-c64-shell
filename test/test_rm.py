@@ -47,3 +47,20 @@ def test_rm_scratches_file(v):
     txt = v.screen_text()
     assert "PROG" not in txt, "rm did not scratch PROG\n%s" % txt
     assert "README" in txt, "rm removed the wrong file"
+
+
+def test_rm_missing_reports_not_found(v):
+    # Scratching a name that doesn't exist returns "01,FILES SCRATCHED,00"
+    # (0 files) -- rm reports that as "rm: not found" rather than silently
+    # "succeeding". (zznope never exists, so this is order-independent.)
+    seed_files(v)
+    v.write_memory(0x0277, [0x93])              # clear
+    v.write_byte(0x00C6, 1)
+    v.run_for(0.2)
+    _type(v, "rm zznope")                       # 9 chars + CR = 10 (fits buffer)
+    for _ in range(12):
+        v.run_for(0.5)
+        if "not found" in v.screen_text():
+            break
+    assert "rm: not found" in v.screen_text(), \
+        "rm of a missing file should report not found\n%s" % v.screen_text()

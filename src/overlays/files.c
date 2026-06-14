@@ -222,13 +222,52 @@ static void save_mem(void)
     crlf();
 }
 
+/* True if a 2-char numeric field is "00" (a zero track/sector/count). */
+static unsigned char is_zero(const char *s)
+{
+    return s[0] == '0' && s[1] == '0' && s[2] == 0;
+}
+
+/* chkin + read the open channel 15 into buf, skipping the drive's own CR (some
+   drives -- Meatloaf -- end on the last data byte with no CR, so we control the
+   newline), then split "code,message,track,sector" into f[0..3] in place.
+   Returns the 2-digit DOS code, or -1 on a read timeout. buf must be >= 64. */
+static int read_status(char *buf, char **f)
+{
+    unsigned char n = 0, nf = 1, i, b;
+
+    k_chkin();
+    for (;;) {
+        b = k_chrin();
+        if (STREG & ST_TIMEOUT)
+            break;
+        if (b != CR && b != 0 && n < 63)
+            buf[n++] = b;
+        if (STREG & ST_EOI)
+            break;
+    }
+    if (STREG & ST_TIMEOUT)
+        return -1;
+    buf[n] = 0;
+    f[0] = buf; f[1] = ""; f[2] = ""; f[3] = "";
+    for (i = 0; buf[i]; ++i) {
+        if (buf[i] == ',' && nf < 4) {
+            buf[i] = 0;
+            f[nf++] = &buf[i + 1];
+        }
+    }
+    if (!f[0][0])
+        return 0;
+    return (f[0][0] - '0') * 10 + (f[0][1] ? f[0][1] - '0' : 0);
+}
+
 /* ---- status: read + reformat the drive error channel (15) (cmd 6) -------- */
 static void status_read(void)
 {
     char buf[64];
     char *f[4];
     char *msg;
-    unsigned char n = 0, nf = 1, i, b;
+    int code;
 
     k_setnam("", 0);
     k_setlfs(dev, 15);                  /* command/error channel */
@@ -238,47 +277,23 @@ static void status_read(void)
         crlf();
         return;
     }
-    k_chkin();
-    for (;;) {
-        b = k_chrin();
-        if (STREG & ST_TIMEOUT)
-            break;
-        /* keep the text; skip the drive's own CR (some drives -- Meatloaf --
-           end on the last data byte with no CR) so we control the newline */
-        if (b != CR && b != 0 && n < sizeof(buf) - 1)
-            buf[n++] = b;
-        if (STREG & ST_EOI)
-            break;
-    }
+    code = read_status(buf, f);
     k_close();
     k_clrchn();
-    if (STREG & ST_TIMEOUT) {
+    if (code < 0) {
         puts_raw("read error");
         crlf();
         return;
     }
-    buf[n] = 0;
 
-    /* raw DOS reply is "code,message,track,sector" (no commas in the message).
-       Reformat to "code message", appending "@ track,sector" only on a real
-       disk error (nonzero track/sector). */
-    f[0] = buf; f[1] = ""; f[2] = ""; f[3] = "";
-    for (i = 0; buf[i]; ++i) {
-        if (buf[i] == ',' && nf < 4) {
-            buf[i] = 0;
-            f[nf++] = &buf[i + 1];
-        }
-    }
+    /* "code message", appending "@ track,sector" only on a real disk error. */
     msg = f[1];
     while (*msg == ' ')                 /* drop the ", OK" leading space */
         ++msg;
-
     puts_raw(f[0]);                     /* numeric DOS code */
     k_chrout(' ');
     puts_raw(msg);                      /* human-readable message */
-    if (nf >= 4 &&
-        !(f[2][0] == '0' && f[2][1] == '0' && f[2][2] == 0 &&
-          f[3][0] == '0' && f[3][1] == '0' && f[3][2] == 0)) {
+    if (f[2][0] && !(is_zero(f[2]) && is_zero(f[3]))) {
         puts_raw(" @ ");
         puts_raw(f[2]);
         k_chrout(',');
@@ -287,18 +302,46 @@ static void status_read(void)
     crlf();
 }
 
-/* ---- mv / rm: a drive command-channel command (OPEN SA 15 sends it) ------ */
-static void command_channel(const char *cmd, unsigned char len)
+/* ---- mv / rm: a drive command-channel command (OPEN SA 15 executes it) ----
+   Sends the command, then reads the resulting DOS status and reports a failure
+   as "<what>message"; success is silent. `scratch` marks rm, whose success is
+   "01,FILES SCRATCHED,<count>" -- a non-zero code that's OK unless the count is
+   0 (nothing matched -> "not found"); mv (scratch=0) is OK only on code 00. */
+static void command_channel(const char *cmd, unsigned char len,
+                            const char *what, unsigned char scratch)
 {
+    char buf[64];
+    char *f[4];
+    char *msg;
+    int code;
+
     k_setnam(cmd, len);
     k_setlfs(dev, 15);                  /* command channel */
     k_open();
-    k_close();
-    k_clrchn();
     if (STREG & ST_NODEV) {
         puts_raw("no device");
         crlf();
+        return;
     }
+    code = read_status(buf, f);         /* OPEN ran it; read the result */
+    k_close();
+    k_clrchn();
+    if (code <= 0)                      /* 00 OK, or -1 read timeout: silent */
+        return;
+    if (scratch && code == 1) {         /* FILES SCRATCHED: count in field 2 */
+        if (is_zero(f[2])) {            /* nothing matched */
+            puts_raw(what);
+            puts_raw("not found");
+            crlf();
+        }
+        return;                         /* scratched >= 1: success, silent */
+    }
+    msg = f[1];
+    while (*msg == ' ')
+        ++msg;
+    puts_raw(what);
+    puts_raw(msg);
+    crlf();
 }
 
 /* rm <name> -> "s0:<name>" */
@@ -310,7 +353,7 @@ static void scratch(void)
     c[i++] = 's'; c[i++] = '0'; c[i++] = ':';
     for (j = 0; j < A1L && i < sizeof(c); ++j)
         c[i++] = A1[j];
-    command_channel(c, i);
+    command_channel(c, i, "rm: ", 1);
 }
 
 /* mv <old> <new> -> "r0:<new>=<old>" (arg1 old, arg2 new) */
@@ -325,7 +368,7 @@ static void rename_file(void)
     c[i++] = '=';
     for (j = 0; j < A1L && i < sizeof(c); ++j)
         c[i++] = A1[j];
-    command_channel(c, i);
+    command_channel(c, i, "mv: ", 0);
 }
 
 void files_main(void)

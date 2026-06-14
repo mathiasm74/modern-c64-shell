@@ -164,18 +164,31 @@ static void pause_while_ctrl(void)
         ;
 }
 
-static unsigned char type_color(char t)
+/* fold one type-token char to uppercase (handles lowercase and shifted PETSCII) */
+static char up(char c)
 {
-    if (t >= 'a' && t <= 'z')
-        t -= 0x20;
-    if ((unsigned char)t >= 0xC1 && (unsigned char)t <= 0xDA)
-        t -= 0x80;
-    switch (t) {
-    case 'P': return 0x0D;
-    case 'S': return 0x03;
-    case 'U': return 0x07;
-    case 'R': return 0x0A;
-    case 'D': return 0x0C;
+    if (c >= 'a' && c <= 'z')
+        c -= 0x20;
+    if ((unsigned char)c >= 0xC1 && (unsigned char)c <= 0xDA)
+        c -= 0x80;
+    return c;
+}
+
+/* Color a directory entry by its CBM type token (e.g. "PRG", "DIR"). The
+   navigable kinds -- DIR and URL, both cd-able on a Meatloaf -- share a color
+   (yellow); DEL (a deleted slot) is greyed even though it also starts with 'D',
+   so the second char disambiguates DIR vs DEL. */
+static unsigned char type_color(const char *type)
+{
+    char a = up(type[0]);
+    char b = up(type[1]);
+
+    switch (a) {
+    case 'P': return 0x0D;                          /* PRG  light green */
+    case 'S': return 0x03;                          /* SEQ  cyan        */
+    case 'R': return 0x0A;                          /* REL  light red   */
+    case 'U': return 0x07;                          /* USR / URL yellow */
+    case 'D': return (b == 'I') ? 0x07 : 0x0C;      /* DIR yellow, DEL grey */
     default:  return 0x00;
     }
 }
@@ -223,7 +236,7 @@ static void do_ls(void)
             ;
         if (dir_buf[t] == '*')
             ++t;
-        color = type_color(dir_buf[t]);
+        color = type_color(&dir_buf[t]);
         TEXT_COLOR = color ? color : saved;
         while (i < q2)
             k_chrout(dir_buf[i++]);

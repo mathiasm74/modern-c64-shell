@@ -52,3 +52,21 @@ def test_mv_renames_file(v):
     assert '"X"' in txt, "mv did not produce a file named X\n%s" % txt
     assert "PROG" not in txt, "mv did not move PROG away\n%s" % txt
     assert "README" in txt, "mv removed the wrong file"
+
+
+def test_mv_missing_reports_error(v):
+    # Renaming a source that doesn't exist returns "62,FILE NOT FOUND" -- mv
+    # surfaces it as "mv: FILE NOT FOUND" instead of silently doing nothing.
+    # (zz never exists, so this is order-independent and mutates nothing.)
+    seed_files(v)
+    v.write_memory(0x0277, [0x93])              # clear
+    v.write_byte(0x00C6, 1)
+    v.run_for(0.2)
+    _type(v, "mv zz z2")                        # 8 chars + CR
+    for _ in range(12):
+        v.run_for(0.5)
+        if "mv:" in v.screen_text():
+            break
+    txt = v.screen_text()
+    assert "mv:" in txt and "NOT FOUND" in txt, \
+        "mv of a missing source should report the drive error\n%s" % txt
