@@ -636,38 +636,13 @@ void cmd_save(int argc, char *argv[])
 #pragma code-name (pop)
 
 /* status - read and print the drive's command/error channel (15), the classic
-   "blinking red light" check: `OPEN 1,8,15: INPUT#1,A,B$,C,D`. After any disk
-   op it shows "00, ok,00,00" or an error like "63,file exists,00,00". Opening
-   channel 15 with no filename just reads the status; the message ends with a
-   CR (sent with EOI), which also drops the prompt onto a fresh line. Resident
-   (BASIC ROM) -- it's a quick IEC read used constantly. */
+   "blinking red light" check (`OPEN 1,8,15: INPUT#1,A,B$,C,D`). The read +
+   reformatting lives in the files overlay (cmd 6, status_read): buffering and
+   the comma-field parse cost too much resident ROM. Thin thunk only. */
 void cmd_status(int argc, char *argv[])
 {
-    unsigned char b;
-
     (void)argc; (void)argv;
-    iec_set_fa(default_device);
-    iec_set_sa(15);                     /* command/error channel */
-    iec_setname("");                    /* no command: just read the status */
-    iec_open();
-    if (iec_status() & ST_NODEV) {
-        report_no_device(default_device);
-        return;
-    }
-    iec_chkin();
-    for (;;) {
-        b = iec_getbyte();
-        if (iec_status() & ST_TIMEOUT) {
-            puts_raw("read error");
-            chrout(CR);
-            break;
-        }
-        chrout(b);                      /* prints the trailing CR on EOI too */
-        if (iec_status() & ST_EOI)
-            break;
-    }
-    iec_close();
-    iec_clrchn();
+    files_run(6, 0, 0);
 }
 
 /* device <n> [name] - set the device ls/load/run talk to (default 8). The bus

@@ -11,7 +11,7 @@
  * edit overlay's load/save do.
  *
  * Mailbox from the thunk ($02D0):
- *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 5 save
+ *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 5 save, 6 status
  *   [1]   device (FA)
  *   [2]   arg1 length, [3..18] arg1 (<=16 chars)
  *   [19]  arg2 length, [20..35] arg2 (<=16 chars)
@@ -222,6 +222,71 @@ static void save_mem(void)
     crlf();
 }
 
+/* ---- status: read + reformat the drive error channel (15) (cmd 6) -------- */
+static void status_read(void)
+{
+    char buf[64];
+    char *f[4];
+    char *msg;
+    unsigned char n = 0, nf = 1, i, b;
+
+    k_setnam("", 0);
+    k_setlfs(dev, 15);                  /* command/error channel */
+    k_open();
+    if (STREG & ST_NODEV) {
+        puts_raw("no device");
+        crlf();
+        return;
+    }
+    k_chkin();
+    for (;;) {
+        b = k_chrin();
+        if (STREG & ST_TIMEOUT)
+            break;
+        /* keep the text; skip the drive's own CR (some drives -- Meatloaf --
+           end on the last data byte with no CR) so we control the newline */
+        if (b != CR && b != 0 && n < sizeof(buf) - 1)
+            buf[n++] = b;
+        if (STREG & ST_EOI)
+            break;
+    }
+    k_close();
+    k_clrchn();
+    if (STREG & ST_TIMEOUT) {
+        puts_raw("read error");
+        crlf();
+        return;
+    }
+    buf[n] = 0;
+
+    /* raw DOS reply is "code,message,track,sector" (no commas in the message).
+       Reformat to "code message", appending "@ track,sector" only on a real
+       disk error (nonzero track/sector). */
+    f[0] = buf; f[1] = ""; f[2] = ""; f[3] = "";
+    for (i = 0; buf[i]; ++i) {
+        if (buf[i] == ',' && nf < 4) {
+            buf[i] = 0;
+            f[nf++] = &buf[i + 1];
+        }
+    }
+    msg = f[1];
+    while (*msg == ' ')                 /* drop the ", OK" leading space */
+        ++msg;
+
+    puts_raw(f[0]);                     /* numeric DOS code */
+    k_chrout(' ');
+    puts_raw(msg);                      /* human-readable message */
+    if (nf >= 4 &&
+        !(f[2][0] == '0' && f[2][1] == '0' && f[2][2] == 0 &&
+          f[3][0] == '0' && f[3][1] == '0' && f[3][2] == 0)) {
+        puts_raw(" @ ");
+        puts_raw(f[2]);
+        k_chrout(',');
+        puts_raw(f[3]);
+    }
+    crlf();
+}
+
 /* ---- mv / rm: a drive command-channel command (OPEN SA 15 sends it) ------ */
 static void command_channel(const char *cmd, unsigned char len)
 {
@@ -278,6 +343,8 @@ void files_main(void)
         rename_file();                  /* mv */
     else if (cmd == 5)
         save_mem();
+    else if (cmd == 6)
+        status_read();
     else
         scratch();                      /* rm */
 }
