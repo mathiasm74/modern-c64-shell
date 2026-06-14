@@ -67,14 +67,21 @@ $(BUILD)/rbcp/rbcp.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 
 # Tardis overlay library (PLAN.md backlog #4). Each overlay in src/overlays/
-# is linked standalone at the $CE00 cache address and padded to one 256-byte
-# page (cfg/overlay.cfg); the pages concatenate into overlays.bin, padded to
-# 8KB so it can ride in the One ROM firmware as a 2364 chip_set (the third
-# loadable ROM set: shell=0, stock=1, overlays=2). Not part of the 16KB shell
-# ROM -- only the onerom-stock firmware carries it. Page order here defines the
-# page numbering; rather than hardcode it, build/overlay_pages.h is generated
-# from the actual .bin sizes (see below) and the resident thunks include it.
+# is linked standalone (single-page at the $CE00 cache, multi-page at $8800)
+# and padded to a 256-byte page multiple. The overlays then pack into TWO 8KB
+# flash sets, each a 2364 chip_set in the One ROM firmware: set A (loadable ROM
+# set 2) = about+files+dir, set B (loadable ROM set 3) = edit. Two sets, not
+# one 16KB set, because a SLOT_PEEK across two chips of a single set isn't
+# contiguous; keeping each overlay wholly inside one 8KB chip means every fetch
+# stays in the proven 8KB-SLOT_PEEK case. Not part of the 16KB shell ROM --
+# only the onerom-stock firmware carries them. The A/B split and intra-set
+# page order are defined in tools/gen_overlay_pages.py (LAYOUT) and mirrored by
+# the overlays_a/b.bin rules below; build/overlay_pages.h is generated from the
+# .bin sizes so the resident thunks never hardcode a page or set number.
 OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/dir.bin $(BUILD)/overlays/edit.bin
+OVERLAYS_A := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/dir.bin
+OVERLAYS_B := $(BUILD)/overlays/edit.bin
+OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin
 
 # The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;
 # cfg/overlay_edit.cfg). crt0 must link first so the header sits at the base.
@@ -121,24 +128,28 @@ $(BUILD)/overlays/%.bin: $(BUILD)/overlays/%.o cfg/overlay.cfg
 # Generated overlay page-number map (start page of each overlay), derived from
 # the actual .bin sizes. The resident overlay thunks include it; their .s
 # therefore depend on it, and it depends on the overlay .bin -- so the page
-# numbers are always consistent with what's in overlays.bin.
+# numbers are always consistent with what's in the overlay sets.
 $(BUILD)/overlay_pages.h: $(OVERLAYS) tools/gen_overlay_pages.py
 	@python3 tools/gen_overlay_pages.py $(BUILD) > $@
 $(BUILD)/commands/overlay.s: $(BUILD)/overlay_pages.h
 $(BUILD)/commands/fs.s: $(BUILD)/overlay_pages.h
 
-# The overlays flash is 16KB: two 8KB chips (the fire-24-e board has no 16KB
-# chip, but the overlays are SLOT_PEEK'd, never bus-served, so two chips read as
-# one contiguous 16KB image). overlays.bin is the full 16KB; overlays.0/1.bin
-# are its 8KB halves for the One ROM overlays chip_set (cfg/onerom-stock.json).
-$(BUILD)/overlays.bin: $(OVERLAYS)
-	cat $(OVERLAYS) > $@
+# The overlay library is two independent 8KB flash sets (each a single 2364 in
+# cfg/onerom-stock.json). Each holds whole overlays packed from page 0, so a
+# fetch's SLOT_PEEK always stays within one 8KB chip. The A/B grouping here
+# MUST match LAYOUT in tools/gen_overlay_pages.py.
+define pack_overlay_set
+	cat $(1) > $@
 	python3 -c "import sys; f=open('$@','r+b'); f.seek(0,2); n=f.tell(); \
-	  assert n <= 16384, 'overlays.bin overflow'; f.write(b'\xff'*(16384-n))"
-	python3 -c "d=open('$@','rb').read(); \
-	  open('$(BUILD)/overlays.0.bin','wb').write(d[:8192]); \
-	  open('$(BUILD)/overlays.1.bin','wb').write(d[8192:])"
-	@echo "  overlays.bin: $$(wc -c < $@) bytes ($(words $(OVERLAYS)) overlays, 2x8K)"
+	  assert n <= 8192, '$@ overflow (%d > 8192)' % n; f.write(b'\xff'*(8192-n))"
+	@echo "  $(@F): $$(wc -c < $@) bytes"
+endef
+
+$(BUILD)/overlays_a.bin: $(OVERLAYS_A)
+	$(call pack_overlay_set,$(OVERLAYS_A))
+
+$(BUILD)/overlays_b.bin: $(OVERLAYS_B)
+	$(call pack_overlay_set,$(OVERLAYS_B))
 
 
 # C is compiled to assembly by cc65, then assembled by ca65 (keep the .s so a
@@ -187,7 +198,7 @@ check-tools:
 run: all
 	SKIP_BUILD=1 VICE=$(VICE) DISK=$(DISK) ./run.sh $(VICEFLAGS)
 
-test: all $(BUILD)/overlays.bin
+test: all $(OVERLAY_SETS)
 	$(PYTHON) test/run_tests.py
 
 # Build a One ROM firmware image holding both halves as a single multi-ROM set
@@ -206,7 +217,7 @@ onerom: $(BASIC) $(KERNAL)
 # released sources, drop them in yourself (gitignored).
 ONEROM_STOCK_BASIC  := stock-roms/basic.901226-01.bin
 ONEROM_STOCK_KERNAL := stock-roms/kernal.901227-03.bin
-onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(BUILD)/overlays.bin
+onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(OVERLAY_SETS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) \
 		--config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
@@ -215,7 +226,7 @@ onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(
 # Build the bank-swap firmware AND flash a connected One ROM, then reboot it
 # into running mode. Same shape as onerom-flash, but uses cfg/onerom-stock.json
 # so the device gets host-control + the stock-ROM second bank.
-onerom-stock-flash: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(BUILD)/overlays.bin
+onerom-stock-flash: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(OVERLAY_SETS)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin

@@ -214,9 +214,13 @@ rbcp_trampoline:
 ; and this runs from the RAM copy.
 ; -------------------------------------------------------------------------
 OVERLAY_CACHE  = $CE00          ; free RAM above the RBCP_RAM region
-OVL_FLASH_SET  = 2              ; loadable ROM-set index: shell=0, stock=1,
-                                ; overlays=2 (cfg/onerom-stock.json order;
-                                ; plugins don't count)
+; The overlay library spans two 8KB flash sets (each holds whole overlays --
+; no overlay straddles a set, so SLOT_PEEK only ever reads within one 8KB
+; chip, which is the proven case). The C side puts the target set in the
+; OVL_MB_SET mailbox before each fetch; loadable set indices are shell=0,
+; stock=1, overlays-A=2, overlays-B=3 (cfg/onerom-stock.json order; plugins
+; don't count).
+OVL_MB_SET     = $02C3          ; flash set for this fetch (set by C caller)
 OVL_RAM_SLOT   = 1              ; staging slot (shared with the stock swap)
 
 rbcp_ovl_tramp:
@@ -226,7 +230,7 @@ rbcp_ovl_tramp:
         jsr rbcp_cmd_enter_cmd_resp
         bcs @enter_fail
         lda #OVL_RAM_SLOT
-        ldx #OVL_FLASH_SET
+        ldx OVL_MB_SET
         jsr rbcp_cmd_load_slot
         bcs @load_fail
         lda #0
@@ -290,7 +294,7 @@ rbcp_ovlm_tramp:
         jsr rbcp_cmd_enter_cmd_resp
         bcs @enter_fail
         lda #OVL_RAM_SLOT
-        ldx #OVL_FLASH_SET
+        ldx OVL_MB_SET
         jsr rbcp_cmd_load_slot
         bcs @load_fail
 @page:

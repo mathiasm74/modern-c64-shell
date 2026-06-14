@@ -1,11 +1,11 @@
 /* overlay.c - tardis overlay command dispatch (PLAN.md backlog #4).
  *
  * Overlay commands don't live in the 16KB shell ROM. Their code sits in
- * the overlays flash set on the One ROM (build/overlays.bin, packed from
- * src/overlays/), and the resident side here is only a thin thunk: fetch
- * the command's 256-byte page into the overlay cache at $CE00 (via the
- * SLOT_PEEK transport in src/rbcp/launch.s), then call it. A one-entry
- * cache makes repeat invocations free -- no device round-trip.
+ * two 8KB overlays flash sets on the One ROM (build/overlays_a/b.bin, packed
+ * from src/overlays/), and the resident side here is only a thin thunk: pick
+ * the overlay's flash set (OVL_MB_SET), fetch its 256-byte page(s) into the
+ * cache (via the SLOT_PEEK transport in src/rbcp/launch.s), then call it. A
+ * one-entry cache makes repeat invocations free -- no device round-trip.
  *
  * Only works on One ROM hardware with the host-control plugin; anywhere
  * else (VICE, plain `make onerom` firmware) the RBCP handshake times out
@@ -28,6 +28,7 @@ unsigned char overlay_fetch_multi(void);
 #define OVL_MB_PAGE (*(unsigned char *)0x02C0)
 #define OVL_MB_CNT  (*(unsigned char *)0x02C1)
 #define OVL_MB_DST  (*(unsigned char *)0x02C2)
+#define OVL_MB_SET  (*(unsigned char *)0x02C3)  /* flash set for the fetch */
 
 /* The cache is one 256-byte page; its first byte is the entry point. */
 #define OVERLAY_ENTRY ((void (*)(void))0xCE00)
@@ -38,12 +39,14 @@ static unsigned char cached_page = PAGE_NONE;   /* DATA: survives via copydata *
 #pragma code-name (push, "CODE2")
 #pragma rodata-name (push, "RODATA2")
 
-/* Fetch (if not cached) and run the single-page overlay in page `page`. */
-static void overlay_run(unsigned char page)
+/* Fetch (if not cached) and run the single-page overlay at `page` of flash
+   `set`. */
+static void overlay_run(unsigned char page, unsigned char set)
 {
     unsigned char rc;
 
     if (cached_page != page) {
+        OVL_MB_SET = set;
         rc = overlay_fetch_page(page);
         if (rc != 0) {
             cached_page = PAGE_NONE;
@@ -60,7 +63,7 @@ static void overlay_run(unsigned char page)
 void cmd_about(int argc, char *argv[])
 {
     (void)argc; (void)argv;
-    overlay_run(0);
+    overlay_run(ABOUT_PAGE, ABOUT_SET);
 }
 
 /* --- multi-page C overlays at $8800 (edit, files) ------------------------
@@ -81,14 +84,17 @@ static unsigned char mp_cached(const char *magic)
            OVL8_BASE[5] == magic[2] && OVL8_BASE[6] == magic[3];
 }
 
-/* Fetch the multi-page overlay whose first page is `first_page` into $8800 and
-   confirm its magic. 0 = ready to call $8800, else a failed-stage code. */
-static unsigned char mp_fetch(unsigned char first_page, const char *magic)
+/* Fetch the multi-page overlay whose first page is `first_page` in flash `set`
+   into $8800 and confirm its magic. 0 = ready to call $8800, else a
+   failed-stage code. */
+static unsigned char mp_fetch(unsigned char first_page, const char *magic,
+                              unsigned char set)
 {
     unsigned char rc, n;
 
     if (mp_cached(magic))
         return 0;
+    OVL_MB_SET  = set;
     OVL_MB_PAGE = first_page;
     OVL_MB_CNT  = 1;
     OVL_MB_DST  = 0x88;
@@ -119,7 +125,7 @@ void cmd_edit(int argc, char *argv[])
     unsigned char rc, n;
     const char *name;
 
-    rc = mp_fetch(EDIT_FIRST_PAGE, "edt1");
+    rc = mp_fetch(EDIT_FIRST_PAGE, "edt1", EDIT_SET);
     if (rc != 0) {
         mp_failed(rc);
         return;
@@ -141,7 +147,7 @@ void cmd_edit(int argc, char *argv[])
    first, then calls this. */
 void run_files_overlay(void)
 {
-    unsigned char rc = mp_fetch(FILES_FIRST_PAGE, "fil1");
+    unsigned char rc = mp_fetch(FILES_FIRST_PAGE, "fil1", FILES_SET);
 
     if (rc != 0) {
         mp_failed(rc);
@@ -153,7 +159,7 @@ void run_files_overlay(void)
 /* Run the dir overlay (dir/ls/pwd). The fs.c thunk fills the mailbox first. */
 void run_dir_overlay(void)
 {
-    unsigned char rc = mp_fetch(DIR_FIRST_PAGE, "dir1");
+    unsigned char rc = mp_fetch(DIR_FIRST_PAGE, "dir1", DIR_SET);
 
     if (rc != 0) {
         mp_failed(rc);

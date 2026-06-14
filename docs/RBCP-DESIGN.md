@@ -107,3 +107,29 @@ All the routines are exported; we link only what's referenced.
 - Added `make onerom-stock` (builds only when the stock ROM files exist).
 - All this builds clean -- the library is integrated, the firmware config
   is ready. The C-side launcher and the hardware test are the next pieces.
+
+## Overlay flash: two 8KB sets (not one 16KB set)
+
+The tardis overlay library (`src/overlays/`) is fetched at runtime from the
+device's own flash by the host-control plugin's `SLOT_PEEK` (the loader is
+`_overlay_fetch_page`/`_overlay_fetch_multi` in `src/rbcp/launch.s`):
+`LOAD_SLOT` copies the overlays flash set into RAM slot 1, then `SLOT_PEEK`
+reads pages out of it. Overlays never go on the C64 bus.
+
+When the library outgrew 8KB we first tried **one 16KB set of two 8KB chips**
+(`serve_alg: two_cs_one_addr`). On hardware `ls` worked but `edit` hung: `ls`
+(the dir overlay) lives entirely in the first chip, while `edit` straddles the
+8KB boundary into the second chip. A `SLOT_PEEK` at offset 8192 did **not**
+land on the second chip's bytes -- a multi-chip set's RAM-slot layout follows
+the bus-serving `serve_alg` (CS decoding), not a flat chip0-then-chip1
+concatenation, so it isn't contiguous for offset-addressed `SLOT_PEEK`.
+
+Fix: **two independent single-chip 8KB sets**, loadable ROM sets 2 (`about` +
+`files` + `dir`) and 3 (`edit`). Each overlay sits wholly inside one 8KB chip,
+so every fetch is a single-chip `SLOT_PEEK` -- the case already proven by the
+original 8KB overlays set. The C side selects the set per fetch via the
+`OVL_MB_SET` ($02C3) mailbox byte (the trampolines `ldx OVL_MB_SET` for the
+`LOAD_SLOT` flash-slot arg); `tools/gen_overlay_pages.py` (`LAYOUT`) assigns
+each overlay a set + an intra-set page and the Makefile's `overlays_a/b.bin`
+rules pack the matching halves. To rebalance, edit `LAYOUT` and the
+`OVERLAYS_A`/`OVERLAYS_B` lists together (each set must stay <= 32 pages).

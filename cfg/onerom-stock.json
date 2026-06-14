@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "C64 Shell ROM + Stock Fallback",
-  "description": "Shell ROM with stock C64 BASIC/KERNAL as a second bank, switchable at runtime via the One ROM Bus Control Protocol (host-control plugin in slot 1); overlays chip_set (loadable ROM set 2) carries the tardis lazy-load command library",
+  "description": "Shell ROM with stock C64 BASIC/KERNAL as a second bank, switchable at runtime via the One ROM Bus Control Protocol (host-control plugin in slot 1); two overlays chip_sets (loadable ROM sets 2 and 3) carry the tardis lazy-load command library, A=about+files+dir, B=edit",
   "chip_sets": [
     {
       "type": "single",
@@ -55,16 +55,20 @@
       ]
     },
     {
-      "type": "multi",
-      "serve_alg": "two_cs_one_addr",
+      "type": "single",
       "chips": [
         {
-          "file": "build/overlays.0.bin",
+          "file": "build/overlays_a.bin",
           "type": "Chip2364",
           "cs1": "active_low"
-        },
+        }
+      ]
+    },
+    {
+      "type": "single",
+      "chips": [
         {
-          "file": "build/overlays.1.bin",
+          "file": "build/overlays_b.bin",
           "type": "Chip2364",
           "cs1": "active_low"
         }
