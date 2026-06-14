@@ -1,60 +1,33 @@
-/* config.c - appearance: screen colors and the prompt string.
+/* config.c - appearance commands (border / bg / text / prompt).
  *
- * Colors are C64 color numbers 0-15. border/bg poke the VIC registers
- * directly; text sets the current text color (COLOR, $0286) that CHROUT
- * writes for new characters. prompt changes the string main() shows; it
- * lives in shell.c, set through set_prompt().
+ * These are thin resident thunks: the bodies live in the files overlay
+ * (src/overlays/files.c, cmds 8-11), so the parse + register pokes + the
+ * prompt-set (via the svc_set_prompt service) cost overlay flash, not the
+ * 16KB ROM. The thunk just drops the command id and the argument string into
+ * the shared mailbox at $02D0 and runs the overlay.
  */
 #include "shell.h"
 #include "commands/config.h"
+#include "commands/overlay.h"
 
-#define CR     0x0D
-#define VIC_BORDER ((unsigned char *)0xD020)
-#define VIC_BG     ((unsigned char *)0xD021)
-#define TEXT_COLOR ((unsigned char *)0x0286)   /* KERNAL COLOR */
+/* Mailbox (shared with the other files-overlay thunks). Absolute scalars: a
+   base-pointer macro after the copy loop would let cc65 misland the length. */
+#define FB_CMD (*(unsigned char *)0x02D0)
+#define FB_A1L (*(unsigned char *)0x02D2)
+#define FB_A1  ((unsigned char *)0x02D3)        /* up to 15 chars */
 
-static unsigned char parse_dec(const char *s)
+static void config_run(unsigned char cmd, int argc, char *argv[])
 {
-    unsigned char v = 0;
+    unsigned char n = 0;
 
-    while (*s >= '0' && *s <= '9') {
-        v = v * 10 + (*s - '0');
-        ++s;
-    }
-    return v;
+    FB_CMD = cmd;
+    if (argc > 1)
+        while (argv[1][n] && n < 15) { FB_A1[n] = argv[1][n]; ++n; }
+    FB_A1L = n;
+    run_files_overlay();
 }
 
-void cmd_border(int argc, char *argv[])
-{
-    if (argc < 2) {
-        puts_raw("usage: border <0-15>");
-        chrout(CR);
-        return;
-    }
-    *VIC_BORDER = parse_dec(argv[1]) & 0x0F;
-}
-
-void cmd_bg(int argc, char *argv[])
-{
-    if (argc < 2) {
-        puts_raw("usage: bg <0-15>");
-        chrout(CR);
-        return;
-    }
-    *VIC_BG = parse_dec(argv[1]) & 0x0F;
-}
-
-void cmd_text(int argc, char *argv[])
-{
-    if (argc < 2) {
-        puts_raw("usage: text <0-15>");
-        chrout(CR);
-        return;
-    }
-    *TEXT_COLOR = parse_dec(argv[1]) & 0x0F;
-}
-
-void cmd_prompt(int argc, char *argv[])
-{
-    set_prompt(argc < 2 ? ">" : argv[1]);
-}
+void cmd_border(int argc, char *argv[]) { config_run(8, argc, argv); }
+void cmd_bg(int argc, char *argv[])     { config_run(9, argc, argv); }
+void cmd_text(int argc, char *argv[])   { config_run(10, argc, argv); }
+void cmd_prompt(int argc, char *argv[]) { config_run(11, argc, argv); }

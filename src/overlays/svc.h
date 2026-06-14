@@ -26,5 +26,6 @@ unsigned char svc_fastload_epyx_send_header(const char *name, unsigned char name
 void svc_fastload_epyx_mark_unsupported(void);     /* svc 13 */
 unsigned char svc_epyx_wait_ready(void);           /* svc 14 */
 unsigned char svc_epyx_recv_byte(void);            /* svc 15 */
+void __fastcall__ svc_set_prompt(const char *s);   /* svc 16 ($FFB0) */
 
 #endif /* SVC_H */

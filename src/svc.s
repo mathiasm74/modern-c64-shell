@@ -9,14 +9,15 @@
 ;
 ; The entries' addresses ARE the ABI: src/overlays/svc.h hardcodes them. Keep
 ; this order and the start address ($FF80) in sync with svc.h, and don't let
-; CODE2 grow past $FF80 (cfg/rom.cfg pins this segment there). 16 entries,
-; $FF80-$FFAF, sitting in the KERNAL ROM gap below the $FFBA file-I/O stubs.
+; CODE2 grow past $FF80 (cfg/rom.cfg pins this segment there). 17 entries,
+; $FF80-$FFB2, sitting in the KERNAL ROM gap below the $FFBA file-I/O stubs.
 
 .import _iec_set_fa, _iec_set_sa, _iec_setname, _iec_open, _iec_status
 .import _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
 .import _fastload_set_device, _fastload_epyx_capable, _fastload_epyx_install
 .import _fastload_epyx_send_header, _fastload_epyx_mark_unsupported
 .import _epyx_wait_ready, _epyx_recv_byte
+.import _set_prompt
 
 .segment "SVC_TABLE"
 
@@ -36,3 +37,4 @@
         jmp _fastload_epyx_mark_unsupported ; $FFA7  svc 13
         jmp _epyx_wait_ready                ; $FFAA  svc 14
         jmp _epyx_recv_byte                 ; $FFAD  svc 15
+        jmp _set_prompt                     ; $FFB0  svc 16

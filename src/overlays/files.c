@@ -11,7 +11,8 @@
  * edit overlay's load/save do.
  *
  * Mailbox from the thunk ($02D0):
- *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 5 save, 6 status, 7 cd
+ *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 5 save, 6 status, 7 cd,
+ *         8 border, 9 bg, 10 text, 11 prompt
  *   [1]   device (FA)
  *   [2]   arg1 length, [3..18] arg1 (<=16 chars)
  *   [19]  arg2 length, [20..35] arg2 (<=16 chars)
@@ -20,6 +21,7 @@
  *
  * State is all local (crt0 does not zero our BSS).
  */
+#include "svc.h"                         /* svc_set_prompt (the prompt command) */
 
 unsigned char __fastcall__ k_chrout(unsigned char c);
 unsigned char k_getin(void);
@@ -379,6 +381,62 @@ static void cd_path(void)
     command_channel((const char *)0x0340, A1L, "cd: ", 0);
 }
 
+/* ---- border / bg / text / prompt: appearance settings (cmd 8-11) --------- */
+#define VIC_BORDER (*(unsigned char *)0xD020)
+#define VIC_BG     (*(unsigned char *)0xD021)
+#define COLOR_REG  (*(unsigned char *)0x0286)   /* KERNAL text color */
+
+/* parse A1 as a small decimal value (0-15 after the caller masks). */
+static unsigned char parse_dec(void)
+{
+    unsigned char v = 0, i;
+    char c;
+
+    for (i = 0; i < A1L; ++i) {
+        c = A1[i];
+        if (c < '0' || c > '9')
+            break;
+        v = v * 10 + (c - '0');
+    }
+    return v;
+}
+
+/* which: 0 border ($D020), 1 background ($D021), 2 text color ($0286). */
+static void set_color(unsigned char which)
+{
+    unsigned char val;
+
+    if (A1L == 0) {
+        puts_raw(which == 0 ? "usage: border <0-15>" :
+                 which == 1 ? "usage: bg <0-15>" : "usage: text <0-15>");
+        crlf();
+        return;
+    }
+    val = parse_dec() & 0x0F;
+    if (which == 0)
+        VIC_BORDER = val;
+    else if (which == 1)
+        VIC_BG = val;
+    else
+        COLOR_REG = val;
+}
+
+/* prompt <str> -> set the shell prompt via the resident set_prompt service. */
+static void set_prompt_cmd(void)
+{
+    char buf[16];
+    unsigned char i;
+
+    if (A1L == 0) {
+        svc_set_prompt(">");
+        return;
+    }
+    for (i = 0; i < A1L && i < 15; ++i)
+        buf[i] = A1[i];
+    buf[i] = 0;
+    svc_set_prompt(buf);
+}
+
 void files_main(void)
 {
     unsigned char cmd = MB_CMD;
@@ -398,6 +456,10 @@ void files_main(void)
         status_read();
     else if (cmd == 7)
         cd_path();
+    else if (cmd == 8 || cmd == 9 || cmd == 10)
+        set_color(cmd - 8);             /* border / bg / text */
+    else if (cmd == 11)
+        set_prompt_cmd();               /* prompt */
     else
         scratch();                      /* rm */
 }
