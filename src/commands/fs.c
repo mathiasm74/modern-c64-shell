@@ -554,6 +554,122 @@ void cmd_rm(int argc, char *argv[])
     files_run(4, argv[1], 0);
 }
 
+/* save <name> [<start> <end>] - write a memory range to disk as a PRG. With no
+   range, saves the last-loaded program (load_start..load_end), like stock
+   SAVE. <start> becomes the PRG's 2-byte load address so load/fload restore it
+   in place; <end> is the inclusive last byte (matching what `load` reports).
+   Numbers are decimal or $hex. The write goes through the files overlay (cmd 5,
+   reusing its KERNAL-ABI write path); we pass start+count in the A2 mailbox
+   bytes via absolute scalars to dodge the cc65 base-pointer store bug.
+   In CODE2 (KERNAL ROM) -- the BASIC ROM half is tight. */
+#pragma code-name (push, "CODE2")
+#pragma rodata-name (push, "RODATA2")
+#define SV_START (*(unsigned int *)0x02E4)
+#define SV_COUNT (*(unsigned int *)0x02E6)
+
+/* Parse a 16-bit address/value: hex if it starts with '$', else decimal -- the
+   same C64 convention as peek/poke (parse_num in mem.c). */
+static unsigned int parse_num(const char *s)
+{
+    unsigned int v = 0;
+    unsigned char d;
+
+    if (*s == '$') {
+        ++s;
+        for (;;) {
+            d = *s++;
+            if (d >= '0' && d <= '9')
+                d -= '0';
+            else if (d >= 'a' && d <= 'f')
+                d -= 'a' - 10;
+            else if (d >= 'A' && d <= 'F')
+                d -= 'A' - 10;
+            else
+                break;
+            v = (v << 4) | d;
+        }
+    } else {
+        while (*s >= '0' && *s <= '9')
+            v = v * 10 + (*s++ - '0');
+    }
+    return v;
+}
+
+void cmd_save(int argc, char *argv[])
+{
+    unsigned int start, end;
+    unsigned char n;
+
+    if (argc < 2 || argc == 3) {
+        puts_raw("usage: save <name> [<start> <end>]");
+        chrout(CR);
+        return;
+    }
+    if (argc >= 4) {
+        start = parse_num(argv[2]);
+        end = parse_num(argv[3]);               /* inclusive last byte */
+        if (end < start) {
+            puts_raw("end before start");
+            chrout(CR);
+            return;
+        }
+        SV_COUNT = end - start + 1;
+    } else {
+        if (load_start == 0) {
+            puts_raw("nothing loaded");
+            chrout(CR);
+            return;
+        }
+        start = load_start;
+        SV_COUNT = load_end - load_start;       /* load_end is one past last */
+    }
+    SV_START = start;
+
+    FB_CMD = 5;
+    FB_DEV = default_device;
+    n = 0;
+    while (argv[1][n] && n < 16) { FB_A1[n] = argv[1][n]; ++n; }
+    FB_A1L = n;
+    run_files_overlay();
+}
+#pragma rodata-name (pop)
+#pragma code-name (pop)
+
+/* status - read and print the drive's command/error channel (15), the classic
+   "blinking red light" check: `OPEN 1,8,15: INPUT#1,A,B$,C,D`. After any disk
+   op it shows "00, ok,00,00" or an error like "63,file exists,00,00". Opening
+   channel 15 with no filename just reads the status; the message ends with a
+   CR (sent with EOI), which also drops the prompt onto a fresh line. Resident
+   (BASIC ROM) -- it's a quick IEC read used constantly. */
+void cmd_status(int argc, char *argv[])
+{
+    unsigned char b;
+
+    (void)argc; (void)argv;
+    iec_set_fa(default_device);
+    iec_set_sa(15);                     /* command/error channel */
+    iec_setname("");                    /* no command: just read the status */
+    iec_open();
+    if (iec_status() & ST_NODEV) {
+        report_no_device(default_device);
+        return;
+    }
+    iec_chkin();
+    for (;;) {
+        b = iec_getbyte();
+        if (iec_status() & ST_TIMEOUT) {
+            puts_raw("read error");
+            chrout(CR);
+            break;
+        }
+        chrout(b);                      /* prints the trailing CR on EOI too */
+        if (iec_status() & ST_EOI)
+            break;
+    }
+    iec_close();
+    iec_clrchn();
+}
+
 /* device <n> [name] - set the device ls/load/run talk to (default 8). The bus
    is probed first: if <n> doesn't answer, report it and keep the current
    device (so a typo'd unit number can't silently misdirect later commands). A

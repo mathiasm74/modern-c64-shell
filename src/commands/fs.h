@@ -14,6 +14,8 @@ void cmd_cd(int argc, char *argv[]);     /* drive-side change directory     */
 void cmd_rm(int argc, char *argv[]);     /* scratch a file                  */
 void cmd_mv(int argc, char *argv[]);     /* rename a file                   */
 void cmd_cp(int argc, char *argv[]);     /* copy a file                     */
+void cmd_save(int argc, char *argv[]);   /* write a memory range as a PRG   */
+void cmd_status(int argc, char *argv[]); /* read the drive error channel    */
 void cmd_cat(int argc, char *argv[]);    /* dump a file to the screen       */
 void cmd_less(int argc, char *argv[]);   /* page a file                     */
 

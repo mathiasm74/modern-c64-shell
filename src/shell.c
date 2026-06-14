@@ -64,6 +64,8 @@ const struct command shell_commands[] = {
     { "rm",     cmd_rm     },
     { "run",    cmd_run    },
     { "runstock", cmd_runstock },
+    { "save",   cmd_save   },
+    { "status", cmd_status },
     { "text",   cmd_text   },
     { "ver",    cmd_ver    },
 };
