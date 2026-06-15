@@ -8,7 +8,7 @@ void cmd_pwd(int argc, char *argv[]);    /* print the disk name             */
 void cmd_load(int argc, char *argv[]);   /* read a PRG into memory          */
 void cmd_fload(int argc, char *argv[]);  /* experimental Epyx fast load      */
 void cmd_run(int argc, char *argv[]);    /* run the loaded program          */
-void cmd_runstock(int argc, char *argv[]); /* swap to stock ROMs, then run  */
+void cmd_exit(int argc, char *argv[]);   /* swap to stock C64 ROMs (leave shell)*/
 void cmd_device(int argc, char *argv[]); /* set the default IEC device      */
 void cmd_cd(int argc, char *argv[]);     /* drive-side change directory     */
 void cmd_rm(int argc, char *argv[]);     /* scratch a file                  */

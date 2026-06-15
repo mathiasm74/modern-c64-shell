@@ -76,23 +76,15 @@ void cmd_echo(int argc, char *argv[])
     chrout(CR);
 }
 
-/* ver and exit park their code + strings in the KERNAL ROM (CODE2/RODATA2):
-   the BASIC ROM is full, and these are small and cold. */
+/* ver parks its code + string in the KERNAL ROM (CODE2/RODATA2): the BASIC ROM
+   is full, and it's small and cold. */
 #pragma code-name (push, "CODE2")
 #pragma rodata-name (push, "RODATA2")
 void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Kept in step with the boot banner in reset.s. */
-    puts_raw("C64 Shell ROM v0.37");
-    chrout(CR);
-}
-
-void cmd_exit(int argc, char *argv[])
-{
-    (void)argc; (void)argv;
-    /* No OS underneath and no BASIC to fall back to; say so plainly. */
-    puts_raw("Nothing to exit to");
+    puts_raw("C64 Shell ROM v0.38");
     chrout(CR);
 }
 #pragma rodata-name (pop)

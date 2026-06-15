@@ -1,4 +1,4 @@
-"""The built-in commands: help, clear, echo, ver, exit (Phase 5).
+"""The built-in commands: help, clear, echo, ver (Phase 5).
 
 Each test injects a command into the keyboard buffer (the path GETIN reads)
 and asserts on the shell's response. Most start with a clear ($93) keystroke
@@ -49,7 +49,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("C64 Shell ROM v0.37")
+    v.assert_screen_contains("C64 Shell ROM v0.38")
 
 
 def test_echo_prints_arguments(v):
@@ -59,10 +59,10 @@ def test_echo_prints_arguments(v):
     _type(v, "echo a b")
     assert v.screen_text().count("a b") >= 2, "echo did not print its arguments"
 
-
-def test_exit_says_nowhere_to_go(v):
-    _type(v, "exit")
-    v.assert_screen_contains("Nothing to exit to")
+# `exit` is no longer a builtin: it now swaps the One ROM to the stock C64 ROMs
+# (cmd_exit in fs.c, formerly `runstock`). Like run/runstock that swap is
+# hardware-only -- inert in VICE -- so there's no behavior test here;
+# test_help_lists_every_command above still confirms it's registered.
 
 
 def test_clear_command_wipes_screen(v):

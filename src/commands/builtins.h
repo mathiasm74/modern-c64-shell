@@ -9,7 +9,6 @@ void cmd_help(int argc, char *argv[]);   /* list all registered commands */
 void cmd_clear(int argc, char *argv[]);  /* clear the screen             */
 void cmd_echo(int argc, char *argv[]);   /* print args, space-separated  */
 void cmd_ver(int argc, char *argv[]);    /* print name and version       */
-void cmd_exit(int argc, char *argv[]);   /* there is nowhere to exit to  */
 void cmd_reset(int argc, char *argv[]);  /* reboot the shell             */
 
 #endif /* BUILTINS_H */

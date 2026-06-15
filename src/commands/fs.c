@@ -422,21 +422,23 @@ void cmd_run(int argc, char *argv[])
 }
 #pragma code-name (pop)
 
-/* runstock - swap the One ROM to stock C64 ROMs so stock KERNAL/BASIC take
-   over. Uses the host-control plugin's RBCP protocol (see src/rbcp/) to load
-   the stock-ROM flash slot into a RAM slot, switch to it, and only then hand
-   off. If a program was `load`ed first, it is handed to stock BASIC intact
-   (via the run-stub: init-without-NEW + LINKPRG) and the user lands at READY.
-   able to LIST / RUN it -- without that, the stock reset's cold start would
-   NEW the program away. Calling without a previous `load` is fine -- the swap
-   itself is the point; the user gets a fresh stock BASIC (or the stock reset
+/* exit - leave the shell by swapping the One ROM to stock C64 ROMs so stock
+   KERNAL/BASIC take over (the closest thing to "exit" we have: there's no OS
+   underneath, but there IS a real C64 one bank-swap away). Uses the
+   host-control plugin's RBCP protocol (see src/rbcp/) to load the stock-ROM
+   flash slot into a RAM slot, switch to it, and only then hand off. If a
+   program was `load`ed first, it is handed to stock BASIC intact (via the
+   run-stub: init-without-NEW + LINKPRG) and the user lands at READY. able to
+   LIST / RUN it -- without that, the stock reset's cold start would NEW the
+   program away. Calling without a previous `load` is fine -- the swap itself
+   is the point; the user gets a fresh stock BASIC (or the stock reset
    autostarts a cartridge). Real use requires the host-control plugin (the
    `make onerom-stock` build); on a shell-only OneROM or in VICE the
    protocol calls are inert and the JMP through (FFFC) just re-enters our
    own shell. Never returns; back to the shell needs a power cycle. Lives
    in CODE2 (KERNAL ROM) so its bytes don't push the BASIC ROM over budget. */
 #pragma code-name (push, "CODE2")
-void cmd_runstock(int argc, char *argv[])
+void cmd_exit(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* With a program loaded, hand it to stock BASIC intact (init-without-NEW +

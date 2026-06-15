@@ -29,7 +29,7 @@ static unsigned char buf[40];
 
 /* Everything here lives in the KERNAL ROM half (CODE2 / RODATA2), so the
  * cc65-emitted BASIC ROM doesn't grow as the loader does. The pragma-pair
- * is the same one fs.c uses for cmd_runstock / cmd_help.                  */
+ * is the same one fs.c uses for cmd_exit / cmd_help.                      */
 #pragma code-name (push, "CODE2")
 #pragma rodata-name (push, "RODATA2")
 
