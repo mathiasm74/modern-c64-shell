@@ -41,8 +41,11 @@ make test        # builds and runs the test suite
 make run         # builds and launches VICE with the ROM
 make onerom      # builds a One ROM firmware image from both halves
 make onerom-flash # builds + flashes a connected One ROM
+make sizes       # per-command ROM code-size report (tools/cmd_sizes.py)
 make clean       # removes build artifacts
 ```
+
+`make sizes` (`tools/cmd_sizes.py`) assembles the command modules with a ca65 listing, measures each function from its `.proc` marker, and walks the jsr/jmp call graph to attribute helper code to commands -- reporting each command's *exclusive* cost (body + helpers only it reaches), the *shared* helpers (reached by 2+ commands, e.g. `launch_stock_program` for run+exit), and whether the command is resident or just an overlay thunk. Use it to decide what's worth moving into an overlay.
 
 The build produces two 8KB binaries that together form the 16KB ROM:
 - `build/kernal.bin` maps to $E000-$FFFF.

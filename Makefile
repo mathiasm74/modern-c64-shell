@@ -47,9 +47,13 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-stock-flash onerom-pure-stock-flash memtest memtest-flash
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-stock-flash onerom-pure-stock-flash memtest memtest-flash sizes
 
 all: $(ROM16K)
+
+# Per-command ROM code-size report (body + call-graph-attributed helpers).
+sizes: all
+	@python3 tools/cmd_sizes.py $(BUILD)
 
 $(BUILD):
 	mkdir -p $(BUILD)
