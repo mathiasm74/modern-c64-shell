@@ -11,13 +11,11 @@
  * edit overlay's load/save do.
  *
  * Mailbox from the thunk ($02D0):
- *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 5 save, 6 status, 7 cd,
- *         8 border, 9 bg, 10 text, 11 prompt
+ *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 6 status, 7 cd,
+ *         8 border, 9 bg, 10 text, 11 prompt  (5 was save, removed)
  *   [1]   device (FA)
  *   [2]   arg1 length, [3..18] arg1 (<=16 chars)
  *   [19]  arg2 length, [20..35] arg2 (<=16 chars)
- *   For save (5): arg1 = name, and $02E4/$02E6 (the arg2 bytes) hold the
- *   start address and byte count as 16-bit words.
  *
  * State is all local (crt0 does not zero our BSS).
  */
@@ -67,10 +65,6 @@ static void crlf(void)
 #define A1     ((const char *)0x02D3)        /* 16 chars */
 #define A2L    (*(unsigned char *)0x02E3)
 #define A2     ((const char *)0x02E4)        /* 16 chars */
-/* save (cmd 5) overloads the arg2 bytes as two 16-bit words instead of a
-   string: the source start address and the byte count. */
-#define SV_START (*(const unsigned int *)0x02E4)
-#define SV_COUNT (*(const unsigned int *)0x02E6)
 
 /* ---- cat (dump) / less (page) ------------------------------------------- */
 static void pager(unsigned char paged)
@@ -182,44 +176,6 @@ static void copy(void)
 
     puts_raw("copied ");
     put_uint(len);
-    puts_raw(" bytes");
-    crlf();
-}
-
-/* ---- save: write COUNT bytes from START to a new PRG <name> (cmd 5) ------ */
-static void save_mem(void)
-{
-    char dstname[24];
-    unsigned char j, k;
-    unsigned int i, start = SV_START, count = SV_COUNT;
-    const unsigned char *src = (const unsigned char *)start;
-
-    /* build "<name>,p,w" */
-    k = 0;
-    for (j = 0; j < A1L && k < 16; ++j)
-        dstname[k++] = A1[j];
-    dstname[k++] = ','; dstname[k++] = 'p'; dstname[k++] = ','; dstname[k++] = 'w';
-
-    k_setnam(dstname, k);
-    k_setlfs(dev, 2);
-    k_open();
-    if (STREG & ST_NODEV) {
-        puts_raw("no device");
-        crlf();
-        return;
-    }
-    /* PRG = 2-byte load address then the data. The deferred-write CHROUT sends
-       the final byte with EOI on CLRCHN, so CLOSE finalizes the file. */
-    k_chkout();
-    k_chrout((unsigned char)(start & 0xff));
-    k_chrout((unsigned char)(start >> 8));
-    for (i = 0; i < count; ++i)
-        k_chrout(src[i]);
-    k_clrchn();
-    k_close();
-
-    puts_raw("saved ");
-    put_uint(count);
     puts_raw(" bytes");
     crlf();
 }
@@ -450,8 +406,6 @@ void files_main(void)
         copy();
     else if (cmd == 3)
         rename_file();                  /* mv */
-    else if (cmd == 5)
-        save_mem();
     else if (cmd == 6)
         status_read();
     else if (cmd == 7)

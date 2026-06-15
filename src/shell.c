@@ -63,7 +63,6 @@ const struct command shell_commands[] = {
     { "reset",  cmd_reset  },
     { "rm",     cmd_rm     },
     { "run",    cmd_run    },
-    { "save",   cmd_save   },
     { "status", cmd_status },
     { "text",   cmd_text   },
     { "ver",    cmd_ver    },
