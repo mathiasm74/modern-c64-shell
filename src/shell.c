@@ -406,9 +406,6 @@ void settings_load(void)
     col_shadow[2] = COLOR_REG & 0x0F;
 }
 
-/* settings_save is cold and the BASIC ROM half is tighter, so park it in the
-   KERNAL half. */
-#pragma code-name (push, "CODE2")
 void settings_save(void)
 {
     unsigned char i, n, oldest, k, j;
@@ -443,7 +440,6 @@ void settings_save(void)
     col_shadow[2] = nv_blob[5];
     cmds_since_save = 0;
 }
-#pragma code-name (pop)
 
 /* After a non-empty command: save now if a color changed, else once per
    SAVE_EVERY commands (a history checkpoint that bounds the flash-write rate). */

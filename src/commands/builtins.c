@@ -84,7 +84,7 @@ void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Brand + version; kept in step with the boot banner's version (reset.s). */
-    puts_raw("TarDOS v0.41");
+    puts_raw("TarDOS v0.42");
     chrout(CR);
 }
 #pragma rodata-name (pop)

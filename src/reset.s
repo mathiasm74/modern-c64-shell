@@ -12,6 +12,7 @@
 .import pet2scr                 ; ASCII -> screen code (shared with CHROUT)
 .import iec_init                ; serial bus port setup
 .import _rbcp_launch_stock      ; RBCP: swap the One ROM to the stock ROMs
+.import _nv_capability, _nv_read ; RBCP: read saved settings from NV flash
 .importzp DFLTN, DFLTO, LDTND   ; default I/O channels (kernal_stubs.s)
 
 ; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
@@ -258,6 +259,14 @@ reset:
         ; --- Serial bus: drive ATN/CLK/DATA, release the lines -----------
         jsr iec_init
 
+        ; --- Restore saved colors BEFORE the display turns on ------------
+        ; The C settings_load() in main() also restores colors+history, but it
+        ; runs after the display is already up, so a saved non-blue scheme would
+        ; flash the default blue first. Read just the 6-byte header (magic +
+        ; version + 3 colors) from NV here and apply it pre-display. No-op (the
+        ; RBCP probe fails fast) on VICE / a non-One-ROM build.
+        jsr restore_colors
+
         ; --- Enable the display now that the screen is ready -------------
         lda #CTRL1_ON
         sta VIC_CTRL1
@@ -335,8 +344,53 @@ puts_at:
 @done:
         rts
 
+; --- restore_colors: apply saved border/bg/text from NV before display-on ---
+; Reads the 6-byte blob header (magic "TD" + version + 3 colors) and applies
+; the colors if valid, so a saved scheme doesn't flash the default blue first.
+; A-returns from the NV calls are tested with CMP (the cc65 epilogue's ldx #0
+; clobbers the Z flag). The NV trampolines re-enable IRQs, so we SEI again to
+; keep reset's setup masked until the main CLI below.
+COLORBUF  = $0340               ; 6-byte scratch in the unused tape buffer
+NV_MB_LEN = $02C4               ; NV read mailbox (src/rbcp/launch.s)
+NV_MB_LO  = $02C5
+NV_MB_HI  = $02C6
+restore_colors:
+        jsr _nv_capability
+        cmp #1
+        bne @rc_done            ; no writable NV present
+        lda #6
+        sta NV_MB_LEN
+        lda #<COLORBUF
+        sta NV_MB_LO
+        lda #>COLORBUF
+        sta NV_MB_HI
+        jsr _nv_read
+        cmp #0
+        bne @rc_done            ; read failed
+        lda COLORBUF+0
+        cmp #$54                ; 'T'
+        bne @rc_done
+        lda COLORBUF+1
+        cmp #$44                ; 'D'
+        bne @rc_done
+        lda COLORBUF+2
+        cmp #$01                ; blob version
+        bne @rc_done
+        lda COLORBUF+3
+        and #$0F
+        sta VIC_BORDER
+        lda COLORBUF+4
+        and #$0F
+        sta VIC_BGCOL
+        lda COLORBUF+5
+        and #$0F
+        sta COLOR
+@rc_done:
+        sei                     ; the NV trampolines left IRQs enabled; re-mask
+        rts
+
 version:
-        .byte "v0.41", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.42", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
         .byte "TarDOS - your modern C64 shell", 0
 banner2:
