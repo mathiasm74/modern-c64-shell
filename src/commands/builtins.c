@@ -83,8 +83,8 @@ void cmd_echo(int argc, char *argv[])
 void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
-    /* Kept in step with the boot banner in reset.s. */
-    puts_raw("C64 Shell ROM v0.39");
+    /* Brand + version; kept in step with the boot banner's version (reset.s). */
+    puts_raw("TarDOS v0.40");
     chrout(CR);
 }
 #pragma rodata-name (pop)

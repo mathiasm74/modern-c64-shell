@@ -85,7 +85,7 @@ def test_edit_opens_and_exits(v):
     _keys(v, "ver")
     _keys(v, [CR])
     v.run_for(0.5)
-    assert "C64 Shell ROM" in v.screen_text(), \
+    assert "TarDOS" in v.screen_text(), \
         "shell did not regain control after edit exit\n%s" % v.screen_text()
 
 

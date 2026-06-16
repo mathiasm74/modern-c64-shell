@@ -2,7 +2,7 @@
 
 
 def test_banner_text(v):
-    v.assert_screen_contains("C64 Shell ROM")
+    v.assert_screen_contains("TarDOS")
     v.assert_screen_contains("Ready")
 
 
@@ -11,9 +11,9 @@ def test_rom_free_line(v):
     # fills the "----" placeholders post-link, so seeing digits (and no dashes)
     # in the line proves the patch ran. The exact numbers are build-specific.
     txt = v.screen_text()
-    line = next((r for r in txt.split("\n") if "rom free" in r), None)
-    assert line is not None, "boot screen has no 'rom free' line\n%s" % txt
-    assert "basic" in line and "kernal" in line, "rom free line malformed: %r" % line
+    line = next((r for r in txt.split("\n") if "Free ROM bytes" in r), None)
+    assert line is not None, "boot screen has no 'Free ROM bytes' line\n%s" % txt
+    assert "BASIC" in line and "KERNAL" in line, "rom free line malformed: %r" % line
     assert "----" not in line, "patch_freemem did not fill the placeholders: %r" % line
     assert any(c.isdigit() for c in line), "rom free line has no numbers: %r" % line
 

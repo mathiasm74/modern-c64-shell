@@ -169,7 +169,7 @@ Commit after every passing test. Each commit should leave `make test` green. Use
 
 ### Version
 
-**Bump the `v0.NN` version on every build handed to the user** so they can tell on-screen which build they flashed. It lives in two source places kept in step: `src/reset.s` (boot banner) and `src/commands/builtins.c` (`ver` command). Only `test_builtins.py::test_ver_prints_version` asserts the exact string (other boot/dispatch checks match the version-agnostic `"C64 Shell ROM v"`), so a bump touches those three lines.
+**Bump the `v0.NN` version on every build handed to the user** so they can tell on-screen which build they flashed. It lives in two source places kept in step: `src/reset.s` (the `version` string in the boot banner, e.g. `"v0.40"`, drawn top-right — assumes 5 chars `"vX.YY"` for its right-align column) and `src/commands/builtins.c` (`ver` command, `"TarDOS v0.40"`). Only `test_builtins.py::test_ver_prints_version` asserts the exact string (other boot/dispatch checks match the version-agnostic `"TarDOS v"`, and several tests use `ver` as a "shell alive" sentinel by waiting for `"TarDOS v"`), so a bump touches those three lines. The shell is branded **TarDOS** ("bigger on the inside" — the tardis-overlay architecture); the boot banner is centered: row 0 version (right-aligned), row 2 `"TarDOS - your modern C64 shell"`, row 4 the `Free ROM bytes: BASIC ---- KERNAL ----` line (the two `----` are build-patched by `tools/patch_freemem.py`), row 6 `Ready.`, row 7 the prompt.
 
 ## Testing
 

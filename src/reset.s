@@ -208,9 +208,13 @@ reset:
         bne @clrcol
 
         ; --- Startup banner ----------------------------------------------
-        PRINT banner1, SCREEN_RAM + 40 * 1 + 1
-        PRINT freemem, SCREEN_RAM + 40 * 2 + 1   ; ROM free bytes (patched in)
-        PRINT banner2, SCREEN_RAM + 40 * 3 + 1
+        ; row 0: version, right-aligned (5 chars "vX.YY" end at col 38)
+        ; row 2: brand, centered (30 chars)   row 4: free bytes, centered (38)
+        ; row 6: "Ready."   row 7: the shell prompt (cursor set below)
+        PRINT version, SCREEN_RAM + 40 * 0 + 34
+        PRINT brand,   SCREEN_RAM + 40 * 2 + 5
+        PRINT freemem, SCREEN_RAM + 40 * 4 + 1    ; ROM free bytes (patched in)
+        PRINT banner2, SCREEN_RAM + 40 * 6 + 0
 
         ; --- Keyboard port: PA outputs (columns), PB inputs (rows) -------
         lda #$ff
@@ -247,7 +251,7 @@ reset:
         sta COLOR
         lda #$00
         sta PNTR
-        lda #$05
+        lda #$07                ; prompt on row 7, under the banner / "Ready."
         sta TBLX
         jsr set_line_ptrs
 
@@ -331,16 +335,18 @@ puts_at:
 @done:
         rts
 
-banner1:
-        .byte "C64 Shell ROM v0.39", 0
+version:
+        .byte "v0.40", 0          ; right-aligned at col 34 (assumes 5 chars)
+brand:
+        .byte "TarDOS - your modern C64 shell", 0
 banner2:
         .byte "Ready.", 0
 
-; The "----" fields are patched with the per-ROM free byte counts after the
+; The two "----" fields are patched with the per-ROM free byte counts after the
 ; link (tools/patch_freemem.py); .export so the patcher can find this string.
 .export freemem
 freemem:
-        .byte "rom free  basic ----  kernal ----", 0
+        .byte "Free ROM bytes: BASIC ---- KERNAL ----", 0
 
 ; --- 6502 hardware vectors ($FFFA-$FFFF) ---------------------------------
 .segment "VECTORS"

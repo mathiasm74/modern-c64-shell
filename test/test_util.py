@@ -74,7 +74,7 @@ def test_peek_hexdump_range(v):
 def test_reset_reboots(v):
     _send(v, _ch("reset") + [CR])
     v.run_for(0.5)
-    assert "C64 Shell ROM" in v.screen_text(), "reset did not redraw the boot banner"
+    assert "TarDOS" in v.screen_text(), "reset did not redraw the boot banner"
     # the rebooted shell still takes commands
     _send(v, [CLEAR] + _ch("zq") + [CR])
     v.assert_screen_contains("Command not found: zq")

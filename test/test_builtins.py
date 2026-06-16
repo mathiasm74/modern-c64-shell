@@ -49,7 +49,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("C64 Shell ROM v0.39")
+    v.assert_screen_contains("TarDOS v0.40")
 
 
 def test_echo_prints_arguments(v):
@@ -78,6 +78,6 @@ def test_leading_whitespace_still_dispatches(v):
     # The parser skips leading whitespace, so " ver" still finds ver.
     # Version-agnostic (exact version lives in test_ver_prints_version).
     _type(v, " ver")
-    v.assert_screen_contains("C64 Shell ROM v")
+    v.assert_screen_contains("TarDOS v")
     assert "Command not found" not in v.screen_text(), \
         "leading space should not turn a known command into an unknown one"
