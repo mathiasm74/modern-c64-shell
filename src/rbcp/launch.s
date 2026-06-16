@@ -27,6 +27,9 @@
 .import rbcp_cmd_switch_and_exit
 .import rbcp_cmd_slot_peek
 .import rbcp_cmd_exit_cmd_resp
+.import rbcp_cmd_get_nv_capability, rbcp_cmd_nv_peek
+.import rbcp_cmd_nv_poke_begin, rbcp_cmd_nv_poke
+.import rbcp_cmd_nv_poke_commit, rbcp_cmd_nv_poke_discard
 
 ; Where the library sits in ROM (load) and runs (run); both defined by ld65
 ; when the RBCP_CODE segment has `define = yes`.
@@ -343,6 +346,186 @@ rbcp_ovlm_tramp:
         ldx #0
         rts
 @exit_fail:
+        cli
+        lda #4
+        ldx #0
+        rts
+
+; =========================================================================
+; NV (non-volatile) settings storage -- persist colors + history across a
+; power cycle in the One ROM's NV flash (RBCP group $03). Same CR-mode + SEI
+; + run-from-RAM discipline as the overlay fetch. Read/write parameters go in
+; a small page-2 mailbox (RAM the library copy won't touch), set by the C
+; caller before the call:
+;   NV_MB_LEN ($02C4)     byte count (<= 255: fits one nv_peek / back-channel)
+;   NV_MB_LO/HI ($02C5/6) address of the C-side blob buffer
+;   NV_MB_IDX ($02C7)     write-loop index (scratch)
+; The blob lives at NV offset 0.
+; =========================================================================
+NV_MB_LEN = $02C4
+NV_MB_LO  = $02C5
+NV_MB_HI  = $02C6
+NV_MB_IDX = $02C7
+
+; The C-callable entry points run in place from KERNAL ROM (like the overlay
+; fetchers): each copies the library to RAM, then jumps into its RAM-side
+; trampoline below. (The trampolines themselves must run from RAM.)
+.segment "KCODE"
+
+; _nv_capability - A = 1 if NV present AND writable, else 0. The C side caches
+; this at boot; on a non-One-ROM (VICE / shell-only build) the RBCP handshake
+; fails and it returns 0, so persistence stays inert.
+.export _nv_capability
+_nv_capability:
+        jsr rbcp_copy_to_ram
+        jmp rbcp_nv_cap_tramp
+
+; _nv_read - read NV_MB_LEN bytes from NV offset 0 into the blob at NV_MB_LO/HI.
+.export _nv_read
+_nv_read:
+        jsr rbcp_copy_to_ram
+        jmp rbcp_nv_read_tramp
+
+; _nv_write - write NV_MB_LEN blob bytes to NV offset 0 (BEGIN / POKE xN / COMMIT).
+.export _nv_write
+_nv_write:
+        jsr rbcp_copy_to_ram
+        jmp rbcp_nv_write_tramp
+
+; --- RAM-side NV trampolines (run from RBCP_RAM after the copy) --------------
+.segment "RBCP_CODE"
+
+rbcp_nv_cap_tramp:
+        sei
+        jsr rbcp_reset
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @cap_enter_fail
+        jsr rbcp_cmd_get_nv_capability
+        bcs @cap_reject
+        lda RBCP_DATA_ADDR + RBCP_NV_CAP_SIZE_LO
+        ora RBCP_DATA_ADDR + RBCP_NV_CAP_SIZE_HI
+        beq @cap_reject                 ; size 0 -> no NV present
+        lda RBCP_DATA_ADDR + RBCP_NV_CAP_WRITABLE
+        beq @cap_reject                 ; present but read-only
+        jsr rbcp_cmd_exit_cmd_resp
+        cli
+        lda #1
+        ldx #0
+        rts
+@cap_reject:
+        jsr rbcp_cmd_exit_cmd_resp
+@cap_enter_fail:
+        cli
+        lda #0
+        ldx #0
+        rts
+
+rbcp_nv_read_tramp:
+        sei
+        jsr rbcp_reset
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @rd_enter_fail
+        lda NV_MB_LEN
+        sta rbcp_arg0                   ; count
+        lda #0
+        sta rbcp_arg1                   ; loc lo = 0
+        sta rbcp_arg2                   ; loc hi = 0
+        jsr rbcp_cmd_nv_peek
+        bcs @rd_peek_fail
+        lda NV_MB_LO                    ; back-channel -> blob, LEN bytes
+        sta copy_dst
+        lda NV_MB_HI
+        sta copy_dst+1
+        ldy #0
+@rd_cp:
+        cpy NV_MB_LEN
+        beq @rd_done
+        lda RBCP_DATA_ADDR,y
+        sta (copy_dst),y
+        iny
+        bne @rd_cp
+@rd_done:
+        jsr rbcp_cmd_exit_cmd_resp
+        bcs @rd_exit_fail
+        cli
+        lda #0
+        ldx #0
+        rts
+@rd_enter_fail:
+        cli
+        lda #1
+        ldx #0
+        rts
+@rd_peek_fail:
+        jsr rbcp_cmd_exit_cmd_resp
+        cli
+        lda #3
+        ldx #0
+        rts
+@rd_exit_fail:
+        cli
+        lda #4
+        ldx #0
+        rts
+
+rbcp_nv_write_tramp:
+        sei
+        jsr rbcp_reset
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @wr_enter_fail
+        lda #OVL_RAM_SLOT               ; stage in RAM slot 1
+        sta rbcp_arg0
+        jsr rbcp_cmd_nv_poke_begin
+        bcs @wr_begin_fail
+        lda NV_MB_LO                    ; copy_dst = blob (survives pokes: $AD)
+        sta copy_dst
+        lda NV_MB_HI
+        sta copy_dst+1
+        lda #0
+        sta NV_MB_IDX
+@wr_pk:
+        lda NV_MB_IDX
+        cmp NV_MB_LEN
+        beq @wr_commit
+        tay
+        lda (copy_dst),y                ; blob[idx]
+        sta rbcp_arg0                   ; byte value
+        lda NV_MB_IDX
+        sta rbcp_arg1                   ; loc lo = idx
+        lda #0
+        sta rbcp_arg2                   ; loc hi = 0
+        jsr rbcp_cmd_nv_poke
+        bcs @wr_poke_fail
+        inc NV_MB_IDX
+        jmp @wr_pk
+@wr_commit:
+        jsr rbcp_cmd_nv_poke_commit     ; flush to flash (long poll)
+        bcs @wr_poke_fail
+        jsr rbcp_cmd_exit_cmd_resp
+        bcs @wr_exit_fail
+        cli
+        lda #0
+        ldx #0
+        rts
+@wr_poke_fail:                          ; poke or commit failed: drop staging
+        jsr rbcp_cmd_nv_poke_discard
+        jsr rbcp_cmd_exit_cmd_resp
+        cli
+        lda #3
+        ldx #0
+        rts
+@wr_begin_fail:
+        jsr rbcp_cmd_exit_cmd_resp
+        cli
+        lda #2
+        ldx #0
+        rts
+@wr_enter_fail:
+        cli
+        lda #1
+        ldx #0
+        rts
+@wr_exit_fail:
         cli
         lda #4
         ldx #0

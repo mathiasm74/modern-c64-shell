@@ -341,15 +341,137 @@ static void dispatch(struct command_line *cl)
     chrout(CR);
 }
 
+/* --- Persistent settings (colors + history) in the One ROM NV flash --------
+ * The transport (src/rbcp/launch.s) runs the RBCP handshake; on a non-One-ROM
+ * build it fails, nv_capability() returns 0, and everything here no-ops (so the
+ * shell behaves exactly as before in VICE / a plain build). Blob at NV offset
+ * 0: "TD" magic, version, 3 color bytes, hist_count, then length-prefixed
+ * history lines (oldest first). Restore replays them through history_add so the
+ * ring rebuilds exactly. To bound flash wear we write only on a color change or
+ * every SAVE_EVERY commands (and on `exit`, via cmd_exit). */
+unsigned char nv_capability(void);
+unsigned char nv_read(void);
+unsigned char nv_write(void);
+#define NV_MB_LEN (*(unsigned char *)0x02C4)
+#define NV_MB_LO  (*(unsigned char *)0x02C5)
+#define NV_MB_HI  (*(unsigned char *)0x02C6)
+
+#define NV_MAGIC0    'T'
+#define NV_MAGIC1    'D'
+#define NV_VERSION   1
+#define NV_BLOB_MAX  192        /* 7 header + 8 * (1 + 22) = 191 */
+#define NV_ENTRY_MAX 22         /* chars persisted per history line */
+#define SAVE_EVERY   8          /* periodic history checkpoint, in commands */
+#define VIC_BORDER   (*(unsigned char *)0xD020)
+#define VIC_BG       (*(unsigned char *)0xD021)
+#define COLOR_REG    (*(unsigned char *)0x0286)
+
+static unsigned char nv_blob[NV_BLOB_MAX];
+static unsigned char nv_ok;             /* NV present + writable (cached at boot) */
+static unsigned char col_shadow[3];     /* last-saved border/bg/text */
+static unsigned char cmds_since_save;
+
+void settings_load(void)
+{
+    unsigned char i, n, k, j, hc;
+    char tmp[LINEMAX + 1];
+
+    nv_ok = nv_capability();
+    if (!nv_ok)
+        return;
+    NV_MB_LEN = NV_BLOB_MAX;
+    NV_MB_LO = (unsigned char)(unsigned int)&nv_blob[0];
+    NV_MB_HI = (unsigned char)((unsigned int)&nv_blob[0] >> 8);
+    if (nv_read() == 0 &&
+        nv_blob[0] == NV_MAGIC0 && nv_blob[1] == NV_MAGIC1 &&
+        nv_blob[2] == NV_VERSION) {
+        VIC_BORDER = nv_blob[3] & 0x0F;
+        VIC_BG     = nv_blob[4] & 0x0F;
+        COLOR_REG  = nv_blob[5] & 0x0F;
+        hc = nv_blob[6];
+        i = 7;
+        for (n = 0; n < hc && n < HIST_N && i < NV_BLOB_MAX; ++n) {
+            k = nv_blob[i++];
+            j = 0;
+            while (j < k && i < NV_BLOB_MAX && j < LINEMAX)
+                tmp[j++] = nv_blob[i++];
+            tmp[j] = 0;
+            if (j > 0)
+                history_add(tmp);
+        }
+    }
+    /* shadow = the live colors, so the first command can't false-trigger a save */
+    col_shadow[0] = VIC_BORDER & 0x0F;
+    col_shadow[1] = VIC_BG & 0x0F;
+    col_shadow[2] = COLOR_REG & 0x0F;
+}
+
+/* settings_save is cold and the BASIC ROM half is tighter, so park it in the
+   KERNAL half. */
+#pragma code-name (push, "CODE2")
+void settings_save(void)
+{
+    unsigned char i, n, oldest, k, j;
+    const char *s;
+
+    if (!nv_ok)
+        return;
+    nv_blob[0] = NV_MAGIC0;
+    nv_blob[1] = NV_MAGIC1;
+    nv_blob[2] = NV_VERSION;
+    nv_blob[3] = VIC_BORDER & 0x0F;
+    nv_blob[4] = VIC_BG & 0x0F;
+    nv_blob[5] = COLOR_REG & 0x0F;
+    nv_blob[6] = hist_count;
+    i = 7;
+    oldest = (unsigned char)((hist_next + HIST_N - hist_count) % HIST_N);
+    for (n = 0; n < hist_count; ++n) {
+        s = hist[(unsigned char)((oldest + n) % HIST_N)];
+        k = 0;
+        while (s[k] && k < NV_ENTRY_MAX)
+            ++k;
+        nv_blob[i++] = k;
+        for (j = 0; j < k; ++j)
+            nv_blob[i++] = s[j];
+    }
+    NV_MB_LEN = i;                       /* used length only */
+    NV_MB_LO = (unsigned char)(unsigned int)&nv_blob[0];
+    NV_MB_HI = (unsigned char)((unsigned int)&nv_blob[0] >> 8);
+    nv_write();                          /* best effort; ignore the result */
+    col_shadow[0] = nv_blob[3];
+    col_shadow[1] = nv_blob[4];
+    col_shadow[2] = nv_blob[5];
+    cmds_since_save = 0;
+}
+#pragma code-name (pop)
+
+/* After a non-empty command: save now if a color changed, else once per
+   SAVE_EVERY commands (a history checkpoint that bounds the flash-write rate). */
+static void settings_after_command(void)
+{
+    if (!nv_ok)
+        return;
+    if ((VIC_BORDER & 0x0F) != col_shadow[0] ||
+        (VIC_BG & 0x0F) != col_shadow[1] ||
+        (COLOR_REG & 0x0F) != col_shadow[2])
+        settings_save();
+    else if (++cmds_since_save >= SAVE_EVERY)
+        settings_save();
+}
+
 void main(void)
 {
     struct command_line cl;
+    unsigned char n;
 
+    settings_load();                     /* apply saved colors + replay history */
     for (;;) {
         puts_raw(prompt_str);
         chrout(' ');
-        readline();
+        n = readline();
         parse_line(line, &cl);
         dispatch(&cl);
+        if (n > 0)                       /* skip empty RETURNs */
+            settings_after_command();
     }
 }

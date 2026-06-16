@@ -441,6 +441,7 @@ void cmd_run(int argc, char *argv[])
 void cmd_exit(int argc, char *argv[])
 {
     (void)argc; (void)argv;
+    settings_save();                    /* snapshot colors + history before leaving */
     /* With a program loaded, hand it to stock BASIC intact (init-without-NEW +
        LINKPRG) and stop at READY. so it can be LISTed / RUN -- a bare cold swap
        would NEW it away. With nothing loaded, just swap: the user gets a fresh

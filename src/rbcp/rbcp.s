@@ -598,3 +598,48 @@ rbcp_cmd_nv_poke_commit_byte:
     sta rbcp_zp_1
     lda #4
     jmp rbcp_issue_cmd_long_poll
+
+; --- multi-byte NV write transaction: BEGIN, POKE (xN), COMMIT/DISCARD -------
+; Stage the whole NV image in a RAM slot, poke individual bytes (fast, staged),
+; then COMMIT once (the slow flash erase). Far less flash wear than a
+; poke_commit_byte per byte.
+
+; Caller sets: rbcp_arg0 = RAM staging slot.
+.export rbcp_cmd_nv_poke_begin
+rbcp_cmd_nv_poke_begin:
+    lda #RBCP_GRP_NV
+    sta rbcp_zp_0
+    lda #RBCP_CMD_NV_POKE_BEGIN
+    sta rbcp_zp_1
+    lda #1
+    jmp rbcp_issue_cmd
+
+; Caller sets: rbcp_arg0 = byte, rbcp_arg1 = loc_LSB, rbcp_arg2 = loc_MSB.
+.export rbcp_cmd_nv_poke
+rbcp_cmd_nv_poke:
+    lda #RBCP_GRP_NV
+    sta rbcp_zp_0
+    lda #RBCP_CMD_NV_POKE
+    sta rbcp_zp_1
+    lda #3
+    jmp rbcp_issue_cmd
+
+; Flush the staged buffer to flash (long poll -- a multi-ms erase).
+.export rbcp_cmd_nv_poke_commit
+rbcp_cmd_nv_poke_commit:
+    lda #RBCP_GRP_NV
+    sta rbcp_zp_0
+    lda #RBCP_CMD_NV_POKE_COMMIT
+    sta rbcp_zp_1
+    lda #0
+    jmp rbcp_issue_cmd_long_poll
+
+; Abandon the staged buffer (used on error before exiting CR mode).
+.export rbcp_cmd_nv_poke_discard
+rbcp_cmd_nv_poke_discard:
+    lda #RBCP_GRP_NV
+    sta rbcp_zp_0
+    lda #RBCP_CMD_NV_POKE_DISCARD
+    sta rbcp_zp_1
+    lda #0
+    jmp rbcp_issue_cmd
