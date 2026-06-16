@@ -422,6 +422,51 @@ void cmd_exit(int argc, char *argv[])
         launch_stock_program(1);        /* -> stock BASIC READY., program intact */
     rbcp_launch_stock();                /* never returns */
 }
+
+/* font [0|1] - live-switch the served character ROM between two font sets via
+   RBCP (src/rbcp/launch.s _font_apply). Font A is loadable ROM set 0 (the boot
+   set, shell KERNAL+BASIC+charset, served from RAM slot 0); font B is set 4
+   (shell KERNAL+BASIC+swedish). To switch to B we LOAD set 4 into RAM slot 2
+   (NOT the served slot 0) then SWITCH to it; to switch back we just SWITCH to
+   slot 0 (which still holds font A). RAM slot 1 stays the overlay/stock scratch.
+   No arg toggles; `font 0`/`font 1` selects. RBCP-only -- "unavailable" without
+   a One ROM. HARDWARE-VALIDATE the slot assumptions (boot serves slot 0, slot 2
+   free); the constants below are the single place to adjust them.
+   Lives in CODE2 (KERNAL ROM) like the other RBCP commands. */
+unsigned char font_apply(void);         /* launch.s; 0 = ok, nonzero = failed */
+#define FONT_MB_LOAD    (*(unsigned char *)0x02C8)
+#define FONT_MB_FLASH   (*(unsigned char *)0x02C9)
+#define FONT_MB_RAM     (*(unsigned char *)0x02CA)
+#define FONTB_FLASH_SET 4               /* loadable ROM set: shell + swedish */
+#define FONTB_RAM_SLOT  2               /* free RAM slot to stage font B into */
+#define FONTA_RAM_SLOT  0               /* the boot-served slot (font A) */
+static unsigned char font_current;      /* BSS: 0 = font A at boot */
+
+void cmd_font(int argc, char *argv[])
+{
+    unsigned char target;
+
+    target = (argc < 2) ? (font_current ^ 1) : (argv[1][0] == '1');
+    if (target != font_current) {
+        if (target) {
+            FONT_MB_LOAD = 1;
+            FONT_MB_FLASH = FONTB_FLASH_SET;
+            FONT_MB_RAM = FONTB_RAM_SLOT;
+        } else {
+            FONT_MB_LOAD = 0;
+            FONT_MB_RAM = FONTA_RAM_SLOT;
+        }
+        if (font_apply() != 0) {
+            puts_raw("font switch unavailable");
+            chrout(CR);
+            return;
+        }
+        font_current = target;
+    }
+    puts_raw("font ");
+    chrout('0' + font_current);
+    chrout(CR);
+}
 #pragma code-name (pop)
 
 /* cat / less / cp / mv / rm / save / status / cd - one multi-page "files"

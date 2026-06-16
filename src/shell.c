@@ -51,6 +51,7 @@ const struct command shell_commands[] = {
     { "edit",   cmd_edit   },
     { "exit",   cmd_exit   },
     { "fload",  cmd_fload  },
+    { "font",   cmd_font   },
     { "help",   cmd_help   },
     { "less",   cmd_less   },
     { "load",   cmd_load   },

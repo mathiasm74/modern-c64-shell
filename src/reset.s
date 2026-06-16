@@ -392,7 +392,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.43", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.44", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
         .byte "TarDOS - your modern C64 shell", 0
 banner2:

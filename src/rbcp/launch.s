@@ -30,6 +30,7 @@
 .import rbcp_cmd_get_nv_capability, rbcp_cmd_nv_peek
 .import rbcp_cmd_nv_poke_begin, rbcp_cmd_nv_poke
 .import rbcp_cmd_nv_poke_commit, rbcp_cmd_nv_poke_discard
+.import rbcp_cmd_switch_slot     ; live char-ROM (font) switch
 
 ; Where the library sits in ROM (load) and runs (run); both defined by ld65
 ; when the RBCP_CODE segment has `define = yes`.
@@ -526,6 +527,68 @@ rbcp_nv_write_tramp:
         ldx #0
         rts
 @wr_exit_fail:
+        cli
+        lda #4
+        ldx #0
+        rts
+
+; =========================================================================
+; Font (character-ROM) switch -- live SWITCH_SLOT between two served sets that
+; carry identical KERNAL/BASIC + a different char ROM (so the CPU never
+; notices; only the font the VIC reads changes). Same CR-mode + SEI +
+; run-from-RAM discipline as the overlay/NV trampolines. Params in a page-2
+; mailbox (set by the C caller):
+;   FONT_MB_LOAD ($02C8)  1 = LOAD_SLOT the set into RAM first, 0 = SWITCH only
+;   FONT_MB_FLASH ($02C9) flash (loadable ROM) set to LOAD (when LOAD=1)
+;   FONT_MB_RAM  ($02CA)  RAM slot to load-into / switch-to
+; The caller must NOT LOAD into the currently-served slot (it would rewrite the
+; live KERNAL/BASIC mid-fetch and crash), so it tracks the current font and
+; only LOADs the alternate slot. Hardware-only (inert without a One ROM).
+; =========================================================================
+FONT_MB_LOAD  = $02C8
+FONT_MB_FLASH = $02C9
+FONT_MB_RAM   = $02CA
+
+.segment "KCODE"
+.export _font_apply
+_font_apply:
+        jsr rbcp_copy_to_ram
+        jmp rbcp_font_tramp
+
+.segment "RBCP_CODE"
+rbcp_font_tramp:
+        sei
+        jsr rbcp_reset
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @ft_enter_fail
+        lda FONT_MB_LOAD
+        beq @ft_switch                  ; SWITCH only (slot already loaded)
+        lda FONT_MB_RAM                 ; LOAD_SLOT: A = RAM slot, X = flash slot
+        ldx FONT_MB_FLASH
+        jsr rbcp_cmd_load_slot
+        bcs @ft_fail
+@ft_switch:
+        lda FONT_MB_RAM
+        jsr rbcp_cmd_switch_slot        ; live activate (CPU keeps running)
+        bcs @ft_fail
+        jsr rbcp_cmd_exit_cmd_resp
+        bcs @ft_exit_fail
+        cli
+        lda #0
+        ldx #0
+        rts
+@ft_fail:
+        jsr rbcp_cmd_exit_cmd_resp      ; best effort: leave CR mode
+        cli
+        lda #3
+        ldx #0
+        rts
+@ft_enter_fail:
+        cli
+        lda #1
+        ldx #0
+        rts
+@ft_exit_fail:
         cli
         lda #4
         ldx #0

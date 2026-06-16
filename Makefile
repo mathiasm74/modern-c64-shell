@@ -221,7 +221,12 @@ onerom: $(BASIC) $(KERNAL)
 # released sources, drop them in yourself (gitignored).
 ONEROM_STOCK_BASIC  := stock-roms/basic.901226-01.bin
 ONEROM_STOCK_KERNAL := stock-roms/kernal.901227-03.bin
-onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(OVERLAY_SETS)
+# Character ROMs served on a 3rd chip-select (the char socket /CS); the `font`
+# command live-switches between them. User-supplied (gitignored).
+ONEROM_CHARSET_A    := stock-roms/c64-charset.bin
+ONEROM_CHARSET_B    := stock-roms/c64-swedish4.bin
+ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(ONEROM_CHARSET_A) $(ONEROM_CHARSET_B) $(OVERLAY_SETS)
+onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) \
 		--config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
@@ -230,7 +235,7 @@ onerom-stock: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(
 # Build the bank-swap firmware AND flash a connected One ROM, then reboot it
 # into running mode. Same shape as onerom-flash, but uses cfg/onerom-stock.json
 # so the device gets host-control + the stock-ROM second bank.
-onerom-stock-flash: $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(OVERLAY_SETS)
+onerom-stock-flash: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin

@@ -435,6 +435,21 @@ rbcp_cmd_load_slot:
     lda #2
     jmp rbcp_issue_cmd
 
+; rbcp_cmd_switch_slot: A = RAM slot to make the active/served slot. Unlike
+; switch_and_exit this stays in command-response mode (so the caller can keep
+; issuing commands and then exit cleanly). Live: the bus keeps being served, so
+; switching between two sets that carry identical KERNAL/BASIC doesn't disturb
+; the running CPU.
+.export rbcp_cmd_switch_slot
+rbcp_cmd_switch_slot:
+    sta rbcp_arg0
+    lda #RBCP_GRP_MODIFY
+    sta rbcp_zp_0
+    lda #RBCP_CMD_SWITCH_SLOT
+    sta rbcp_zp_1
+    lda #1
+    jmp rbcp_issue_cmd
+
 ; rbcp_cmd_switch_and_exit: A = RAM slot. Send only, no polling.
 .export rbcp_cmd_switch_and_exit
 rbcp_cmd_switch_and_exit:
