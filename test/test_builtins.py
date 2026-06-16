@@ -53,7 +53,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("TarDOS v0.42")
+    v.assert_screen_contains("TarDOS v0.43")
 
 
 def test_echo_prints_arguments(v):

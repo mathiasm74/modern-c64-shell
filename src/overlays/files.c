@@ -13,7 +13,7 @@
  * Mailbox from the thunk ($02D0):
  *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 6 status, 7 cd,
  *         8 border, 9 bg, 10 text, 11 prompt, 12 peek, 13 poke, 14 echo,
- *         15 help  (5 was save, removed)
+ *         15 help, 16 device  (5 was save, removed)
  *   [1]   device (FA)
  *   [2]   arg1 length, [3..18] arg1 (<=16 chars)
  *   [19]  arg2 length, [20..35] arg2 (<=16 chars)
@@ -535,6 +535,64 @@ static void do_help(void)
     }
 }
 
+/* device <n> [name] (cmd 16): switch the default IEC unit. default_device and
+   device_name[8][11] STAY resident (read by every disk command + pwd); the
+   thunk passes their addresses ($02F4 / $02F6) so we update them in place.
+   Probe via KERNAL OPEN ("$" on the unit -> ST_NODEV if nothing answers). */
+#define DEVADDR        (*(unsigned char **)0x02F4)   /* &default_device */
+#define DNADDR         (*(char **)0x02F6)            /* &device_name[0][0] */
+#define DEVNAME_STRIDE 11                            /* DEVNAME_MAX(10) + 1 */
+
+static unsigned char device_present_ov(unsigned char dev)
+{
+    unsigned char absent;
+
+    k_setnam("$", 1);
+    k_setlfs(dev, 0);
+    k_open();
+    absent = STREG & ST_NODEV;
+    k_close();                          /* release the channel (abort if absent) */
+    k_clrchn();
+    return absent ? 0 : 1;
+}
+
+static void do_device(void)
+{
+    unsigned char dev, i;
+    char *slot;
+
+    if (A1L == 0) {
+        puts_raw("usage: device <n> [name]");
+        crlf();
+        return;
+    }
+    dev = (unsigned char)parse_num16(A1, A1L);
+    if (!device_present_ov(dev)) {      /* don't switch to a unit that isn't there */
+        puts_raw("device ");
+        put_uint(dev);
+        puts_raw(" not present");
+        crlf();
+        return;
+    }
+    *DEVADDR = dev;                     /* default_device = dev */
+    if (A2L > 0 && dev >= 8 && dev <= 15) {
+        slot = DNADDR + (dev - 8) * DEVNAME_STRIDE;
+        for (i = 0; i < A2L && i < 10; ++i)
+            slot[i] = A2[i];
+        slot[i] = 0;
+    }
+    puts_raw("device ");
+    put_uint(dev);
+    if (dev >= 8 && dev <= 15) {
+        slot = DNADDR + (dev - 8) * DEVNAME_STRIDE;
+        if (slot[0]) {
+            k_chrout(' ');
+            puts_raw(slot);
+        }
+    }
+    crlf();
+}
+
 void files_main(void)
 {
     unsigned char cmd = MB_CMD;
@@ -564,6 +622,8 @@ void files_main(void)
         do_echo();
     else if (cmd == 15)
         do_help();
+    else if (cmd == 16)
+        do_device();
     else
         scratch();                      /* rm */
 }

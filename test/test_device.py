@@ -10,7 +10,7 @@ real drive to answer). Device 9 is deliberately absent. These commands are
 read-only (the probe just opens "$"), so the tracked fixture is fine.
 """
 
-from lib.overlays import seed_dir
+from lib.overlays import seed_dir, seed_files
 
 VICE_DISK = "data/test.d64"
 
@@ -42,6 +42,7 @@ def test_absent_device_reports_and_stays_put(v):
     # unchanged default (8) still works, proving we stayed put and that the
     # partial probe didn't poison the real drive. (Regression: the bus had no
     # send-path timeout, so this hung forever.)
+    seed_files(v)                           # device is a files-overlay command
     _type(v, "device 9", clear=True)
     assert _wait_for(v, "device 9 not present"), \
         "absent device not reported with its number\n%s" % v.screen_text()
@@ -59,6 +60,7 @@ def test_device_names_present_device(v):
     # Naming works for a unit that's actually there: name 8 "fd" (split across
     # two keyboard-buffer loads -- "device 8 fd" is 11 chars), confirm, then
     # `device 8` alone recalls the name.
+    seed_files(v)
     v.write_memory(0x0277, _ch("device 8 "))
     v.write_byte(0x00C6, 9)
     v.run_for(0.3)
@@ -67,6 +69,7 @@ def test_device_names_present_device(v):
     assert _wait_for(v, "device 8 fd"), \
         "device did not confirm the name for a present unit\n%s" % v.screen_text()
 
+    seed_files(v)
     _type(v, "device 8", clear=True)        # no name given -> recalls "fd"
     assert _wait_for(v, "device 8 fd"), \
         "device 8 did not recall the remembered name\n%s" % v.screen_text()

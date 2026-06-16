@@ -56,17 +56,6 @@ static const char *current_device_name(void)
     return "";
 }
 
-/* Parse a small decimal number (the device number). */
-static unsigned char parse_dec(const char *s)
-{
-    unsigned char v = 0;
-
-    while (*s >= '0' && *s <= '9') {
-        v = v * 10 + (*s - '0');
-        ++s;
-    }
-    return v;
-}
 
 /* Print an unsigned int in decimal (block counts are small, but the
    blocks-free line can reach a few hundred). */
@@ -111,25 +100,8 @@ static void report_no_device(unsigned char dev)
     chrout(CR);
 }
 
-/* Probe whether `dev` is on the bus: open its directory and look for the
-   no-device timeout, then leave the bus idle. Returns 1 if it answered. A
-   present-but-diskless drive still counts as present (it acknowledges; "no
-   disk" only surfaces when something tries to read). Opening "$" is harmless
-   and read-only; the open's own bus cleanup (broadcast UNLISTEN/UNTALK on a
-   timeout) leaves any *other* present device idle. */
-static unsigned char device_present(unsigned char dev)
-{
-    unsigned char absent;
-
-    iec_set_fa(dev);
-    iec_set_sa(0);
-    iec_setname("$");
-    iec_open();
-    absent = iec_status() & ST_NODEV;
-    iec_close();                /* release the channel (sends abort if absent) */
-    iec_clrchn();
-    return absent ? 0 : 1;
-}
+/* (device's bus probe moved into the files overlay -- it uses the KERNAL OPEN
+   shim there; see do_device / device_present_ov in src/overlays/files.c.) */
 /* dir / ls / pwd -- the "dir" tardis overlay (src/overlays/dir.c). These need
    the lower-level IEC bus and the badline-paced Epyx receiver (not KERNAL
    entry points), so the overlay reaches them through the $FF80 services table
@@ -555,33 +527,10 @@ void cmd_status(int argc, char *argv[])
    `device <n>` is later given without one. */
 void cmd_device(int argc, char *argv[])
 {
-    unsigned char dev;
-    const char *name;
-
-    if (argc < 2) {
-        puts_raw("usage: device <n> [name]");
-        chrout(CR);
-        return;
-    }
-    dev = parse_dec(argv[1]);
-    if (!device_present(dev)) {         /* don't switch to a unit that isn't there */
-        report_no_device(dev);
-        return;
-    }
-    default_device = dev;
-    if (argc >= 3 && default_device >= DEV_MIN && default_device <= DEV_MAX) {
-        char *slot = device_name[default_device - DEV_MIN];
-        unsigned char i;
-        for (i = 0; argv[2][i] && i < DEVNAME_MAX; ++i)
-            slot[i] = argv[2][i];
-        slot[i] = 0;
-    }
-    puts_raw("device ");
-    print_uint(default_device);
-    name = current_device_name();
-    if (name[0]) {
-        chrout(' ');
-        puts_raw(name);
-    }
-    chrout(CR);
+    /* The parse/probe/report is in the files overlay (cmd 16). default_device
+       and device_name stay resident (read everywhere), so pass their addresses
+       in the mailbox for the overlay to update in place. */
+    *(unsigned char **)0x02F4 = &default_device;
+    *(char **)0x02F6 = &device_name[0][0];
+    files_run(16, argc > 1 ? argv[1] : 0, argc >= 3 ? argv[2] : 0);
 }
