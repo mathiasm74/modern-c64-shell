@@ -12,7 +12,8 @@
  *
  * Mailbox from the thunk ($02D0):
  *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 6 status, 7 cd,
- *         8 border, 9 bg, 10 text, 11 prompt  (5 was save, removed)
+ *         8 border, 9 bg, 10 text, 11 prompt, 12 peek, 13 poke, 14 echo,
+ *         15 help  (5 was save, removed)
  *   [1]   device (FA)
  *   [2]   arg1 length, [3..18] arg1 (<=16 chars)
  *   [19]  arg2 length, [20..35] arg2 (<=16 chars)
@@ -393,6 +394,147 @@ static void set_prompt_cmd(void)
     svc_set_prompt(buf);
 }
 
+/* ---- peek / poke / echo / help: resident commands moved here (cmd 12-15) -- */
+
+/* parse an A1/A2 buffer (ptr + len, not NUL-terminated): hex if it starts with
+   '$', else decimal. Same convention as the resident mem.c parser. */
+static unsigned int parse_num16(const char *s, unsigned char len)
+{
+    unsigned int v = 0;
+    unsigned char i;
+    char c;
+
+    if (len && s[0] == '$') {
+        for (i = 1; i < len; ++i) {
+            c = s[i];
+            if (c >= '0' && c <= '9') v = (v << 4) | (c - '0');
+            else if (c >= 'a' && c <= 'f') v = (v << 4) | (c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') v = (v << 4) | (c - 'A' + 10);
+            else break;
+        }
+    } else {
+        for (i = 0; i < len; ++i) {
+            c = s[i];
+            if (c < '0' || c > '9') break;
+            v = v * 10 + (c - '0');
+        }
+    }
+    return v;
+}
+
+static void put_hnyb(unsigned char n)
+{
+    n &= 0x0F;
+    k_chrout(n < 10 ? '0' + n : 'a' + (n - 10));
+}
+static void put_hex8(unsigned char b) { put_hnyb(b >> 4); put_hnyb(b); }
+static void put_hex16(unsigned int v)
+{
+    put_hex8((unsigned char)(v >> 8));
+    put_hex8((unsigned char)v);
+}
+
+/* peek <addr> [count]: one byte, or a count-byte hexdump (8/row, addr label). */
+static void do_peek(void)
+{
+    unsigned int addr, count, i;
+    unsigned char col;
+
+    if (A1L == 0) {
+        puts_raw("usage: peek <addr> [count] ($=hex)");
+        crlf();
+        return;
+    }
+    addr = parse_num16(A1, A1L);
+    if (A2L == 0) {
+        k_chrout('$');
+        put_hex8(*(unsigned char *)addr);
+        crlf();
+        return;
+    }
+    count = parse_num16(A2, A2L);
+    if (count == 0)
+        count = 1;
+    col = 0;
+    for (i = 0; i < count; ++i) {
+        if (col == 0) {
+            k_chrout('$');
+            put_hex16(addr + i);
+            k_chrout(':');
+        }
+        k_chrout(' ');
+        put_hex8(*(unsigned char *)(addr + i));
+        if (++col == 8) {
+            crlf();
+            col = 0;
+        }
+    }
+    if (col != 0)
+        crlf();
+}
+
+/* poke <addr> <val>. */
+static void do_poke(void)
+{
+    if (A1L == 0 || A2L == 0) {
+        puts_raw("usage: poke <addr> <val> ($=hex)");
+        crlf();
+        return;
+    }
+    *(unsigned char *)parse_num16(A1, A1L) = (unsigned char)parse_num16(A2, A2L);
+}
+
+/* echo: the resident thunk joined argv[1..] into $0340 (length in A1L). */
+static void do_echo(void)
+{
+    const char *s = (const char *)0x0340;
+    unsigned char i;
+
+    for (i = 0; i < A1L; ++i)
+        k_chrout(s[i]);
+    crlf();
+}
+
+/* help: list every command in 3 column-major columns. The thunk passed the
+   dispatch-table base ($02E4, struct command*) and entry count ($02E6).
+   struct command = {const char *name; void (*fn)();} -> 4 bytes, name at +0. */
+#define HELP_TABLE  (*(const char **)0x02E4)
+#define HELP_COUNT  (*(const unsigned char *)0x02E6)
+#define HELP_INDENT 2
+#define HELP_COLS   3
+#define HELP_COL_W  12
+static void do_help(void)
+{
+    unsigned char count = HELP_COUNT;
+    unsigned char rows = (count + HELP_COLS - 1) / HELP_COLS;
+    unsigned char row, col, n, i;
+    const char *base = HELP_TABLE;
+    const char *name;
+
+    puts_raw("Commands:");
+    crlf();
+    for (row = 0; row < rows; ++row) {
+        for (n = 0; n < HELP_INDENT; ++n)
+            k_chrout(' ');
+        for (col = 0; col < HELP_COLS; ++col) {
+            i = col * rows + row;
+            if (i >= count)
+                break;
+            name = *(const char **)(base + i * 4);
+            n = 0;
+            while (name[n]) {
+                k_chrout(name[n]);
+                ++n;
+            }
+            while (n < HELP_COL_W) {
+                k_chrout(' ');
+                ++n;
+            }
+        }
+        crlf();
+    }
+}
+
 void files_main(void)
 {
     unsigned char cmd = MB_CMD;
@@ -414,6 +556,14 @@ void files_main(void)
         set_color(cmd - 8);             /* border / bg / text */
     else if (cmd == 11)
         set_prompt_cmd();               /* prompt */
+    else if (cmd == 12)
+        do_peek();
+    else if (cmd == 13)
+        do_poke();
+    else if (cmd == 14)
+        do_echo();
+    else if (cmd == 15)
+        do_help();
     else
         scratch();                      /* rm */
 }

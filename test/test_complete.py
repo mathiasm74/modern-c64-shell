@@ -6,6 +6,8 @@ or unknown prefixes are left untouched. (Physically, the CTRL key emits $09 --
 GUI-only; the logic here is driven by injecting $09 into the buffer.)
 """
 
+from lib.overlays import seed_files
+
 TAB = 0x09
 CR = 0x0D
 CLEAR = 0x93
@@ -22,7 +24,9 @@ def _ch(s):
 
 
 def test_unique_prefix_completes(v):
-    # "he" -> "help " -> help runs and prints its header.
+    # "he" -> "help " -> help runs and prints its header. help is a files-overlay
+    # command now, so seed it.
+    seed_files(v)
     _send(v, [CLEAR] + _ch("he") + [TAB, CR])
     v.assert_screen_contains("Commands")
 

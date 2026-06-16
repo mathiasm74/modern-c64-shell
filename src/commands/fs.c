@@ -469,7 +469,7 @@ void cmd_exit(int argc, char *argv[])
 #define FB_A2L (*(unsigned char *)0x02E3)
 #define FB_A2  ((unsigned char *)0x02E4)        /* 16 chars */
 
-static void files_run(unsigned char cmd, const char *a1, const char *a2)
+void files_run(unsigned char cmd, const char *a1, const char *a2)
 {
     unsigned char n;
 

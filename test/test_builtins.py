@@ -15,12 +15,15 @@ parser's quoted-string handling or its behavior on very long (truncated)
 lines; those are covered by reading the code, not by an integration test.
 """
 
+from lib.overlays import seed_files
+
 CLEAR = 0x93
 CR = 0x0D
 
 
 def _type(v, text):
-    """Clear the screen, type `text`, press RETURN."""
+    """Seed the files overlay (help/echo live there now), clear, type, RETURN."""
+    seed_files(v)
     codes = [CLEAR] + [ord(c) for c in text] + [CR]
     assert len(codes) <= 10, "line exceeds the 10-byte keyboard buffer: %r" % text
     v.write_memory(0x0277, codes)
@@ -30,6 +33,7 @@ def _type(v, text):
 
 def _type_no_clear(v, text):
     """Type `text` and press RETURN without clearing first."""
+    seed_files(v)
     codes = [ord(c) for c in text] + [CR]
     assert len(codes) <= 10, "line exceeds the 10-byte keyboard buffer: %r" % text
     v.write_memory(0x0277, codes)

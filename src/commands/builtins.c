@@ -7,6 +7,7 @@
  */
 #include "shell.h"
 #include "commands/builtins.h"
+#include "commands/overlay.h"     /* run_files_overlay (help/echo thunks) */
 
 #define CR    0x0D             /* RETURN / newline */
 #define CLEAR 0x93             /* CHROUT clear-screen control code */
@@ -14,48 +15,17 @@
 /* in c_io.s: reboot through the reset vector; does not return. */
 void soft_reset(void);
 
-/* List every registered command, read straight from the dispatch table (which
-   shell.c keeps sorted alphabetically) so the columns read top-to-bottom,
-   left-to-right. Three 12-wide columns indented 2 spaces fits in 40: 2 + 3*12
-   = 38, leaving a 2-column right margin. The function lives in CODE2 (KERNAL
-   ROM) so its bytes don't squeeze the smaller BASIC ROM. */
-#define HELP_INDENT  2
-#define HELP_COLS    3
-#define HELP_COL_W  12
-
-#pragma code-name (push, "CODE2")
+/* List every registered command. The 3-column column-major formatting is in
+   the files overlay (cmd 15); this thunk just hands it the dispatch table's
+   base and entry count (the overlay walks the const struct command[]). */
 void cmd_help(int argc, char *argv[])
 {
-    unsigned char rows, row, col, i, n;
-    const char *name;
     (void)argc; (void)argv;
-
-    rows = (shell_command_count + HELP_COLS - 1) / HELP_COLS;
-    puts_raw("Commands:");
-    chrout(CR);
-    for (row = 0; row < rows; ++row) {
-        for (n = 0; n < HELP_INDENT; ++n)
-            chrout(' ');
-        for (col = 0; col < HELP_COLS; ++col) {
-            i = col * rows + row;
-            if (i >= shell_command_count)
-                break;
-            name = shell_commands[i].name;
-            n = 0;
-            while (name[n]) {
-                chrout(name[n]);
-                ++n;
-            }
-            while (n < HELP_COL_W) {
-                chrout(' ');
-                ++n;
-            }
-        }
-        chrout(CR);
-    }
+    *(unsigned char *)0x02D0 = 15;                              /* FB_CMD */
+    *(unsigned int *)0x02E4 = (unsigned int)&shell_commands[0]; /* table base */
+    *(unsigned char *)0x02E6 = shell_command_count;             /* entry count */
+    run_files_overlay();
 }
-
-#pragma code-name (pop)
 
 void cmd_clear(int argc, char *argv[])
 {
@@ -63,17 +33,24 @@ void cmd_clear(int argc, char *argv[])
     chrout(CLEAR);
 }
 
-/* Print the arguments separated by single spaces, then a newline -- so
-   `echo a   b` prints "a b": the parser has already collapsed the run. */
+/* Print the arguments separated by single spaces, then a newline. The body is
+   in the files overlay (cmd 14); this thunk joins argv[1..] into $0340 (length
+   in the A1L mailbox byte) for it to print. */
 void cmd_echo(int argc, char *argv[])
 {
-    int i;
-    for (i = 1; i < argc; ++i) {
-        if (i > 1)
-            chrout(' ');
-        puts_raw(argv[i]);
+    unsigned char *buf = (unsigned char *)0x0340;
+    unsigned char n = 0, i;
+    int a;
+
+    for (a = 1; a < argc; ++a) {
+        if (a > 1 && n < 79)
+            buf[n++] = ' ';
+        for (i = 0; argv[a][i] && n < 79; ++i)
+            buf[n++] = argv[a][i];
     }
-    chrout(CR);
+    *(unsigned char *)0x02D0 = 14;      /* FB_CMD */
+    *(unsigned char *)0x02D2 = n;       /* FB_A1L = joined length */
+    run_files_overlay();
 }
 
 /* ver parks its code + string in the KERNAL ROM (CODE2/RODATA2): the BASIC ROM
