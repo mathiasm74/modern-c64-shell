@@ -12,7 +12,7 @@
 .import pet2scr                 ; ASCII -> screen code (shared with CHROUT)
 .import iec_init                ; serial bus port setup
 .import _rbcp_launch_stock      ; RBCP: swap the One ROM to the stock ROMs
-.import _nv_capability, _nv_read ; RBCP: read saved settings from NV flash
+.import _nv_read                ; RBCP: read saved settings from NV flash
 .importzp DFLTN, DFLTO, LDTND   ; default I/O channels (kernal_stubs.s)
 
 ; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
@@ -355,9 +355,11 @@ NV_MB_LEN = $02C4               ; NV read mailbox (src/rbcp/launch.s)
 NV_MB_LO  = $02C5
 NV_MB_HI  = $02C6
 restore_colors:
-        jsr _nv_capability
-        cmp #1
-        bne @rc_done            ; no writable NV present
+        ; One RBCP session only: just read the 6-byte header. No separate
+        ; capability probe -- it only matters for *writing*, and a failed read
+        ; already means "no usable NV". Each NV call re-copies the whole RBCP
+        ; library to RAM (~ms), so halving the calls halves the pre-display
+        ; delay. (settings_load() in main() still probes capability for saves.)
         lda #6
         sta NV_MB_LEN
         lda #<COLORBUF
@@ -366,7 +368,7 @@ restore_colors:
         sta NV_MB_HI
         jsr _nv_read
         cmp #0
-        bne @rc_done            ; read failed
+        bne @rc_done            ; read failed (no NV) -> keep the defaults
         lda COLORBUF+0
         cmp #$54                ; 'T'
         bne @rc_done
