@@ -24,6 +24,9 @@ ROWBITS   = $F8
 found_key = $F9         ; matrix code found this scan ($FF = none)
 SHFLAG    = $028D       ; nonzero while a SHIFT key is held this scan
 RPTCNT    = $028C       ; key-repeat countdown: initial delay, then rate
+KBD_LAYOUT = $02CB      ; 0 = default/US tables, 1 = Swedish (keytab_se). Set by
+                        ; the `font` command in tandem with the charset; cleared
+                        ; at boot in reset.s.
 
 KEY_DELAY = 30          ; ticks a key is held before it starts repeating (~0.5s)
 KEY_RATE  = 4           ; ticks between repeats once repeating (~15/s)
@@ -141,14 +144,14 @@ scan_keyboard:
         lda SHFLAG
         and #$02                ; CBM held?
         bne @viacbm
-        lda keytab,x            ; unshifted decode
+        jsr decode_unshift      ; unshifted decode (US or Swedish table)
         jmp @emit
 @viactrl:
         ; CTRL+letter emits the ASCII control code ($01-$1A), nano-style:
         ; ^k = $0B, ^x = $18, ... and ^i = $09 keeps TAB (and so the shell's
         ; tab completion) reachable. CTRL with a non-letter emits the plain
         ; unshifted character.
-        lda keytab,x
+        jsr decode_unshift
         cmp #'a'
         bcc @emit               ; below 'a': emit as-is
         cmp #'z'+1
@@ -156,8 +159,8 @@ scan_keyboard:
         and #$1F                ; fold to the control code
         jmp @emit
 @shifted:
-        lda keytab_shift,x      ; shifted decode: uppercase, !"#$ symbols,
-        jmp @emit               ; <>?[] punctuation, cursor left/up, CLR, ...
+        jsr decode_shift        ; shifted decode (US or Swedish table):
+        jmp @emit               ; uppercase, !"#$, <>?[], cursor left/up, CLR, ...
 @viacbm:
         ; VICE's symbolic keymap sends host '_' as @+CBM (the only CBM combo
         ; it uses); decode that one to underscore and ignore the rest.
@@ -176,6 +179,29 @@ scan_keyboard:
         lda #$FF
         sta LSTX                ; released -> next press will register
 @ret:
+        rts
+
+; -------------------------------------------------------------------------
+; decode_unshift / decode_shift - matrix code in X -> ASCII/PETSCII in A,
+; selecting the US or Swedish table per KBD_LAYOUT. Preserves X (the caller
+; still needs it); clobbers A and Y. ROM tables can't be self-modified, so we
+; branch on the layout byte instead of patching the load operand.
+; -------------------------------------------------------------------------
+decode_unshift:
+        ldy KBD_LAYOUT
+        beq @us
+        lda keytab_se,x
+        rts
+@us:
+        lda keytab,x
+        rts
+decode_shift:
+        ldy KBD_LAYOUT
+        beq @us
+        lda keytab_se_shift,x
+        rts
+@us:
+        lda keytab_shift,x
         rts
 
 ; -------------------------------------------------------------------------
@@ -217,4 +243,44 @@ keytab_shift:
         .byte $29,$49,$4A,$30,$4D,$4B,$4F,$4E   ; ) I J 0 M K O N
         .byte $2B,$50,$4C,$2D,$3E,$5B,$40,$3C   ; + P L - > [ @ <
         .byte $5C,$2A,$5D,$93,$00,$3D,$5E,$3F   ; POUND * ] CLR RSHIFT = ^ ?
+        .byte $21,$5F,$00,$22,$20,$00,$51,$03   ; ! <- CTRL(mod) " SPC CBM Q STOP
+
+; -------------------------------------------------------------------------
+; keytab_se / keytab_se_shift - the Swedish physical keyboard (used with the
+; Swedish charset; see the `font` command). Transcribed from the Swedish C64
+; keycap layout. Only the symbol cluster and three letter keys differ from the
+; US tables above; digits, letters and the bottom row are identical.
+;
+;   matrix 46 (US '@')  -> ae : $5B unshift (ae) / $DB shift (Ae)
+;   matrix 45 (US ':')  -> oe : $5C unshift (oe) / $DC shift (Oe)
+;   matrix 50 (US ';')  -> aring: $5D unshift (aring) / $DD shift (Aring)
+; The lowercase codes $5B/$5C/$5D are the same '[' '\' ']' bytes the Swedish
+; charset draws as ae/oe/aring; the shift codes $DB-$DD reach the uppercase
+; glyphs via pet2scr (-$80 -> screen $5B-$5D). Displaced symbols relocate so
+; '@'(49) ':'(48) '*'(shift-48) ';'(53) '+'(shift-53) '-'(40) '='(43) stay
+; reachable; '[' ']' POUND are unreachable in Swedish mode (they're the
+; letters now). HARDWARE-VALIDATE the matrix positions on the real keyboard;
+; adjust the bytes below if a keycap lands elsewhere.
+; -------------------------------------------------------------------------
+.export keytab_se
+.export keytab_se_shift
+
+keytab_se:
+        .byte $14,$0D,$1D,$88,$85,$86,$87,$11   ; DEL RET CR> F7 F1 F3 F5 CR\/
+        .byte $33,$77,$61,$34,$7A,$73,$65,$00   ; 3 w a 4 z s e LSHIFT
+        .byte $35,$72,$64,$36,$63,$66,$74,$78   ; 5 r d 6 c f t x
+        .byte $37,$79,$67,$38,$62,$68,$75,$76   ; 7 y g 8 b h u v
+        .byte $39,$69,$6A,$30,$6D,$6B,$6F,$6E   ; 9 i j 0 m k o n
+        .byte $2D,$70,$6C,$3D,$2E,$5C,$5B,$2C   ; - p l = . oe ae ,
+        .byte $3A,$40,$5D,$13,$00,$3B,$5E,$2F   ; : @ aring HOME RSHIFT ; ^ /
+        .byte $31,$5F,$00,$32,$20,$00,$71,$03   ; 1 <- CTRL(mod) 2 SPC CBM q STOP
+
+keytab_se_shift:
+        .byte $14,$0D,$9D,$8C,$89,$8A,$8B,$91   ; DEL RET CRSR-L F8 F2 F4 F6 CRSR-U
+        .byte $23,$57,$41,$24,$5A,$53,$45,$00   ; # W A $ Z S E LSHIFT
+        .byte $25,$52,$44,$26,$43,$46,$54,$58   ; % R D & C F T X
+        .byte $27,$59,$47,$28,$42,$48,$55,$56   ; ' Y G ( B H U V
+        .byte $29,$49,$4A,$30,$4D,$4B,$4F,$4E   ; ) I J 0 M K O N
+        .byte $2D,$50,$4C,$3D,$3E,$DC,$DB,$3C   ; - P L = > Oe Ae <
+        .byte $2A,$40,$DD,$93,$00,$2B,$5E,$3F   ; * @ Aring CLR RSHIFT + ^ ?
         .byte $21,$5F,$00,$22,$20,$00,$51,$03   ; ! <- CTRL(mod) " SPC CBM Q STOP

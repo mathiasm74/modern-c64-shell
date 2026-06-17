@@ -74,6 +74,7 @@ COLOR      = $0286              ; current text color
 ; --- Keyboard state (shared with irq.s) ----------------------------------
 LSTX       = $C5                ; matrix code of the last key ($FF = none)
 NDX        = $C6                ; keyboard buffer count
+KBD_LAYOUT = $02CB              ; 0 = US/symbolic tables, 1 = Swedish (irq.s)
 
 ; --- Constants -----------------------------------------------------------
 COLOR_BLACK  = $00
@@ -227,6 +228,7 @@ reset:
         ; --- Keyboard state: empty buffer, no key held -------------------
         lda #$00
         sta NDX
+        sta KBD_LAYOUT          ; default to the US/symbolic key tables
         lda #$FF
         sta LSTX
 
@@ -392,7 +394,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.44", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.45", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
         .byte "TarDOS - your modern C64 shell", 0
 banner2:

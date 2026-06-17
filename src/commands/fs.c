@@ -440,6 +440,7 @@ unsigned char font_apply(void);         /* launch.s; 0 = ok, nonzero = failed */
 #define FONTB_FLASH_SET 4               /* loadable ROM set: shell + swedish */
 #define FONTB_RAM_SLOT  2               /* free RAM slot to stage font B into */
 #define FONTA_RAM_SLOT  0               /* the boot-served slot (font A) */
+#define KBD_LAYOUT      (*(unsigned char *)0x02CB) /* irq.s key-table selector */
 static unsigned char font_current;      /* BSS: 0 = font A at boot */
 
 void cmd_font(int argc, char *argv[])
@@ -462,6 +463,9 @@ void cmd_font(int argc, char *argv[])
             return;
         }
         font_current = target;
+        /* The Swedish charset (font B) pairs with the Swedish key tables so
+           the relabelled keycaps type the right glyphs; font A is US. */
+        KBD_LAYOUT = target;
     }
     puts_raw("font ");
     chrout('0' + font_current);

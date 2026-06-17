@@ -295,9 +295,16 @@ do_scroll:
 ;   $41-$5A 'A'-'Z'                   -> unchanged ($41-$5A = uppercase glyphs)
 ;   $5B-$5F  [ \ ] ^ _                -> -$40 ($1B-$1F)
 ;   $60-$7F  'a'-'z' and friends      -> -$60 ($61-$7A 'a'-'z' -> $01-$1A)
+;   $DB-$DD  uppercase Swedish A E O  -> -$80 ($5B-$5D = AE/OE/Aring in the
+;            (Ae Oe Aring)                Swedish charset's lower set)
+; The lowercase swedish letters reuse $5B-$5D ('[' '\' ']') -> $1B-$1D, which
+; the Swedish charset draws as ae/oe/aring; the uppercase variants live at the
+; $5B-$5D screen codes, reached here from PETSCII $DB-$DD (= lowercase + $80).
 ; Preserves X and Y; clobbers A only.
 ; -------------------------------------------------------------------------
 pet2scr:
+        cmp #$DB
+        bcs @hi                 ; $DB-$FF: uppercase Swedish range (see @hi)
         cmp #$40
         bcc @keep               ; $20-$3F: screen code == byte
         beq @at                 ; $40 '@' -> $00
@@ -315,6 +322,12 @@ pet2scr:
         sec
         sbc #$40
 @keep:
+        rts
+@hi:                            ; A >= $DB
+        cmp #$DE
+        bcs @keep               ; $DE-$FF: not ours -> leave unchanged
+        sec
+        sbc #$80                ; $DB/$DC/$DD -> $5B/$5C/$5D (upper Ae/Oe/Aring)
         rts
 
 ; --- per-row screen-line address tables (low/high bytes) -----------------
