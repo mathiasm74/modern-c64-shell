@@ -1,12 +1,12 @@
-"""The built-in commands: help, clear, echo, ver (Phase 5).
+"""The built-in commands: help, clear, ver (Phase 5).
 
 Each test injects a command into the keyboard buffer (the path GETIN reads)
 and asserts on the shell's response. Most start with a clear ($93) keystroke
 so the command runs from a known, empty screen regardless of the boot banner.
 
 To tell a command's *output* apart from the shell echoing the typed input
-(readline echoes every character), the echo tests count occurrences: a word
-typed as an argument and then printed by the command appears at least twice.
+(readline echoes every character), tests look for output a typed command can't
+itself produce (e.g. ver's banner text, or a word printed more than once).
 
 Harness limit: the C64 keyboard buffer is 10 bytes, so an injected line --
 including the leading clear and the trailing RETURN -- can be at most 10
@@ -46,22 +46,15 @@ def test_help_lists_every_command(v):
     _type(v, "help")
     txt = v.screen_text()
     assert "Commands" in txt, "help did not print its header"
-    for name in ("help", "clear", "echo", "ver", "exit"):
+    for name in ("help", "clear", "ver", "exit"):
         assert name in txt, "help did not list %s" % name
 
 
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("TarDOS v0.46")
+    v.assert_screen_contains("TarDOS v0.47")
 
-
-def test_echo_prints_arguments(v):
-    # "echo a b" -> the args print as "a b" (single-spaced). The typed line is
-    # echoed too, so "a b" should appear at least twice; once would mean echo
-    # produced nothing.
-    _type(v, "echo a b")
-    assert v.screen_text().count("a b") >= 2, "echo did not print its arguments"
 
 # `exit` is no longer a builtin: it now swaps the One ROM to the stock C64 ROMs
 # (cmd_exit in fs.c, formerly `runstock`). Like run/runstock that swap is
@@ -70,12 +63,12 @@ def test_echo_prints_arguments(v):
 
 
 def test_clear_command_wipes_screen(v):
-    # First put something on screen, then let the clear *command* (not a clear
-    # keystroke) wipe it.
-    _type(v, "echo zap")
-    assert "zap" in v.screen_text(), "echo output should be on screen first"
+    # First put something on screen (ver's banner output), then let the clear
+    # *command* (not a clear keystroke) wipe it.
+    _type(v, "ver")
+    assert "TarDOS v" in v.screen_text(), "ver output should be on screen first"
     _type_no_clear(v, "clear")
-    assert "zap" not in v.screen_text(), "clear command did not wipe the screen"
+    assert "TarDOS v" not in v.screen_text(), "clear command did not wipe the screen"
 
 
 def test_leading_whitespace_still_dispatches(v):

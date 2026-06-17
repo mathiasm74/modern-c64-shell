@@ -12,8 +12,8 @@
  *
  * Mailbox from the thunk ($02D0):
  *   [0]   command: 0 cat, 1 less, 2 cp, 3 mv, 4 rm, 6 status, 7 cd,
- *         8 border, 9 bg, 10 text, 11 prompt, 12 peek, 13 poke, 14 echo,
- *         15 help, 16 device  (5 was save, removed)
+ *         8 border, 9 bg, 10 text, 11 prompt, 12 peek, 13 poke,
+ *         15 help, 16 device  (5 was save, 14 was echo; both removed)
  *   [1]   device (FA)
  *   [2]   arg1 length, [3..18] arg1 (<=16 chars)
  *   [19]  arg2 length, [20..35] arg2 (<=16 chars)
@@ -394,7 +394,7 @@ static void set_prompt_cmd(void)
     svc_set_prompt(buf);
 }
 
-/* ---- peek / poke / echo / help: resident commands moved here (cmd 12-15) -- */
+/* ---- peek / poke / help: resident commands moved here (cmd 12,13,15) ------ */
 
 /* parse an A1/A2 buffer (ptr + len, not NUL-terminated): hex if it starts with
    '$', else decimal. Same convention as the resident mem.c parser. */
@@ -482,17 +482,6 @@ static void do_poke(void)
         return;
     }
     *(unsigned char *)parse_num16(A1, A1L) = (unsigned char)parse_num16(A2, A2L);
-}
-
-/* echo: the resident thunk joined argv[1..] into $0340 (length in A1L). */
-static void do_echo(void)
-{
-    const char *s = (const char *)0x0340;
-    unsigned char i;
-
-    for (i = 0; i < A1L; ++i)
-        k_chrout(s[i]);
-    crlf();
 }
 
 /* help: list every command in 3 column-major columns. The thunk passed the
@@ -618,8 +607,6 @@ void files_main(void)
         do_peek();
     else if (cmd == 13)
         do_poke();
-    else if (cmd == 14)
-        do_echo();
     else if (cmd == 15)
         do_help();
     else if (cmd == 16)

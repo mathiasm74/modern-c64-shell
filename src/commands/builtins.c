@@ -7,7 +7,7 @@
  */
 #include "shell.h"
 #include "commands/builtins.h"
-#include "commands/overlay.h"     /* run_files_overlay (help/echo thunks) */
+#include "commands/overlay.h"     /* run_files_overlay (help thunk) */
 
 #define CR    0x0D             /* RETURN / newline */
 #define CLEAR 0x93             /* CHROUT clear-screen control code */
@@ -33,26 +33,6 @@ void cmd_clear(int argc, char *argv[])
     chrout(CLEAR);
 }
 
-/* Print the arguments separated by single spaces, then a newline. The body is
-   in the files overlay (cmd 14); this thunk joins argv[1..] into $0340 (length
-   in the A1L mailbox byte) for it to print. */
-void cmd_echo(int argc, char *argv[])
-{
-    unsigned char *buf = (unsigned char *)0x0340;
-    unsigned char n = 0, i;
-    int a;
-
-    for (a = 1; a < argc; ++a) {
-        if (a > 1 && n < 79)
-            buf[n++] = ' ';
-        for (i = 0; argv[a][i] && n < 79; ++i)
-            buf[n++] = argv[a][i];
-    }
-    *(unsigned char *)0x02D0 = 14;      /* FB_CMD */
-    *(unsigned char *)0x02D2 = n;       /* FB_A1L = joined length */
-    run_files_overlay();
-}
-
 /* ver parks its code + string in the KERNAL ROM (CODE2/RODATA2): the BASIC ROM
    is full, and it's small and cold. */
 #pragma code-name (push, "CODE2")
@@ -61,7 +41,7 @@ void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Brand + version; kept in step with the boot banner's version (reset.s). */
-    puts_raw("TarDOS v0.46");
+    puts_raw("TarDOS v0.47");
     chrout(CR);
 }
 #pragma rodata-name (pop)
