@@ -62,9 +62,14 @@ chrout_impl:
         cmp #$20
         bcc @done               ; other $00-$1F control codes: ignore
         cmp #$80
-        bcs @done               ; $80-$FF (function keys, graphics): ignore
+        bcc @draw               ; $20-$7F: printable
+        cmp #$DB
+        bcc @done               ; $80-$DA (function keys, graphics): ignore
+        cmp #$DE
+        bcs @done               ; $DE-$FF: ignore
 
-        ; printable $20-$7F
+        ; printable $20-$7F, plus uppercase Swedish Ae/Oe/Aring ($DB-$DD)
+@draw:
         jsr pet2scr
         ldy PNTR
         sta (PNT),y             ; screen code

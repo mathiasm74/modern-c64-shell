@@ -28,6 +28,8 @@
 #define CRSR_DN  0x11            /* cursor down  (recall newer command)     */
 #define PRINT_LO 0x20            /* printable PETSCII range we store/echo   */
 #define PRINT_HI 0x7E
+#define SWE_LO   0xDB            /* uppercase Swedish Ae/Oe/Aring ($DB-$DD), */
+#define SWE_HI   0xDD            /* also storable/echoable (pet2scr -> $5B-$5D) */
 #define LINEMAX  80             /* one 40-col line wraps to two; 80 is plenty */
 #define HIST_N   8              /* commands remembered for up/down recall   */
 
@@ -300,7 +302,7 @@ static unsigned char readline(void)
             }
             continue;
         }
-        if (c >= PRINT_LO && c <= PRINT_HI) {
+        if ((c >= PRINT_LO && c <= PRINT_HI) || (c >= SWE_LO && c <= SWE_HI)) {
             if (len >= LINEMAX)
                 continue;               /* line full */
             if (pos == len) {           /* common case: append */
@@ -353,14 +355,16 @@ static void dispatch(struct command_line *cl)
 unsigned char nv_capability(void);
 unsigned char nv_read(void);
 unsigned char nv_write(void);
+unsigned char font_select(unsigned char target);  /* fs.c: re-apply saved font */
+unsigned char font_get(void);                      /* fs.c: current font (0/1) */
 #define NV_MB_LEN (*(unsigned char *)0x02C4)
 #define NV_MB_LO  (*(unsigned char *)0x02C5)
 #define NV_MB_HI  (*(unsigned char *)0x02C6)
 
 #define NV_MAGIC0    'T'
 #define NV_MAGIC1    'D'
-#define NV_VERSION   1
-#define NV_BLOB_MAX  192        /* 7 header + 8 * (1 + 22) = 191 */
+#define NV_VERSION   2          /* bumped: header gained a font byte (offset 6) */
+#define NV_BLOB_MAX  192        /* 8 header + 8 * (1 + 22) = 192 */
 #define NV_ENTRY_MAX 22         /* chars persisted per history line */
 #define SAVE_EVERY   8          /* periodic history checkpoint, in commands */
 #define VIC_BORDER   (*(unsigned char *)0xD020)
@@ -389,8 +393,9 @@ void settings_load(void)
         VIC_BORDER = nv_blob[3] & 0x0F;
         VIC_BG     = nv_blob[4] & 0x0F;
         COLOR_REG  = nv_blob[5] & 0x0F;
-        hc = nv_blob[6];
-        i = 7;
+        font_select(nv_blob[6] & 1);    /* re-apply font B (+ Swedish keys) */
+        hc = nv_blob[7];
+        i = 8;
         for (n = 0; n < hc && n < HIST_N && i < NV_BLOB_MAX; ++n) {
             k = nv_blob[i++];
             j = 0;
@@ -420,8 +425,9 @@ void settings_save(void)
     nv_blob[3] = VIC_BORDER & 0x0F;
     nv_blob[4] = VIC_BG & 0x0F;
     nv_blob[5] = COLOR_REG & 0x0F;
-    nv_blob[6] = hist_count;
-    i = 7;
+    nv_blob[6] = font_get();             /* persisted font (0 = A, 1 = B) */
+    nv_blob[7] = hist_count;
+    i = 8;
     oldest = (unsigned char)((hist_next + HIST_N - hist_count) % HIST_N);
     for (n = 0; n < hist_count; ++n) {
         s = hist[(unsigned char)((oldest + n) % HIST_N)];

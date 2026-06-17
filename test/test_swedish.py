@@ -87,3 +87,30 @@ def test_default_layout_is_us(v):
     # KBD_LAYOUT ($02CB) must boot at 0 so the US/symbolic tables are active.
     v.run_for(0.3)
     assert v.read_byte(0x02CB) == 0x00, "KBD_LAYOUT should default to 0 (US)"
+
+
+def test_uppercase_swedish_char_is_accepted_at_prompt(v):
+    # The reported bug: shift-Ae/Oe/Aring emit $DB-$DD, but readline only stored
+    # $20-$7E, so the capitals were dropped on input. Inject the byte straight
+    # into the keyboard buffer (bypassing the matrix) and confirm it lands on
+    # screen as the uppercase screen code $5B (Ae) -- i.e. it was NOT filtered.
+    # A prior test in this module parks the CPU via run_at, so cold-boot the
+    # shell (PC = the reset handler at $FFFC/$FFFD) to get a live readline.
+    rv = v.read_byte(0xFFFC) | (v.read_byte(0xFFFD) << 8)
+    v.run_at(rv, 0.3)
+    for _ in range(10):                  # wait for the prompt
+        if "Ready." in v.screen_text():
+            break
+        v.run_for(0.2)
+    v.write_memory(0x0277, [0xDB])       # shift-Ae
+    v.write_byte(0x00C6, 1)              # one key waiting
+    sc = 0
+    for _ in range(10):                  # poll until the shell consumes the key
+        v.run_for(0.2)
+        pnt = v.read_byte(0xD1) | (v.read_byte(0xD2) << 8)   # current line start
+        col = v.read_byte(0xD3)                              # cursor column
+        if col >= 3:                     # prompt "> " (2) + the typed char
+            sc = v.read_byte(pnt + col - 1) & 0x7F           # mask the cursor bit
+            break
+    assert sc == 0x5B, \
+        "typed $DB should land as screen code $5B (Ae), got $%02X" % sc

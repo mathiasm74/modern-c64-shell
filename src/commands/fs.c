@@ -434,6 +434,7 @@ void cmd_exit(int argc, char *argv[])
    free); the constants below are the single place to adjust them.
    Lives in CODE2 (KERNAL ROM) like the other RBCP commands. */
 unsigned char font_apply(void);         /* launch.s; 0 = ok, nonzero = failed */
+void settings_save(void);               /* shell.c; persists the font choice */
 #define FONT_MB_LOAD    (*(unsigned char *)0x02C8)
 #define FONT_MB_FLASH   (*(unsigned char *)0x02C9)
 #define FONT_MB_RAM     (*(unsigned char *)0x02CA)
@@ -443,30 +444,48 @@ unsigned char font_apply(void);         /* launch.s; 0 = ok, nonzero = failed */
 #define KBD_LAYOUT      (*(unsigned char *)0x02CB) /* irq.s key-table selector */
 static unsigned char font_current;      /* BSS: 0 = font A at boot */
 
+/* Switch to font `target` (0 = A, 1 = B): RBCP charset swap plus the matching
+   keyboard table (font B pairs with the Swedish key tables so the relabelled
+   keycaps type the right glyphs). Returns 0 on success (or no-op when already
+   there), nonzero if the switch is unavailable (no One ROM). Also used by
+   settings_load() to re-apply a persisted font at boot. */
+unsigned char font_select(unsigned char target)
+{
+    if (target == font_current)
+        return 0;
+    if (target) {
+        FONT_MB_LOAD = 1;
+        FONT_MB_FLASH = FONTB_FLASH_SET;
+        FONT_MB_RAM = FONTB_RAM_SLOT;
+    } else {
+        FONT_MB_LOAD = 0;
+        FONT_MB_RAM = FONTA_RAM_SLOT;
+    }
+    if (font_apply() != 0)
+        return 1;
+    font_current = target;
+    KBD_LAYOUT = target;
+    return 0;
+}
+
+unsigned char font_get(void)
+{
+    return font_current;
+}
+
 void cmd_font(int argc, char *argv[])
 {
-    unsigned char target;
+    unsigned char target, prev;
 
     target = (argc < 2) ? (font_current ^ 1) : (argv[1][0] == '1');
-    if (target != font_current) {
-        if (target) {
-            FONT_MB_LOAD = 1;
-            FONT_MB_FLASH = FONTB_FLASH_SET;
-            FONT_MB_RAM = FONTB_RAM_SLOT;
-        } else {
-            FONT_MB_LOAD = 0;
-            FONT_MB_RAM = FONTA_RAM_SLOT;
-        }
-        if (font_apply() != 0) {
-            puts_raw("font switch unavailable");
-            chrout(CR);
-            return;
-        }
-        font_current = target;
-        /* The Swedish charset (font B) pairs with the Swedish key tables so
-           the relabelled keycaps type the right glyphs; font A is US. */
-        KBD_LAYOUT = target;
+    prev = font_current;
+    if (font_select(target) != 0) {
+        puts_raw("font switch unavailable");
+        chrout(CR);
+        return;
     }
+    if (font_current != prev)
+        settings_save();                /* persist the change (no-op w/o NV) */
     puts_raw("font ");
     chrout('0' + font_current);
     chrout(CR);
