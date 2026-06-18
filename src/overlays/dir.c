@@ -24,6 +24,7 @@ unsigned char k_getin(void);            /* crt0_dir.s: GETIN ($FFE4) */
 #define CLEAR      0x93
 #define PAGE_LINES 22
 #define TEXT_COLOR (*(unsigned char *)0x0286)
+#define SHFLAG     (*(volatile unsigned char *)0x028D)  /* bit 2 = CTRL held */
 
 #define MB_CMD  (*(unsigned char *)0x02D0)       /* 0 dir, 1 ls, 2 pwd */
 #define MB_DEV  (*(unsigned char *)0x02D1)
@@ -160,17 +161,22 @@ static void dir_end(void)
     }
 }
 
-/* Page the listing like `less`: after PAGE_LINES lines, print "-- more --" and
-   wait for a key (q quits, any other clears the screen and continues). Returns
-   1 if the user quit. ls/dir open the directory over *standard* IEC (dir_begin
-   with allow_fast = 0) precisely so this wait can't abort the transfer -- the
-   drive just blocks on the next handshaked byte. (The old CTRL-hold pause ran
-   over the timed Epyx fast path, which the drive aborts if stalled too long.) */
+/* Page the listing like `less`, but ONLY while CTRL is held: after PAGE_LINES
+   lines, if CTRL is down, print "-- more --" and wait for a key (q quits, any
+   other clears the screen and continues); if CTRL is up the listing just
+   scrolls past. Returns 1 if the user quit. ls/dir open the directory over
+   *standard* IEC (dir_begin with allow_fast = 0) so this wait can't abort the
+   transfer -- the drive just blocks on the next handshaked byte. (The old
+   CTRL-hold pause-while-down ran over the timed Epyx fast path, which the drive
+   aborts if stalled too long; CTRL-gated paging is the safe replacement.) */
 static unsigned char paginate(unsigned char *lines)
 {
     unsigned char c;
 
     if (++(*lines) < PAGE_LINES)
+        return 0;
+    *lines = 0;
+    if (!(SHFLAG & 0x04))               /* CTRL not held -> free scroll, no pause */
         return 0;
     puts_raw("-- more --");
     do {
@@ -179,7 +185,6 @@ static unsigned char paginate(unsigned char *lines)
     if (c == 'q')
         return 1;
     k_chrout(CLEAR);
-    *lines = 0;
     return 0;
 }
 
