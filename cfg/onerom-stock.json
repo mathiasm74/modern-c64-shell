@@ -32,15 +32,15 @@
           "cs1": "active_low"
         },
         {
-          "file": "build/basic.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        },
-        {
           "file": "stock-roms/c64-charset.bin",
           "type": "Chip2364",
           "cs1": "active_low",
           "size_handling": "duplicate"
+        },
+        {
+          "file": "build/basic.bin",
+          "type": "Chip2364",
+          "cs1": "active_low"
         }
       ]
     },
@@ -54,15 +54,15 @@
           "cs1": "active_low"
         },
         {
-          "file": "stock-roms/basic.901226-01.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        },
-        {
           "file": "stock-roms/c64-charset.bin",
           "type": "Chip2364",
           "cs1": "active_low",
           "size_handling": "duplicate"
+        },
+        {
+          "file": "stock-roms/basic.901226-01.bin",
+          "type": "Chip2364",
+          "cs1": "active_low"
         }
       ]
     },
@@ -96,15 +96,15 @@
           "cs1": "active_low"
         },
         {
-          "file": "build/basic.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        },
-        {
           "file": "stock-roms/c64-swedish4.bin",
           "type": "Chip2364",
           "cs1": "active_low",
           "size_handling": "duplicate"
+        },
+        {
+          "file": "build/basic.bin",
+          "type": "Chip2364",
+          "cs1": "active_low"
         }
       ]
     }
