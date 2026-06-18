@@ -30,24 +30,36 @@ unsigned char overlay_fetch_multi(void);
 #define OVL_MB_DST  (*(unsigned char *)0x02C2)
 #define OVL_MB_SET  (*(unsigned char *)0x02C3)  /* flash set for the fetch */
 
+/* The RBCP transport over the One ROM bus glitches occasionally: a fetch can
+   fail at enter (stage 1), peek (stage 3), or come back with corrupt data
+   (stage 5 = wrong magic). These are transient, so retry the whole fetch a few
+   times -- each attempt restarts with rbcp_reset, which flushes device state.
+   The protocol's own retries only cover the command-token poll, not these. */
+#define OVL_RETRIES 5
+
 /* The cache is one 256-byte page; its first byte is the entry point. */
 #define OVERLAY_ENTRY ((void (*)(void))0xCE00)
 
 #define PAGE_NONE 0xFF
 static unsigned char cached_page = PAGE_NONE;   /* DATA: survives via copydata */
 
-#pragma code-name (push, "CODE2")
-#pragma rodata-name (push, "RODATA2")
+/* This module lives in the default CODE/RODATA (the BASIC ROM half), NOT in
+   CODE2: the retry loops pushed CODE2 into the reserved $FE00 RBCP back-channel
+   window (test_rbcp::test_back_channel_window_is_free_fill). The BASIC half has
+   ample room; the cross-bank calls to the launch.s fetch trampolines are fine
+   (both ROM halves are always mapped). */
 
 /* Fetch (if not cached) and run the single-page overlay at `page` of flash
    `set`. */
 static void overlay_run(unsigned char page, unsigned char set)
 {
-    unsigned char rc;
+    unsigned char rc, tries;
 
     if (cached_page != page) {
-        OVL_MB_SET = set;
-        rc = overlay_fetch_page(page);
+        for (tries = OVL_RETRIES, rc = 1; tries && rc; --tries) {
+            OVL_MB_SET = set;
+            rc = overlay_fetch_page(page);
+        }
         if (rc != 0) {
             cached_page = PAGE_NONE;
             puts_raw("overlay load failed, stage ");
@@ -90,26 +102,30 @@ static unsigned char mp_cached(const char *magic)
 static unsigned char mp_fetch(unsigned char first_page, const char *magic,
                               unsigned char set)
 {
-    unsigned char rc, n;
+    unsigned char rc, n, tries;
 
     if (mp_cached(magic))
         return 0;
-    OVL_MB_SET  = set;
-    OVL_MB_PAGE = first_page;
-    OVL_MB_CNT  = 1;
-    OVL_MB_DST  = 0x88;
-    rc = overlay_fetch_multi();
-    if (rc == 0 && mp_cached(magic)) {
-        n = OVL8_BASE[7];                       /* total pages */
-        if (n > 1) {
-            OVL_MB_CNT = n - 1;                 /* mailbox stepped past page 1 */
-            rc = overlay_fetch_multi();
+    /* Retry the whole fetch on a transient glitch (stage 1/3/5). Each attempt
+       reloads page 1 from scratch and re-validates the magic. */
+    for (tries = OVL_RETRIES, rc = 1; tries && rc; --tries) {
+        OVL_MB_SET  = set;
+        OVL_MB_PAGE = first_page;
+        OVL_MB_CNT  = 1;
+        OVL_MB_DST  = 0x88;
+        rc = overlay_fetch_multi();
+        if (rc == 0 && mp_cached(magic)) {
+            n = OVL8_BASE[7];                   /* total pages */
+            if (n > 1) {
+                OVL_MB_CNT = n - 1;             /* mailbox stepped past page 1 */
+                rc = overlay_fetch_multi();
+            }
+        } else if (rc == 0) {
+            rc = 5;                             /* fetched, but no magic */
         }
-    } else if (rc == 0) {
-        rc = 5;                                 /* fetched, but no magic */
+        if (rc == 0 && !mp_cached(magic))
+            rc = 5;
     }
-    if (rc == 0 && !mp_cached(magic))
-        rc = 5;
     return rc;
 }
 
@@ -168,5 +184,3 @@ void run_dir_overlay(void)
     OVL8_ENTRY();
 }
 
-#pragma rodata-name (pop)
-#pragma code-name (pop)
