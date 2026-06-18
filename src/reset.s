@@ -211,10 +211,10 @@ reset:
 
         ; --- Startup banner ----------------------------------------------
         ; row 0: version, right-aligned (5 chars "vX.YY" end at col 38)
-        ; row 2: brand, centered (30 chars)   row 4: free bytes, centered (38)
+        ; row 2: brand, centered (29 chars)   row 4: free bytes, centered (38)
         ; row 6: "Ready."   row 7: the shell prompt (cursor set below)
         PRINT version, SCREEN_RAM + 40 * 0 + 34
-        PRINT brand,   SCREEN_RAM + 40 * 2 + 5
+        PRINT brand,   SCREEN_RAM + 40 * 2 + 6
         PRINT freemem, SCREEN_RAM + 40 * 4 + 1    ; ROM free bytes (patched in)
         PRINT banner2, SCREEN_RAM + 40 * 6 + 0
 
@@ -394,9 +394,9 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.51", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.52", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
-        .byte "TarDOS - your modern C64 shell", 0
+        .byte "TarDOS - your C64 power shell", 0
 banner2:
         .byte "Ready.", 0
 

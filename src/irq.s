@@ -62,7 +62,22 @@ irq_handler:
         pla
         rti
 
+; -------------------------------------------------------------------------
+; nmi_stub - RESTORE is wired to the NMI line. RUN/STOP + RESTORE soft-resets
+; (the classic C64 shortcut); RESTORE alone is ignored. RUN/STOP is matrix
+; col 7, row 7: select column 7 on CIA1_PRA ($7F = bit 7 low), then read
+; CIA1_PRB -- row 7 (bit 7) reads 0 when STOP is held.
+; -------------------------------------------------------------------------
 nmi_stub:
+        pha
+        lda #$7F
+        sta CIA1_PRA            ; select keyboard column 7
+        lda CIA1_PRB            ; read rows; RUN/STOP is row 7 (bit 7)
+        and #$80
+        bne @nmi_ret            ; STOP not held -> bare RESTORE, ignore
+        jmp ($FFFC)             ; RUN/STOP + RESTORE -> soft reset (no return)
+@nmi_ret:
+        pla
         rti
 
 ; -------------------------------------------------------------------------
