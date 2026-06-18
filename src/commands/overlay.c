@@ -17,13 +17,9 @@
 
 #define CR 0x0D
 
-/* src/rbcp/launch.s: fetch overlay page `page` into the cache.
-   0 = ok, 1 = enter failed, 2 = load failed, 3 = peek failed,
-   4 = exit failed. */
-unsigned char __fastcall__ overlay_fetch_page(unsigned char page);
-
 /* src/rbcp/launch.s: fetch OVL_MB_CNT pages starting at OVL_MB_PAGE to
-   page OVL_MB_DST<<8, one session for the whole run. Same return codes. */
+   page OVL_MB_DST<<8, one session for the whole run.
+   0 = ok, 1 = enter failed, 2 = load failed, 3 = peek failed, 4 = exit. */
 unsigned char overlay_fetch_multi(void);
 #define OVL_MB_PAGE (*(unsigned char *)0x02C0)
 #define OVL_MB_CNT  (*(unsigned char *)0x02C1)
@@ -37,48 +33,13 @@ unsigned char overlay_fetch_multi(void);
    The protocol's own retries only cover the command-token poll, not these. */
 #define OVL_RETRIES 5
 
-/* The cache is one 256-byte page; its first byte is the entry point. */
-#define OVERLAY_ENTRY ((void (*)(void))0xCE00)
-
-#define PAGE_NONE 0xFF
-static unsigned char cached_page = PAGE_NONE;   /* DATA: survives via copydata */
-
 /* This module lives in the default CODE/RODATA (the BASIC ROM half), NOT in
    CODE2: the retry loops pushed CODE2 into the reserved $FE00 RBCP back-channel
    window (test_rbcp::test_back_channel_window_is_free_fill). The BASIC half has
    ample room; the cross-bank calls to the launch.s fetch trampolines are fine
    (both ROM halves are always mapped). */
 
-/* Fetch (if not cached) and run the single-page overlay at `page` of flash
-   `set`. */
-static void overlay_run(unsigned char page, unsigned char set)
-{
-    unsigned char rc, tries;
-
-    if (cached_page != page) {
-        for (tries = OVL_RETRIES, rc = 1; tries && rc; --tries) {
-            OVL_MB_SET = set;
-            rc = overlay_fetch_page(page);
-        }
-        if (rc != 0) {
-            cached_page = PAGE_NONE;
-            puts_raw("overlay load failed, stage ");
-            chrout('0' + rc);
-            chrout(CR);
-            return;
-        }
-        cached_page = page;
-    }
-    OVERLAY_ENTRY();
-}
-
-void cmd_about(int argc, char *argv[])
-{
-    (void)argc; (void)argv;
-    overlay_run(ABOUT_PAGE, ABOUT_SET);
-}
-
-/* --- multi-page C overlays at $8800 (edit, files) ------------------------
+/* --- multi-page overlays at $8800 (about, edit, files, dir) --------------
  *
  * These cc65-compiled overlays live at $8800+ in user RAM. The cache is
  * validated by the 4-byte magic in the overlay's own header (offset +3), so
@@ -134,6 +95,21 @@ static void mp_failed(unsigned char rc)
     puts_raw("overlay load failed, stage ");
     chrout('0' + rc);
     chrout(CR);
+}
+
+/* about: a self-contained asm overlay that clears the screen and prints its
+   description. Multi-page like the others now (the text outgrew one page). */
+void cmd_about(int argc, char *argv[])
+{
+    unsigned char rc;
+
+    (void)argc; (void)argv;
+    rc = mp_fetch(ABOUT_FIRST_PAGE, "abt1", ABOUT_SET);
+    if (rc != 0) {
+        mp_failed(rc);
+        return;
+    }
+    OVL8_ENTRY();
 }
 
 void cmd_edit(int argc, char *argv[])
