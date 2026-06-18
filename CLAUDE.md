@@ -5,7 +5,7 @@ A ROM-resident command shell for the Commodore 64, designed to replace the stock
 ## Goals
 
 - Boot directly into a modern shell instead of BASIC's READY prompt.
-- Provide a command-line interface with line editing, history, and tab completion.
+- Provide a command-line interface with line editing and history.
 - Built-in fast loader (Epyx-compatible) for use with stock 1541, SD2IEC, Pi1541, Meatloaf, and 1541 Ultimate.
 - File browser and directory navigation for IEC devices.
 - Machine language monitor.
@@ -221,7 +221,7 @@ Line editing landed: `readline` in `src/shell.c` tracks a cursor index (`pos`) a
 
 Command history: `readline` keeps the last `HIST_N` (8) submitted non-empty lines in a ring buffer; cursor-up ($91) recalls older entries and cursor-down ($11) walks back toward the fresh line. A recalled line replaces the current one via `replace_line` (step to line start, draw the new text, pad over any leftover of a longer old line). `test_history.py` submits two commands, navigates ≤2 back, edits, and asserts the dispatched command.
 
-Tab completion: TAB ($09) completes a bare command word (no space yet, cursor at the end) against the dispatch table — a unique prefix gets the rest of the name plus a space; ambiguous/unknown prefixes are left alone (`complete_command` in `shell.c`). CTRL+I produces $09 (see CTRL below), so completion has a physical trigger. `test_complete.py` injects $09 and checks unique/unknown/ambiguous prefixes.
+Tab completion was implemented and later **removed** (it was rarely useful and cost resident ROM). TAB ($09) is now an inert keystroke in `readline`; CTRL+I still emits $09 for the `edit` overlay's bindings.
 
 Utility commands: `peek <addr> [count]` / `poke <addr> <val>` (`src/commands/mem.c`, `parse_num`: **decimal by default, hex when prefixed with `$`** -- the C64 convention, so `poke 53280 0` works for anyone with BASIC muscle memory and `poke $d020 0` is the same register; a bare hex-looking value is read as the decimal the user meant, not silently as hex) read/write live memory -- `peek` with a count hexdumps a range (8 bytes/row with address labels, for reading a loaded program's bytes); `device <n> [name]` (`fs.c`) sets the default IEC unit that the disk commands use (a `default_device`, boots as 8) — but it **probes the bus first** (`device_present` opens the unit's "$" and checks for the no-device timeout): if `<n>` doesn't answer it prints "device `<n>` not present" and *keeps the current device*, so a typo'd unit can't silently misdirect later commands. The tradeoff: you can't pre-assign or name a unit whose drive is powered off (the probe rejects it). An optional name, given for a present unit, is remembered per device number (`device_name[8..15]`) and reused when `device <n>` is given later without one; `reset` (`builtins.c`) reboots via `soft_reset` in `c_io.s` (`jmp ($FFFC)`). `test_util.py` covers peek/poke/reset; `test_device.py` (drive attached, since the probe needs a real device to answer) covers `device` — absent unit reports+stays-put and a present unit names+recalls. The disk commands' own no-device path now reports the unit number too (`report_no_device`).
 

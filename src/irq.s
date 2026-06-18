@@ -148,9 +148,8 @@ scan_keyboard:
         jmp @emit
 @viactrl:
         ; CTRL+letter emits the ASCII control code ($01-$1A), nano-style:
-        ; ^k = $0B, ^x = $18, ... and ^i = $09 keeps TAB (and so the shell's
-        ; tab completion) reachable. CTRL with a non-letter emits the plain
-        ; unshifted character.
+        ; ^k = $0B, ^x = $18, ^i = $09, ... (used by the edit overlay's
+        ; bindings). CTRL with a non-letter emits the plain unshifted character.
         jsr decode_unshift
         cmp #'a'
         bcc @emit               ; below 'a': emit as-is

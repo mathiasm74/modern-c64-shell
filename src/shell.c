@@ -20,7 +20,6 @@
 #include "commands/overlay.h"
 
 #define CR       0x0D            /* RETURN: submit the line                 */
-#define TAB      0x09            /* complete the command word               */
 #define DEL      0x14            /* DELETE: backspace                       */
 #define CRSR_L   0x9D            /* cursor left  (move within the line)     */
 #define CRSR_R   0x1D            /* cursor right                            */
@@ -185,50 +184,6 @@ static void replace_line(const char *s, unsigned char *plen, unsigned char *ppos
     *ppos = n;
 }
 
-/* Tab-complete the command word against the dispatch table. Only acts on a
- * bare prefix at the end of the line (no space yet, cursor at the end); if
- * exactly one command name starts with it, the rest of that name plus a space
- * is appended. Ambiguous or no match does nothing. */
-static void complete_command(unsigned char *plen, unsigned char *ppos)
-{
-    unsigned char i, n, matches, match;
-    const char *name;
-
-    if (*plen == 0 || *ppos != *plen)
-        return;
-    for (i = 0; i < *plen; ++i)
-        if (line[i] == ' ')
-            return;                     /* already past the command word */
-
-    matches = 0;
-    match = 0;
-    for (i = 0; i < shell_command_count; ++i) {
-        name = shell_commands[i].name;
-        for (n = 0; n < *plen; ++n)
-            if (name[n] != line[n])
-                break;
-        if (n == *plen) {               /* name starts with the typed prefix */
-            ++matches;
-            match = i;
-        }
-    }
-    if (matches != 1)
-        return;                         /* none, or ambiguous: leave it be */
-
-    name = shell_commands[match].name;
-    for (n = *plen; name[n] && *plen < LINEMAX; ++n) {
-        line[*plen] = name[n];
-        chrout(name[n]);
-        ++(*plen);
-    }
-    if (*plen < LINEMAX) {              /* trailing space, ready for arguments */
-        line[*plen] = ' ';
-        chrout(' ');
-        ++(*plen);
-    }
-    *ppos = *plen;
-}
-
 /* Read one line into `line`, echoing as we go; return its length.
  *
  * RETURN submits. Cursor left/right move within the line; printable characters
@@ -265,10 +220,6 @@ static unsigned char readline(void)
                 --browse;
                 replace_line(history_get(browse), &len, &pos);
             }
-            continue;
-        }
-        if (c == TAB) {
-            complete_command(&len, &pos);
             continue;
         }
         if (c == CRSR_L) {
