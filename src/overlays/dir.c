@@ -240,8 +240,9 @@ static void do_ls(void)
         TEXT_COLOR = color ? color : saved;
         while (i < q2)
             k_chrout(dir_buf[i++]);
-        k_chrout(CR);
-        pause_while_ctrl();
+        TEXT_COLOR = saved;             /* restore BEFORE the newline: the CR's */
+        k_chrout(CR);                   /* scroll fill + the cursor cell must    */
+        pause_while_ctrl();             /* stay the default color, not the name's */
     }
     TEXT_COLOR = saved;
     dir_end();

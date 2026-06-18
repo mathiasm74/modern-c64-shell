@@ -154,6 +154,20 @@ static void clear_row(unsigned char *dst)
         dst[i] = 0x20;
 }
 
+/* We paint screen codes straight into screen RAM and never touch color RAM, so
+   the editor inherits whatever colors were left behind (e.g. a green PRG name
+   from `ls`). Paint the whole screen's color RAM with the current text color
+   once at startup so the UI is uniform regardless of prior screen content. */
+#define CRAM ((unsigned char *)0xD800)
+static void fill_color(void)
+{
+    unsigned int i;
+    unsigned char col = *(unsigned char *)0x0286;       /* KERNAL text color */
+
+    for (i = 0; i < 25 * COLS; ++i)                      /* all 25 screen rows */
+        CRAM[i] = col;
+}
+
 static void draw_help(void)
 {
     clear_row(SCREEN + 24 * COLS);
@@ -450,11 +464,14 @@ static void load_file(void)
         c = k_chrin();
         st = STREG;
         if (st & 0x83)
-            break;              /* device gone / timeout */
+            break;              /* device gone / timeout: drop c */
+        if (st & 0x40) {        /* EOI = last byte. A 1541 clocks out a real   */
+            if (c && gs < ge)   /* final byte; Meatloaf ends the stream with a  */
+                BUF[gs++] = c;  /* synthetic $00 (no byte) -- storing it would  */
+            break;              /* show a trailing '?' (scrc($00) = '?').       */
+        }
         if (gs < ge)
             BUF[gs++] = c;
-        if (st & 0x40)
-            break;              /* EOI: that was the last byte */
     }
     k_clrchn();
     k_close();
@@ -504,6 +521,7 @@ void edit_main(void)
     if (fnlen)
         load_file();
 
+    fill_color();               /* uniform color RAM before the first paint */
     render();
     for (;;) {
         c = k_getin();
