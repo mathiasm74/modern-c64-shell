@@ -47,7 +47,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-stock-flash onerom-pure-stock-flash memtest memtest-flash sizes
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash memtest memtest-flash sizes
 
 all: $(ROM16K)
 
@@ -232,10 +232,14 @@ onerom-stock: $(ONEROM_STOCK_DEPS)
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
 	@echo "  onerom-stock fw : $$(wc -c < $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
 
-# Build the bank-swap firmware AND flash a connected One ROM, then reboot it
-# into running mode. Same shape as onerom-flash, but uses cfg/onerom-stock.json
-# so the device gets host-control + the stock-ROM second bank.
-onerom-stock-flash: $(ONEROM_STOCK_DEPS)
+# Build the firmware AND flash a connected One ROM, then reboot it into the
+# running (byte-serving) state. Plug the device in (USB), then `make onerom-
+# flash`. Uses cfg/onerom-stock.json so the device gets host-control + the
+# stock-ROM second bank -- host-control is also what the reboot-into-running
+# step needs (the plain single-bank cfg/onerom.json firmware can't be rebooted,
+# which is why the old onerom-flash stopped working). ONEROM_BOARD must match
+# the connected device; pass ONEROM_SERIAL='5*' (wildcard) to pick one of many.
+onerom-flash: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file cfg/onerom-stock.json \
 		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
@@ -251,17 +255,6 @@ onerom-pure-stock-flash: $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file cfg/onerom-pure-stock.json \
 		--out $(BUILD)/onerom-pure-stock-$(ONEROM_BOARD).bin
-	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
-
-# Build the firmware AND flash a connected One ROM, then reboot it into the
-# running (byte-serving) state. Plug the device in (USB), then `make onerom-
-# flash`. ONEROM_BOARD must match the connected device. Pass ONEROM_SERIAL='5*'
-# (or similar wildcard) to pick one of several. The reboot needs the USB system
-# plugin embedded in the firmware (cfg/onerom.json -- slot 0).
-onerom-flash: $(BASIC) $(KERNAL)
-	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
-		--board $(ONEROM_BOARD) --config-file $(ONEROM_CFG) \
-		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 
 # ----------------------------------------------------------------------------

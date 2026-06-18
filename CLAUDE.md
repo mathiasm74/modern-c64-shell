@@ -39,8 +39,9 @@ All tools must be on PATH. Verify with `make check-tools`.
 make             # builds build/kernal.bin and build/basic.bin
 make test        # builds and runs the test suite
 make run         # builds and launches VICE with the ROM
-make onerom      # builds a One ROM firmware image from both halves
-make onerom-flash # builds + flashes a connected One ROM
+make onerom      # builds a (single-bank) One ROM firmware image from both halves
+make onerom-stock # builds the stock-fallback (host-control) firmware
+make onerom-flash # builds + flashes the stock-fallback firmware, then reboots it
 make sizes       # per-command ROM code-size report (tools/cmd_sizes.py)
 make clean       # removes build artifacts
 ```
@@ -60,7 +61,7 @@ For a raw 16KB blob (EPROM/EasyFlash) the two are concatenated: `cat build/basic
 - **Slot 0:** the USB *system plugin* (`https://images.onerom.org/plugins/system/usb/v…/plugin.bin`, fetched/cached on build). Without it the device can't accept USB commands once it's serving ROM, so `onerom reboot` would refuse with *"does not support being rebooted into running mode."*. To bump the plugin version, edit the URL in `cfg/onerom.json` (or regenerate with `tools/onerom firmware build --plugin usb --save-config …`).
 - **Slot 1:** both ROM halves as one multi-ROM set — `kernal.bin` and `basic.bin` as two 2364s served by the `two_cs_one_addr` algorithm. Two active-low chip selects (the C64's KERNAL `/CS` at U4 and BASIC `/CS` at U3) over the shared A0–A12 bus. (A single CS line can't distinguish KERNAL vs BASIC vs neither, so it genuinely needs both selects; the One ROM CLI also rejects mixing active-low/active-high in one set.) ROM order in the config is the CS-pin order — `kernal.bin` first, `basic.bin` second.
 
-The board defaults to `fire-24-e`; override for your hardware: `make onerom ONEROM_BOARD=fire-28-a` (`tools/onerom scan --list-boards` lists them). `make onerom-flash` programs a connected device and then reboots it into the running (byte-serving) state in one step; set `ONEROM_SERIAL='5*'` to pick one of several. `onerom scan` after that should show **Running** instead of Stopped.
+The board defaults to `fire-24-e`; override for your hardware: `make onerom ONEROM_BOARD=fire-28-a` (`tools/onerom scan --list-boards` lists them). **`make onerom-flash` flashes the stock-fallback firmware** (`cfg/onerom-stock.json`, the same image `make onerom-stock` builds), then reboots the device into the running (byte-serving) state in one step; set `ONEROM_SERIAL='5*'` to pick one of several. `onerom scan` after that should show **Running** instead of Stopped. (The plain single-bank `cfg/onerom.json` image that `make onerom` builds has no host-control plugin, so the device refuses the reboot-into-running step -- which is why `onerom-flash` uses the stock config. `make onerom` remains build-only for inspection.)
 
 `make run` delegates to `./run.sh`, which builds the ROM (unless `SKIP_BUILD=1`) and launches `x64sc -kernal build/kernal.bin -basic build/basic.bin`. Run `./run.sh` directly to forward extra VICE arguments, e.g. `./run.sh -warp`. To try the disk commands, attach an image with `DISK=`: `make run DISK=test/data/test.d64` (or `DISK=... ./run.sh`). It mounts a fresh writable *copy* (`build/run-disk.d64`) with `-drive8truedrive`, so a session's `cp`/`rm` never mutate the tracked image. True drive emulation is required — we replaced the KERNAL, so VICE's virtual-device traps never fire. Without a disk, typing `ls` reports a read error after a short timeout rather than wedging.
 
