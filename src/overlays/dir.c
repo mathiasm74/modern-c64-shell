@@ -15,13 +15,15 @@
 #include "svc.h"
 
 unsigned char __fastcall__ k_chrout(unsigned char c);
+unsigned char k_getin(void);            /* crt0_dir.s: GETIN ($FFE4) */
 
 #define ST_EOI     0x40
 #define ST_NODEV   0x80
 #define ST_TIMEOUT 0x02
 #define CR         0x0D
+#define CLEAR      0x93
+#define PAGE_LINES 22
 #define TEXT_COLOR (*(unsigned char *)0x0286)
-#define SHFLAG     (*(volatile unsigned char *)0x028D)
 
 #define MB_CMD  (*(unsigned char *)0x02D0)       /* 0 dir, 1 ls, 2 pwd */
 #define MB_DEV  (*(unsigned char *)0x02D1)
@@ -158,10 +160,27 @@ static void dir_end(void)
     }
 }
 
-static void pause_while_ctrl(void)
+/* Page the listing like `less`: after PAGE_LINES lines, print "-- more --" and
+   wait for a key (q quits, any other clears the screen and continues). Returns
+   1 if the user quit. ls/dir open the directory over *standard* IEC (dir_begin
+   with allow_fast = 0) precisely so this wait can't abort the transfer -- the
+   drive just blocks on the next handshaked byte. (The old CTRL-hold pause ran
+   over the timed Epyx fast path, which the drive aborts if stalled too long.) */
+static unsigned char paginate(unsigned char *lines)
 {
-    while (SHFLAG & 0x04)
-        ;
+    unsigned char c;
+
+    if (++(*lines) < PAGE_LINES)
+        return 0;
+    puts_raw("-- more --");
+    do {
+        c = k_getin();
+    } while (c == 0);
+    if (c == 'q')
+        return 1;
+    k_chrout(CLEAR);
+    *lines = 0;
+    return 0;
 }
 
 /* fold one type-token char to uppercase (handles lowercase and shifted PETSCII) */
@@ -196,15 +215,17 @@ static unsigned char type_color(const char *type)
 static void do_dir(void)
 {
     unsigned int blocks;
+    unsigned char lines = 0;
 
-    if (!dir_begin(1))
+    if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
         return;
     while (dir_line(&blocks)) {
         put_uint(blocks);
         k_chrout(' ');
         puts_raw(dir_buf);
         k_chrout(CR);
-        pause_while_ctrl();
+        if (paginate(&lines))
+            break;
     }
     dir_end();
 }
@@ -212,9 +233,9 @@ static void do_dir(void)
 static void do_ls(void)
 {
     unsigned int blocks;
-    unsigned char i, q2, t, color, saved, first;
+    unsigned char i, q2, t, color, saved, first, lines = 0;
 
-    if (!dir_begin(1))
+    if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
         return;
     saved = TEXT_COLOR;
     first = 1;
@@ -242,7 +263,8 @@ static void do_ls(void)
             k_chrout(dir_buf[i++]);
         TEXT_COLOR = saved;             /* restore BEFORE the newline: the CR's */
         k_chrout(CR);                   /* scroll fill + the cursor cell must    */
-        pause_while_ctrl();             /* stay the default color, not the name's */
+        if (paginate(&lines))           /* stay the default color, not the name's */
+            break;
     }
     TEXT_COLOR = saved;
     dir_end();
