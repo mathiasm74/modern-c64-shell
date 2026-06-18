@@ -27,5 +27,10 @@ CR     = $0D
         jsr CHROUT
         rts
 
-msg:    .byte "this command is bigger on the inside:", CR
-        .byte "loaded on demand from the overlay slot", 0
+msg:    .byte "TarDOS replaces the C64 BASIC and", CR
+        .byte "KERNAL with a shell, disk browser", CR
+        .byte "and editor. More commands load on", CR
+        .byte "demand from the One ROM. Disk", CR
+        .byte "loads use an Epyx loader. 'font'", CR
+        .byte "switches charset+keyboard between", CR
+        .byte "languages. 'run' starts programs.", 0
