@@ -165,3 +165,16 @@ if orphan:
           "(asm-/indirect-called) ==")
     for b, h in sorted(orphan, reverse=True):
         print("  %-22s %5d" % (disp(h), b))
+
+# Overlay bodies live in their own flash sets OUTSIDE the 16K ROM, so they're
+# absent from the resident totals above (e.g. the color picker is an overlay
+# command with only a thin resident thunk). List each packed .bin so the code
+# that moved out of ROM is still accounted for somewhere.
+ovl_dir = os.path.join(BUILD, "overlays")
+if os.path.isdir(ovl_dir):
+    bins = sorted(f for f in os.listdir(ovl_dir) if f.endswith(".bin"))
+    if bins:
+        print("\n== overlay bodies (outside the 16K ROM; packed .bin sizes) ==")
+        for f in bins:
+            n = os.path.getsize(os.path.join(ovl_dir, f))
+            print("  %-22s %5d  (%d pages)" % (f, n, (n + 255) // 256))

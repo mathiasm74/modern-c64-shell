@@ -72,7 +72,7 @@ void picker_main(void)
     for (;;) {
         for (i = 0; i < 32; ++i)          /* redraw the marker row */
             SCR[mbase + i] = 0x20;
-        SCR[mbase + sel * 2] = 0x0F;      /* 'o' under the selected block */
+        SCR[mbase + sel * 2] = 0x77;      /* two-bar marker (PETSCII 183) under it */
         CRAM[mbase + sel * 2] = 0x01;     /* white */
         apply_color(which, sel);          /* live preview */
 
