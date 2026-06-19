@@ -72,6 +72,34 @@ void print_device_prefix(void)
     }
 }
 
+/* --- load progress: a row of dots ------------------------------------------
+ * One dot per kilobyte loaded. The caller passes the running byte total; we
+ * print dots until the count of printed dots matches (total >> 10), so both
+ * load (standard IEC) and fload (Epyx) get the same density regardless of how
+ * they chunk the transfer (load by byte, fload by drive block). */
+static unsigned char prog_dots;
+
+static void progress_begin(void)
+{
+    prog_dots = 0;
+}
+
+static void progress(unsigned int total)
+{
+    unsigned char want = (unsigned char)(total >> 10);   /* a dot per 1024 bytes */
+
+    while (prog_dots < want) {
+        chrout('.');
+        ++prog_dots;
+    }
+}
+
+static void progress_end(void)
+{
+    if (prog_dots)
+        chrout(CR);                      /* fresh line for the result message */
+}
+
 
 /* Print an unsigned int in decimal (block counts are small, but the
    blocks-free line can reach a few hundred). */
@@ -160,7 +188,7 @@ static unsigned int fast_receive_prg(void);
 
 void cmd_load(int argc, char *argv[])
 {
-    unsigned char lo, hi;
+    unsigned char lo, hi, bc;
     unsigned char *p;
 
     if (argc < 2) {
@@ -203,11 +231,16 @@ void cmd_load(int argc, char *argv[])
     p = (unsigned char *)(lo | ((unsigned int)hi << 8));
     load_start = (unsigned int)p;
 
+    progress_begin();
+    bc = 0;
     for (;;) {                  /* the last byte arrives with EOI set */
         *p++ = iec_getbyte();
         if (iec_status() & ST_EOI)
             break;
+        if ((++bc & 63) == 0)   /* sample the running total every 64 bytes */
+            progress((unsigned int)p - load_start);
     }
+    progress_end();
 
     iec_close();
     iec_clrchn();
@@ -267,6 +300,7 @@ static unsigned int fast_receive_prg(void)
     unsigned char *dst = (unsigned char *)0x0800;
     unsigned char lo = 0, hi = 0;
 
+    progress_begin();
     for (;;) {
         if (epyx_wait_ready() != 0)         /* drive never signalled a block  */
             break;
@@ -284,12 +318,11 @@ static unsigned int fast_receive_prg(void)
                 *dst++ = b;
             ++count;
         }
-        chrout('.');                        /* progress: one dot per block --   */
-    }                                       /* between blocks the drive is busy */
-    if (count)                              /* reading the next sector, and the */
-        chrout(CR);                         /* per-byte timed receive is above, */
-    if (count < 3)                          /* so a CHROUT here can't disturb   */
-        return 0;                           /* the Epyx timing. fresh line after */
+        progress(count);                    /* progress dots -- drawn between    */
+    }                                       /* blocks (drive busy reading the    */
+    progress_end();                         /* next sector), never mid timed     */
+    if (count < 3)                          /* receive, so Epyx timing is safe.  */
+        return 0;
     load_start = (unsigned int)(lo | ((unsigned int)hi << 8));
     load_end = (unsigned int)dst;
     return (unsigned int)(dst - 1);
