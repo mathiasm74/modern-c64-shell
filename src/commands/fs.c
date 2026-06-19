@@ -284,9 +284,12 @@ static unsigned int fast_receive_prg(void)
                 *dst++ = b;
             ++count;
         }
-    }
-    if (count < 3)                          /* nothing (or only an address)  */
-        return 0;
+        chrout('.');                        /* progress: one dot per block --   */
+    }                                       /* between blocks the drive is busy */
+    if (count)                              /* reading the next sector, and the */
+        chrout(CR);                         /* per-byte timed receive is above, */
+    if (count < 3)                          /* so a CHROUT here can't disturb   */
+        return 0;                           /* the Epyx timing. fresh line after */
     load_start = (unsigned int)(lo | ((unsigned int)hi << 8));
     load_end = (unsigned int)dst;
     return (unsigned int)(dst - 1);
