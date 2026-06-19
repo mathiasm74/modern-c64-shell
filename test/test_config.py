@@ -92,6 +92,16 @@ def test_picker_stop_reverts(v):
         "STOP should revert bg to %d, got %d" % (orig, v.read_byte(0xD021) & 0x0F)
 
 
+def test_picker_down_moves_left(v):
+    # Down does the same as left (previous color), so down/right navigate
+    # without shifting. Two downs move the color back by 2.
+    start = v.read_byte(0xD021) & 0x0F
+    assert _open_picker(v, "bg"), "bg picker did not appear"
+    _send_keys(v, [0x11, 0x11, CR])            # down, down, RETURN
+    assert (v.read_byte(0xD021) & 0x0F) == ((start - 2) & 0x0F), \
+        "down should move back by 2 from %d" % start
+
+
 def test_prompt_changes(v):
     _run(v, "prompt %")
     # the new prompt "% " (note the trailing space) is not a substring of the

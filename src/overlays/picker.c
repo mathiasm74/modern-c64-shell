@@ -17,6 +17,7 @@ unsigned char k_getin(void);
 #define CR     0x0D
 #define CRSR_L 0x9D
 #define CRSR_R 0x1D
+#define CRSR_D 0x11             /* down = left, so down/right move without shift */
 #define STOP   0x03
 #define VIC_BORDER (*(unsigned char *)0xD020)
 #define VIC_BG     (*(unsigned char *)0xD021)
@@ -72,16 +73,18 @@ void picker_main(void)
     for (;;) {
         for (i = 0; i < 32; ++i)          /* redraw the marker row */
             SCR[mbase + i] = 0x20;
-        SCR[mbase + sel * 2] = 0x77;      /* two-bar marker (PETSCII 183) under it */
-        CRAM[mbase + sel * 2] = 0x01;     /* white */
+        SCR[mbase + sel * 2]     = 0x77;  /* two-bar marker (PETSCII 183) under */
+        SCR[mbase + sel * 2 + 1] = 0x77;  /* both cells of the 2-wide block */
+        CRAM[mbase + sel * 2]     = 0x01; /* white */
+        CRAM[mbase + sel * 2 + 1] = 0x01;
         apply_color(which, sel);          /* live preview */
 
         do {
             c = k_getin();
         } while (c == 0);
-        if (c == CRSR_L)
+        if (c == CRSR_L || c == CRSR_D)   /* left or down -> previous color */
             sel = sel ? sel - 1 : 15;
-        else if (c == CRSR_R)
+        else if (c == CRSR_R)             /* right -> next color */
             sel = (sel + 1) & 0x0F;
         else if (c == CR)                 /* keep the previewed color */
             break;
