@@ -27,12 +27,17 @@ _LABELS = os.path.join(_ROOT, "build", "labels.txt")
 _HAVE_STOCK = os.path.exists(_KERNAL) and os.path.exists(_BASIC)
 
 
-def _stub_bytes():
+def _labels():
     lab = {}
     for line in open(_LABELS):
         p = line.split()
         if len(p) >= 3 and p[0] == "al":
             lab[p[2].lstrip(".")] = int(p[1], 16) & 0xFFFF
+    return lab
+
+
+def _stub_bytes():
+    lab = _labels()
     s, e = lab["_run_stub"], lab["_run_stub_end"]
     rom = open(_KBIN, "rb").read()
     return rom[s - 0xE000:e - 0xE000]
@@ -66,6 +71,14 @@ def test_run_stub_runs_basic_program(v):
         sv.run_at(0xCF00, 1.5)
         assert sv.read_byte(0x00BA) == 0x08, \
             "stub did not restore $BA -- PEEK(186) would be wrong (?ILLEGAL DEVICE NUMBER)"
+        # The stub points the stock NMI vector ($0318/$0319) at the RAM escape
+        # handler, so RUN/STOP+RESTORE later swaps back to the shell. (The swap
+        # itself is hardware-only; here we just verify the vector is installed.)
+        esc = _labels()["rbcp_nmi_escape"]
+        vec = sv.read_byte(0x0318) | (sv.read_byte(0x0319) << 8)
+        assert vec == esc, \
+            "stub did not install the RUN/STOP+RESTORE escape vector " \
+            "($0318=%04X, want %04X)" % (vec, esc)
         rows = [r.strip() for r in sv.screen_text().split("\n")]
         assert "ok" in rows, \
             "stub did not RUN the BASIC program\n%s" % sv.screen_text()

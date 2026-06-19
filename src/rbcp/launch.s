@@ -593,3 +593,52 @@ rbcp_font_tramp:
         lda #4
         ldx #0
         rts
+
+; =========================================================================
+; RUN/STOP+RESTORE escape from a launched stock program.
+;
+; After `run` swaps to the stock ROMs, run_stub (c_io.s) points the stock NMI
+; vector ($0318) at rbcp_nmi_escape below. RESTORE is wired to the NMI line, so
+; pressing it runs this handler; if RUN/STOP is held too we swap the One ROM
+; back to the shell ROM set and reboot into the shell. RESTORE alone chains to
+; the stock NMI continuation, so it behaves normally.
+;
+; The shell ROM set is still in RAM slot 0 -- the launch only overwrote RAM
+; slot 1 (RBCP_STOCK_RAM_SLOT / OVL_RAM_SLOT) -- so a SWITCH_SLOT back to slot 0
+; restores it. (If font B was active, slot 0 holds font A; the shell reboots in
+; font A and settings_load re-applies font B, the same as the font/reset edge.)
+;
+; This block lives in RBCP_CODE, so it's already copied to $C8xx RAM before the
+; swap and survives it. Best-effort: a program that revectors $0318, masks the
+; CIA2 NMI source, or overwrites this RAM defeats it. Hardware-only -- without a
+; One ROM there's no slot to switch, and enter_cmd_resp just fails through to a
+; plain reboot.
+; =========================================================================
+RBCP_SHELL_RAM_SLOT = 0         ; boot-served slot; still holds the shell ROMs
+STOCK_NMI_CONT      = $FE47     ; stock KERNAL NMI continuation (default $0318)
+
+.segment "RBCP_CODE"
+.export rbcp_nmi_escape
+
+rbcp_nmi_escape:
+        pha                             ; we clobber A reading the key matrix
+        lda #$7F
+        sta $DC00                       ; CIA1 PRA: select keyboard column 7
+        lda $DC01                       ; CIA1 PRB: read rows; RUN/STOP = row 7
+        and #$80
+        bne @pass                       ; bit set = STOP up -> bare RESTORE
+        jmp rbcp_escape_tramp           ; RUN/STOP+RESTORE -> back to the shell
+@pass:
+        pla                             ; restore A; the stock handler saves the
+        jmp STOCK_NMI_CONT              ; regs itself, so chain with a clean stack
+
+rbcp_escape_tramp:
+        sei
+        jsr rbcp_reset
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @reboot                     ; no device / comms broken: reboot anyway
+        lda #RBCP_SHELL_RAM_SLOT
+        jsr rbcp_cmd_switch_slot        ; serve the shell ROM set again
+        jsr rbcp_cmd_exit_cmd_resp
+@reboot:
+        jmp ($FFFC)                     ; now the shell's reset vector

@@ -53,7 +53,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("Tardis DOS v0.69")
+    v.assert_screen_contains("Tardis DOS v0.70")
 
 
 # `exit` is no longer a builtin: it now swaps the One ROM to the stock C64 ROMs

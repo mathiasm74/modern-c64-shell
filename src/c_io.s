@@ -13,6 +13,8 @@
 .export _run_program
 .export _soft_reset
 
+.import rbcp_nmi_escape         ; RAM NMI handler for the RUN/STOP+RESTORE escape
+
 CHROUT = $FFD2
 GETIN  = $FFE4
 
@@ -105,6 +107,14 @@ _run_stub:
         jsr $FF87               ; RAMTAS  - clear ZP/pages 2-3, set MEMSTR/SIZ
         jsr $FF8A               ; RESTOR  - $0314-$0333 RAM vectors
         jsr $FF81               ; CINT    - screen editor (clears the screen)
+        ; Point the stock NMI vector at our RAM escape handler so RUN/STOP +
+        ; RESTORE swaps the One ROM back to the shell (see rbcp_nmi_escape).
+        ; RESTOR just set $0318 to the stock default ($FE47); override it now.
+        ; The handler lives in the RBCP RAM block, copied before the swap.
+        lda #<rbcp_nmi_escape
+        sta $0318
+        lda #>rbcp_nmi_escape
+        sta $0319
         ; RAMTAS cleared $BA (current device / FA) to 0. A real LOAD"name",dev
         ; leaves it = dev, and programs read it (PEEK(186)) to choose the drive
         ; to OPEN -- with it 0 (= keyboard) an OPEN raises ?ILLEGAL DEVICE
