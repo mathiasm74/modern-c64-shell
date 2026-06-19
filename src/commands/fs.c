@@ -609,19 +609,24 @@ void cmd_rm(int argc, char *argv[])
 }
 
 /* cd <path> - change the working path on the drive. The files overlay (cmd 7)
-   sends "CD:<path>" via its command_channel and reports a failure as
+   sends the CD command via its command_channel and reports a failure as
    "cd: <message>" (a 1541 has no CD and answers SYNTAX ERROR; a Meatloaf
    navigates and only errors on a missing path); success is silent. Paths can
    exceed the 16-char mailbox args (Meatloaf URLs), so the thunk prebuilds the
-   whole "cd:<path>" command into a 40-byte scratch at $0340 (free tape-buffer
-   RAM) and passes only its length in the mailbox. */
+   whole command into a 40-byte scratch at $0340 (free tape-buffer RAM) and
+   passes only its length in the mailbox.
+
+   A relative path is sent as "CD:<path>". A path starting with '/' is absolute
+   (from the root); the CMD/Meatloaf form for that is "CD/<path>", so the path's
+   own leading slash yields "CD//" for the root or "CD//sub" for a subdir. */
 #define CD_CMD ((unsigned char *)0x0340)
 void cmd_cd(int argc, char *argv[])
 {
     unsigned char i = 0, j;
 
     if (argc < 2) { puts_raw("usage: cd <path>"); chrout(CR); return; }
-    CD_CMD[i++] = 'c'; CD_CMD[i++] = 'd'; CD_CMD[i++] = ':';
+    CD_CMD[i++] = 'c'; CD_CMD[i++] = 'd';
+    CD_CMD[i++] = (argv[1][0] == '/') ? '/' : ':';
     for (j = 0; argv[1][j] && i < 39; ++j)
         CD_CMD[i++] = argv[1][j];
     FB_CMD = 7;

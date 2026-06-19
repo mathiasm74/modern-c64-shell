@@ -22,7 +22,7 @@ unsigned char k_getin(void);            /* crt0_dir.s: GETIN ($FFE4) */
 #define ST_TIMEOUT 0x02
 #define CR         0x0D
 #define CLEAR      0x93
-#define PAGE_LINES 22
+#define PAGE_LINES 24          /* 24 lines + the "-- more --" row fill the 25-row screen */
 #define COL_WIDTH  20                /* ls: two name columns across the 40 cols */
 #define TEXT_COLOR (*(unsigned char *)0x0286)
 #define SHFLAG     (*(volatile unsigned char *)0x028D)  /* bit 2 = CTRL held */

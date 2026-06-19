@@ -63,3 +63,35 @@ def test_cd_no_arg_usage(v):
     _type_cmd(v, "cd", clear=True)
     assert _wait(v, "usage: cd"), \
         "cd with no arg should print usage\n%s" % v.screen_text()
+
+
+def _cmd_at_0340(v, n):
+    return "".join(chr(b) for b in v.read_memory(0x0340, n))
+
+
+def test_cd_root_builds_absolute_command(v):
+    # `cd /` is absolute (from root): CMD/Meatloaf drives want "CD//", not the
+    # relative "CD:/". The thunk prebuilds the command at $0340; the actual
+    # root navigation is hardware-only (VICE's 1541 just SYNTAX ERRORs), so we
+    # assert the bytes it builds. A leading '/' -> "cd/" + path.
+    v.run_for(0.3)
+    seed_files(v)
+    _type_cmd(v, "cd /", clear=True)
+    v.run_for(0.5)
+    assert _cmd_at_0340(v, 4) == "cd//", \
+        "cd / should build 'cd//', got %r" % _cmd_at_0340(v, 4)
+
+
+def test_cd_absolute_subdir_command(v):
+    # `cd /games` -> "cd//games" (absolute), while a relative `cd games` stays
+    # "cd:games".
+    v.run_for(0.3)
+    seed_files(v)
+    _type_cmd(v, "cd /games", clear=True)
+    v.run_for(0.5)
+    assert _cmd_at_0340(v, 9) == "cd//games", \
+        "cd /games should build 'cd//games', got %r" % _cmd_at_0340(v, 9)
+    _type_cmd(v, "cd games", clear=True)
+    v.run_for(0.5)
+    assert _cmd_at_0340(v, 8) == "cd:games", \
+        "cd games should build 'cd:games', got %r" % _cmd_at_0340(v, 8)
