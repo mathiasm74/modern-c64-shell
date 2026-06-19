@@ -82,11 +82,12 @@ $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 # page order are defined in tools/gen_overlay_pages.py (LAYOUT) and mirrored by
 # the overlays_a/b.bin rules below; build/overlay_pages.h is generated from the
 # .bin sizes so the resident thunks never hardcode a page or set number.
-OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/dir.bin $(BUILD)/overlays/edit.bin
-# Set/page order MUST match LAYOUT in tools/gen_overlay_pages.py. `about` moved
-# to set B (with edit) so it can grow past one page; set A keeps files+dir.
+OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/dir.bin $(BUILD)/overlays/edit.bin $(BUILD)/overlays/picker.bin
+# Set/page order MUST match LAYOUT in tools/gen_overlay_pages.py. set A keeps
+# files+dir (30 pages); set B holds edit+about+picker (27) -- the two 20-page
+# overlays (files, edit) must stay in different 32-page chips.
 OVERLAYS_A := $(BUILD)/overlays/files.bin $(BUILD)/overlays/dir.bin
-OVERLAYS_B := $(BUILD)/overlays/edit.bin $(BUILD)/overlays/about.bin
+OVERLAYS_B := $(BUILD)/overlays/edit.bin $(BUILD)/overlays/about.bin $(BUILD)/overlays/picker.bin
 OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin
 
 # The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;
@@ -131,6 +132,18 @@ $(BUILD)/overlays/about.bin: $(BUILD)/overlays/about.o cfg/overlay_about.cfg
 	$(LD) -C cfg/overlay_about.cfg -o $@ $(BUILD)/overlays/about.o
 	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
 	@echo "  about overlay: $$(wc -c < $@) bytes"
+
+# The color-picker overlay (border/bg/text with no value): cc65 C, only
+# k_chrout/k_getin (crt0_picker.s, cfg/overlay_picker.cfg).
+$(BUILD)/overlays/picker.s: src/overlays/picker.c | $(BUILD)
+	@mkdir -p $(BUILD)/overlays
+	$(CC) $(CC65FLAGS) -o $@ $<
+$(BUILD)/overlays/picker_c.o: $(BUILD)/overlays/picker.s
+	$(AS) $(ASFLAGS) -o $@ $<
+$(BUILD)/overlays/picker.bin: $(BUILD)/overlays/crt0_picker.o $(BUILD)/overlays/picker_c.o cfg/overlay_picker.cfg
+	$(LD) -C cfg/overlay_picker.cfg -o $@ $(BUILD)/overlays/crt0_picker.o $(BUILD)/overlays/picker_c.o $(RTLIB)
+	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
+	@echo "  picker overlay: $$(wc -c < $@) bytes"
 
 
 $(BUILD)/overlays/%.o: src/overlays/%.s | $(BUILD)

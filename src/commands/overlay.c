@@ -160,3 +160,18 @@ void run_dir_overlay(void)
     OVL8_ENTRY();
 }
 
+/* Run the color-picker overlay. `which` (0 border, 1 bg, 2 text) goes in the
+   $02D1 mailbox the overlay reads. */
+void run_picker(unsigned char which)
+{
+    unsigned char rc;
+
+    *(unsigned char *)0x02D1 = which;
+    rc = mp_fetch(PICKER_FIRST_PAGE, "pic1", PICKER_SET);
+    if (rc != 0) {
+        mp_failed(rc);
+        return;
+    }
+    OVL8_ENTRY();
+}
+

@@ -7,7 +7,7 @@ in the files overlay (cmds 8-11) -- the bodies cost overlay flash, not the
 touch the drive).
 """
 
-from lib.overlays import seed_files
+from lib.overlays import seed_files, seed_picker
 
 CR = 0x0D
 
@@ -52,7 +52,8 @@ def test_text_color(v):
 
 
 def _open_picker(v, cmd):
-    """Type a no-value color command and wait for its picker to appear."""
+    """Seed the picker overlay, type a no-value color command, wait for it."""
+    seed_picker(v)
     v.write_memory(0x0277, _ch(cmd) + [CR])
     v.write_byte(0x00C6, len(cmd) + 1)
     for _ in range(12):

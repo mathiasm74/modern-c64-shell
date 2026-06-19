@@ -27,6 +27,7 @@ LAYOUT = [
     ("dir.bin",   "DIR",   "FIRST_PAGE", 2),
     ("edit.bin",  "EDIT",  "FIRST_PAGE", 3),
     ("about.bin", "ABOUT", "FIRST_PAGE", 3),
+    ("picker.bin", "PICKER", "FIRST_PAGE", 3),
 ]
 
 

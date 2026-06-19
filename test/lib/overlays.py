@@ -33,3 +33,8 @@ def seed_dir(v):
 def seed_edit(v):
     """edit overlay -> $8800."""
     _seed(v, "edit.bin", 0x8800)
+
+
+def seed_picker(v):
+    """color-picker overlay (border/bg/text with no value) -> $8800."""
+    _seed(v, "picker.bin", 0x8800)
