@@ -82,6 +82,18 @@ def test_cd_root_builds_absolute_command(v):
         "cd / should build 'cd//', got %r" % _cmd_at_0340(v, 4)
 
 
+def test_cd_double_slash_is_flash_root(v):
+    # `cd //` is the flash root, one level below `/`. The drive reaches it with
+    # "CD<up-arrow>" (PETSCII $5E), not a slash path, so the thunk builds
+    # 'c','d',$5E -- hardware-only navigation (asserted via the built bytes).
+    v.run_for(0.3)
+    seed_files(v)
+    _type_cmd(v, "cd //", clear=True)
+    v.run_for(0.5)
+    assert list(v.read_memory(0x0340, 3)) == [0x63, 0x64, 0x5E], \
+        "cd // should build 'cd'+up-arrow, got %r" % list(v.read_memory(0x0340, 3))
+
+
 def test_cd_absolute_subdir_command(v):
     # `cd /games` -> "cd//games" (absolute), while a relative `cd games` stays
     # "cd:games".

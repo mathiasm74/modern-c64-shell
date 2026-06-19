@@ -618,7 +618,10 @@ void cmd_rm(int argc, char *argv[])
 
    A relative path is sent as "CD:<path>". A path starting with '/' is absolute
    (from the root); the CMD/Meatloaf form for that is "CD/<path>", so the path's
-   own leading slash yields "CD//" for the root or "CD//sub" for a subdir. */
+   own leading slash yields "CD//" for the root or "CD//sub" for a subdir.
+
+   "cd //" is the special case for the flash root -- one level below "/" -- which
+   the drive reaches with "CD<up-arrow>" (PETSCII $5E), not a slash path. */
 #define CD_CMD ((unsigned char *)0x0340)
 void cmd_cd(int argc, char *argv[])
 {
@@ -626,9 +629,13 @@ void cmd_cd(int argc, char *argv[])
 
     if (argc < 2) { puts_raw("usage: cd <path>"); chrout(CR); return; }
     CD_CMD[i++] = 'c'; CD_CMD[i++] = 'd';
-    CD_CMD[i++] = (argv[1][0] == '/') ? '/' : ':';
-    for (j = 0; argv[1][j] && i < 39; ++j)
-        CD_CMD[i++] = argv[1][j];
+    if (argv[1][0] == '/' && argv[1][1] == '/' && argv[1][2] == '\0') {
+        CD_CMD[i++] = 0x5E;             /* "cd //" -> "CD<up-arrow>" flash root */
+    } else {
+        CD_CMD[i++] = (argv[1][0] == '/') ? '/' : ':';
+        for (j = 0; argv[1][j] && i < 39; ++j)
+            CD_CMD[i++] = argv[1][j];
+    }
     FB_CMD = 7;
     FB_DEV = default_device;
     FB_A1L = i;                         /* prebuilt-command length (cmd at $0340) */
