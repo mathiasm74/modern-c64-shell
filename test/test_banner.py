@@ -2,7 +2,7 @@
 
 
 def test_banner_text(v):
-    v.assert_screen_contains("TarDOS")
+    v.assert_screen_contains("Tardis DOS")
     v.assert_screen_contains("Ready")
 
 

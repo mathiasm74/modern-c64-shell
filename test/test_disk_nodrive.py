@@ -27,7 +27,7 @@ def test_ls_without_disk_stays_responsive(v):
     ok = False
     for _ in range(5):
         v.run_for(0.4)
-        if "TarDOS v" in v.screen_text():
+        if "Tardis DOS v" in v.screen_text():
             ok = True
             break
     assert ok, "shell did not respond after `ls` with no disk (it wedged)"

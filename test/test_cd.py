@@ -55,7 +55,7 @@ def test_cd_reports_drive_error(v):
         "cd error still shows the raw track/sector suffix\n%s" % v.screen_text()
     # shell survives
     _type_cmd(v, "ver", clear=True)
-    assert _wait(v, "TarDOS v"), "shell unresponsive after cd error"
+    assert _wait(v, "Tardis DOS v"), "shell unresponsive after cd error"
 
 
 def test_cd_no_arg_usage(v):

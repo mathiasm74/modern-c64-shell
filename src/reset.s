@@ -80,6 +80,8 @@ KBD_LAYOUT = $02CB              ; 0 = US/symbolic tables, 1 = Swedish (irq.s)
 COLOR_BLACK  = $00
 COLOR_WHITE  = $01              ; text and cursor color
 COLOR_BLUE   = $06
+COLOR_ORANGE = $08              ; default border
+COLOR_BROWN  = $09              ; default background
 COLOR_LTBLUE = $0E              ; classic C64 default text color
 SPACE        = $20              ; screen code for a blank cell
 
@@ -183,9 +185,9 @@ reset:
         lda CIA2_PRA
         ora #$03                ; %......11 -> VIC bank 0 ($0000-$3FFF)
         sta CIA2_PRA
-        lda #COLOR_BLACK
+        lda #COLOR_ORANGE       ; default border (overridden by NV if saved)
         sta VIC_BORDER
-        lda #COLOR_BLUE
+        lda #COLOR_BROWN        ; default background
         sta VIC_BGCOL
 
         ; --- Clear screen to spaces, color RAM to light blue -------------
@@ -211,10 +213,10 @@ reset:
 
         ; --- Startup banner ----------------------------------------------
         ; row 0: version, right-aligned (5 chars "vX.YY" end at col 38)
-        ; row 2: brand, centered (29 chars)   row 4: free bytes, centered (38)
+        ; row 2: brand, centered (33 chars)   row 4: free bytes, centered (38)
         ; row 6: "Ready."   row 7: the shell prompt (cursor set below)
         PRINT version, SCREEN_RAM + 40 * 0 + 34
-        PRINT brand,   SCREEN_RAM + 40 * 2 + 6
+        PRINT brand,   SCREEN_RAM + 40 * 2 + 3
         PRINT freemem, SCREEN_RAM + 40 * 4 + 1    ; ROM free bytes (patched in)
         PRINT banner2, SCREEN_RAM + 40 * 6 + 0
 
@@ -394,9 +396,9 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.57", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.58", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
-        .byte "TarDOS - your C64 power shell", 0
+        .byte "Tardis DOS - your C64 power shell", 0
 banner2:
         .byte "Ready.", 0
 

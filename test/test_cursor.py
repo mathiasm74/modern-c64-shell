@@ -1,8 +1,8 @@
 """The text cursor: a static (non-blinking) reverse-video block, white text.
 
 The cursor is the cell at PNT ($D1/$D2) + PNTR ($D3) shown in reverse video --
-bit 7 of its screen code. With white text ($01) on the blue screen, reverse
-video reads as a solid white block, and any character under it as blue (the
+bit 7 of its screen code. With white text ($01) on the brown screen, reverse
+video reads as a solid white block, and any character under it as brown (the
 background colour). CHROUT moves it; there is no timer, so it never blinks.
 
 (`screen_text()` masks bit 7, so the block is invisible to text assertions;

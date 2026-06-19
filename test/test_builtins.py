@@ -53,7 +53,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("TarDOS v0.57")
+    v.assert_screen_contains("Tardis DOS v0.58")
 
 
 # `exit` is no longer a builtin: it now swaps the One ROM to the stock C64 ROMs
@@ -66,15 +66,15 @@ def test_clear_command_wipes_screen(v):
     # First put something on screen (ver's banner output), then let the clear
     # *command* (not a clear keystroke) wipe it.
     _type(v, "ver")
-    assert "TarDOS v" in v.screen_text(), "ver output should be on screen first"
+    assert "Tardis DOS v" in v.screen_text(), "ver output should be on screen first"
     _type_no_clear(v, "clear")
-    assert "TarDOS v" not in v.screen_text(), "clear command did not wipe the screen"
+    assert "Tardis DOS v" not in v.screen_text(), "clear command did not wipe the screen"
 
 
 def test_leading_whitespace_still_dispatches(v):
     # The parser skips leading whitespace, so " ver" still finds ver.
     # Version-agnostic (exact version lives in test_ver_prints_version).
     _type(v, " ver")
-    v.assert_screen_contains("TarDOS v")
+    v.assert_screen_contains("Tardis DOS v")
     assert "Command not found" not in v.screen_text(), \
         "leading space should not turn a known command into an unknown one"

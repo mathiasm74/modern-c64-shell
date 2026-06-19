@@ -30,5 +30,5 @@ def test_font_inert_without_onerom(v):
     assert _wait(v, "unavailable"), \
         "font should report unavailable in VICE\n%s" % v.screen_text()
     _type(v, "ver")
-    assert _wait(v, "TarDOS v"), \
+    assert _wait(v, "Tardis DOS v"), \
         "shell unresponsive after font\n%s" % v.screen_text()

@@ -56,5 +56,5 @@ def test_run_name_enters_fastload_and_survives(v):
         "run <name> wrongly took the no-program path\n%s" % v.screen_text()
     # shell still alive after the failed fast load
     _type(v, "ver")
-    assert _wait_any(v, ["TarDOS v"]), \
+    assert _wait_any(v, ["Tardis DOS v"]), \
         "shell unresponsive after run <name>\n%s" % v.screen_text()
