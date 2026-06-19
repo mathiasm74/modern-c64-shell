@@ -419,6 +419,7 @@ void main(void)
 
     settings_load();                     /* apply saved colors + replay history */
     for (;;) {
+        print_device_prefix();           /* "<dev>[ <name>]" left of the prompt */
         puts_raw(prompt_str);
         chrout(' ');
         n = readline();

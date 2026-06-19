@@ -27,6 +27,17 @@ def test_boot_shows_prompt(v):
         "shell reported a command before anything was typed"
 
 
+def test_prompt_shows_device_number(v):
+    # The prompt is prefixed with the current device number (8 at boot, no name).
+    prompt = None
+    for r in v.screen_rows():
+        if r.strip().endswith(">"):
+            prompt = r.strip()
+    assert prompt is not None, "no prompt row found"
+    assert prompt.startswith("8>"), \
+        "prompt should start with the device number, got %r" % prompt
+
+
 def test_unknown_command_reports(v):
     # "foo" + RETURN -> the shell reports it as an unknown command.
     _send(v, [CLEAR, 0x66, 0x6F, 0x6F, CR])   # f o o RETURN

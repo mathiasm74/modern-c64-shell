@@ -19,4 +19,6 @@ void cmd_status(int argc, char *argv[]); /* read the drive error channel    */
 void cmd_cat(int argc, char *argv[]);    /* dump a file to the screen       */
 void cmd_less(int argc, char *argv[]);   /* page a file                     */
 
+void print_device_prefix(void);          /* "<dev>[ <name>]" left of the prompt */
+
 #endif /* FS_H */

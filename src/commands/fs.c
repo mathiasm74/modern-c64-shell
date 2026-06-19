@@ -56,6 +56,22 @@ static const char *current_device_name(void)
     return "";
 }
 
+/* Print "<dev>[ <name>]" -- the device prefix the shell draws left of the
+   prompt character (main() in shell.c calls this before the prompt). chrout
+   uses the current text color. */
+void print_device_prefix(void)
+{
+    const char *name = current_device_name();
+
+    if (default_device >= 10)
+        chrout('0' + default_device / 10);
+    chrout('0' + default_device % 10);
+    if (name[0]) {
+        chrout(' ');
+        puts_raw(name);
+    }
+}
+
 
 /* Print an unsigned int in decimal (block counts are small, but the
    blocks-free line can reach a few hundred). */
