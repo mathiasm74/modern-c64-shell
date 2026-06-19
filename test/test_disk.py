@@ -57,17 +57,21 @@ def test_dir_lists_directory(v):
 
 
 def test_ls_colors_names_by_type(v):
-    # "ls" lists just the names, each colored by type. PROG/README are PRG and
-    # DOC is SEQ, so the PRG and SEQ names get different text colors.
+    # "ls" lists just the names in two columns, each colored by type.
+    # PROG/README are PRG and DOC is SEQ, so PRG/SEQ names get different colors.
     seed_dir(v)
     _type(v, "ls", clear=True)
     assert _wait_for(v, "DOC"), "ls did not list the files"
     rows = v.screen_rows()
 
     def color_at(name):
+        # ls packs names into two columns at offsets 0 and 20; find the name at
+        # a column start (followed by a space/end) and read its first cell color.
         for i, r in enumerate(rows):
-            if r.strip() == name:               # ls prints the bare name
-                return v.read_byte(0xD800 + i * 40) & 0x0F
+            for off in (0, 20):
+                if r[off:off + len(name)] == name and \
+                        r[off + len(name):off + len(name) + 1] in (" ", ""):
+                    return v.read_byte(0xD800 + i * 40 + off) & 0x0F
         return None
 
     prg = color_at("PROG")

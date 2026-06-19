@@ -23,6 +23,7 @@ unsigned char k_getin(void);            /* crt0_dir.s: GETIN ($FFE4) */
 #define CR         0x0D
 #define CLEAR      0x93
 #define PAGE_LINES 22
+#define COL_WIDTH  20                /* ls: two name columns across the 40 cols */
 #define TEXT_COLOR (*(unsigned char *)0x0286)
 #define SHFLAG     (*(volatile unsigned char *)0x028D)  /* bit 2 = CTRL held */
 
@@ -161,29 +162,34 @@ static void dir_end(void)
     }
 }
 
-/* Page the listing like `less`, but ONLY while CTRL is held: after PAGE_LINES
-   lines, if CTRL is down, print "-- more --" and wait for a key (q quits, any
-   other clears the screen and continues); if CTRL is up the listing just
-   scrolls past. Returns 1 if the user quit. ls/dir open the directory over
-   *standard* IEC (dir_begin with allow_fast = 0) so this wait can't abort the
-   transfer -- the drive just blocks on the next handshaked byte. (The old
-   CTRL-hold pause-while-down ran over the timed Epyx fast path, which the drive
-   aborts if stalled too long; CTRL-gated paging is the safe replacement.) */
-static unsigned char paginate(unsigned char *lines)
+/* Page the listing like `less`. Pressing CTRL at ANY point during the listing
+   arms pagination (a sticky `*paged` flag): from then on, every PAGE_LINES
+   lines it prints "-- more --" and waits for a key (q quits, any other clears
+   the screen and continues). If CTRL is never pressed the listing just scrolls
+   past. On quit it emits a CR so the shell prompt lands at the start of a line.
+   Returns 1 on quit. ls/dir read over *standard* IEC (dir_begin(0)) so the wait
+   can't abort a timed transfer -- the drive just blocks on the next handshaked
+   byte. (The old CTRL-hold pause-while-down ran over the timed Epyx fast path,
+   which the drive aborts if stalled too long.) */
+static unsigned char paginate(unsigned char *lines, unsigned char *paged)
 {
     unsigned char c;
 
+    if (SHFLAG & 0x04)                  /* CTRL pressed at any time arms paging */
+        *paged = 1;
     if (++(*lines) < PAGE_LINES)
         return 0;
     *lines = 0;
-    if (!(SHFLAG & 0x04))               /* CTRL not held -> free scroll, no pause */
+    if (!*paged)                        /* never armed -> free scroll, no pause */
         return 0;
     puts_raw("-- more --");
     do {
         c = k_getin();
     } while (c == 0);
-    if (c == 'q')
+    if (c == 'q') {
+        k_chrout(CR);                   /* put the prompt at the start of a line */
         return 1;
+    }
     k_chrout(CLEAR);
     return 0;
 }
@@ -220,7 +226,7 @@ static unsigned char type_color(const char *type)
 static void do_dir(void)
 {
     unsigned int blocks;
-    unsigned char lines = 0;
+    unsigned char lines = 0, paged = 0;
 
     if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
         return;
@@ -229,7 +235,7 @@ static void do_dir(void)
         k_chrout(' ');
         puts_raw(dir_buf);
         k_chrout(CR);
-        if (paginate(&lines))
+        if (paginate(&lines, &paged))
             break;
     }
     dir_end();
@@ -238,7 +244,8 @@ static void do_dir(void)
 static void do_ls(void)
 {
     unsigned int blocks;
-    unsigned char i, q2, t, color, saved, first, lines = 0;
+    unsigned char i, q2, t, color, saved, first, lines = 0, paged = 0;
+    unsigned char col = 0, n;
 
     if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
         return;
@@ -264,13 +271,27 @@ static void do_ls(void)
             ++t;
         color = type_color(&dir_buf[t]);
         TEXT_COLOR = color ? color : saved;
-        while (i < q2)
+        n = 0;
+        while (i < q2) {                /* print the name, counting its width */
             k_chrout(dir_buf[i++]);
-        TEXT_COLOR = saved;             /* restore BEFORE the newline: the CR's */
-        k_chrout(CR);                   /* scroll fill + the cursor cell must    */
-        if (paginate(&lines))           /* stay the default color, not the name's */
-            break;
+            ++n;
+        }
+        TEXT_COLOR = saved;             /* default color for the gap / CR */
+        if (col == 0) {                 /* left column: pad out to the right one */
+            while (n < COL_WIDTH) {
+                k_chrout(' ');
+                ++n;
+            }
+            col = 1;
+        } else {                        /* right column: end the row, then page */
+            k_chrout(CR);
+            col = 0;
+            if (paginate(&lines, &paged))
+                break;
+        }
     }
+    if (col == 1)                       /* dangling left-column name -> end its row */
+        k_chrout(CR);
     TEXT_COLOR = saved;
     dir_end();
 }
