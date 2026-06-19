@@ -81,6 +81,29 @@ def test_launch_copies_library_to_ram(v):
     assert rom_first == 0xAD, "expected library to start with LDA absolute ($AD)"
 
 
+def test_escape_invalidates_planted_cbm80(v):
+    # The RUN/STOP+RESTORE escape (rbcp_escape_tramp) reboots into the shell.
+    # `run` planted a CBM80 autostart signature at $8004-$8008 so the stock
+    # reset would launch the program; the shell's reset runs the SAME check, so
+    # the escape must invalidate it first or the shell would just relaunch the
+    # program we're escaping from. Copy the RBCP library into its RAM run
+    # location (the swap does this before the escape ever runs), plant the
+    # signature byte, run the escape trampoline, and confirm it's cleared. The
+    # RBCP calls after the clear are inert in VICE, but the clear is the first
+    # thing the trampoline does, so it always lands.
+    L = _labels()
+    load = L["__RBCP_CODE_LOAD__"]
+    run = L["__RBCP_CODE_RUN__"]
+    size = L["__RBCP_CODE_SIZE__"]
+    esc = L["rbcp_escape_tramp"]
+
+    v.write_memory(run, list(v.read_memory(load, size)))   # ROM -> RAM run addr
+    v.write_byte(0x8004, 0xC3)                             # plant CBM80 sig byte
+    v.run_at(esc, 0.3)
+    assert v.read_byte(0x8004) != 0xC3, \
+        "escape did not invalidate the planted CBM80 signature ($8004 still $C3)"
+
+
 def test_overlay_command_fails_gracefully_without_device(v):
     # `about` is the first overlay command: its code is NOT in the shell ROM
     # (it lives in the One ROM's overlays flash set), and the resident thunk

@@ -619,6 +619,7 @@ STOCK_NMI_CONT      = $FE47     ; stock KERNAL NMI continuation (default $0318)
 
 .segment "RBCP_CODE"
 .export rbcp_nmi_escape
+.export rbcp_escape_tramp                ; exported for the VICE clear-CBM80 test
 
 rbcp_nmi_escape:
         pha                             ; we clobber A reading the key matrix
@@ -634,6 +635,13 @@ rbcp_nmi_escape:
 
 rbcp_escape_tramp:
         sei
+        ; `run` planted a CBM80 autostart signature at $8000 (so the stock reset
+        ; would launch the program). We're rebooting into the SHELL, whose reset
+        ; runs the same cartridge-autostart check ($8004-$8008 = $C3,$C2,$CD,$38,
+        ; $30, reset.s) -- it would find the still-planted signature and relaunch
+        ; the very program we're escaping from. Invalidate it first.
+        lda #0
+        sta $8004
         jsr rbcp_reset
         jsr rbcp_cmd_enter_cmd_resp
         bcs @reboot                     ; no device / comms broken: reboot anyway
