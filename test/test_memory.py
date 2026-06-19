@@ -1,16 +1,16 @@
 """Known memory/register values after a clean boot."""
 
 
-def test_border_is_orange(v):
+def test_border_is_brown(v):
     border = v.read_byte(0xD020)
-    assert border is not None and (border & 0x0F) == 0x08, \
-        "border color is $%02X, expected orange ($08)" % (border or 0)
+    assert border is not None and (border & 0x0F) == 0x09, \
+        "border color is $%02X, expected brown ($09)" % (border or 0)
 
 
-def test_background_is_brown(v):
+def test_background_is_orange(v):
     bg = v.read_byte(0xD021)
-    assert bg is not None and (bg & 0x0F) == 0x09, \
-        "background color is $%02X, expected brown ($09)" % (bg or 0)
+    assert bg is not None and (bg & 0x0F) == 0x08, \
+        "background color is $%02X, expected orange ($08)" % (bg or 0)
 
 
 def test_screen_cleared_below_banner(v):

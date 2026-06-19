@@ -80,8 +80,8 @@ KBD_LAYOUT = $02CB              ; 0 = US/symbolic tables, 1 = Swedish (irq.s)
 COLOR_BLACK  = $00
 COLOR_WHITE  = $01              ; text and cursor color
 COLOR_BLUE   = $06
-COLOR_ORANGE = $08              ; default border
-COLOR_BROWN  = $09              ; default background
+COLOR_ORANGE = $08              ; default background
+COLOR_BROWN  = $09              ; default border
 COLOR_LTBLUE = $0E              ; classic C64 default text color
 SPACE        = $20              ; screen code for a blank cell
 
@@ -185,9 +185,9 @@ reset:
         lda CIA2_PRA
         ora #$03                ; %......11 -> VIC bank 0 ($0000-$3FFF)
         sta CIA2_PRA
-        lda #COLOR_ORANGE       ; default border (overridden by NV if saved)
+        lda #COLOR_BROWN        ; default border (overridden by NV if saved)
         sta VIC_BORDER
-        lda #COLOR_BROWN        ; default background
+        lda #COLOR_ORANGE       ; default background
         sta VIC_BGCOL
 
         ; --- Clear screen to spaces, color RAM to light blue -------------
@@ -396,7 +396,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.59", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.60", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:

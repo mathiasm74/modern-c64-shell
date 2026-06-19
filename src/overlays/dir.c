@@ -269,6 +269,8 @@ static void do_ls(void)
             ;
         if (dir_buf[t] == '*')
             ++t;
+        if (up(dir_buf[t]) == 'N' && up(dir_buf[t + 1]) == 'F')
+            continue;                   /* skip Meatloaf NFO info lines (dir keeps them) */
         color = type_color(&dir_buf[t]);
         TEXT_COLOR = color ? color : saved;
         n = 0;
