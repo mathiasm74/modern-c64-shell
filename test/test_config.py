@@ -51,6 +51,46 @@ def test_text_color(v):
     assert (v.read_byte(0x0286) & 0x0F) == 7, "text color not set"
 
 
+def _open_picker(v, cmd):
+    """Type a no-value color command and wait for its picker to appear."""
+    v.write_memory(0x0277, _ch(cmd) + [CR])
+    v.write_byte(0x00C6, len(cmd) + 1)
+    for _ in range(12):
+        v.run_for(0.3)
+        if "color" in v.screen_text():
+            return True
+    return False
+
+
+def _send_keys(v, keys):
+    v.write_memory(0x0277, keys)
+    v.write_byte(0x00C6, len(keys))
+    for _ in range(8):
+        v.run_for(0.3)
+        if "color" not in v.screen_text():     # picker cleared the screen
+            return
+
+
+def test_bg_picker_moves_and_sets(v):
+    # `bg` with no value opens the resident color picker: 16 solid blocks ($A0
+    # at col 4) and an 'o' marker. Right twice then RETURN advances the color
+    # by 2 and keeps it. (No overlay seed: the picker is resident.)
+    start = v.read_byte(0xD021) & 0x0F
+    assert _open_picker(v, "bg"), "bg picker did not appear\n%s" % v.screen_text()
+    assert v.read_byte(0x0400 + 6 * 40 + 4) == 0xA0, "color blocks not drawn"
+    _send_keys(v, [0x1D, 0x1D, CR])            # right, right, RETURN
+    assert (v.read_byte(0xD021) & 0x0F) == ((start + 2) & 0x0F), \
+        "bg should advance by 2 from %d" % start
+
+
+def test_picker_stop_reverts(v):
+    orig = v.read_byte(0xD021) & 0x0F
+    assert _open_picker(v, "bg"), "bg picker did not appear"
+    _send_keys(v, [0x1D, 0x1D, 0x03])          # right, right, STOP -> revert
+    assert (v.read_byte(0xD021) & 0x0F) == orig, \
+        "STOP should revert bg to %d, got %d" % (orig, v.read_byte(0xD021) & 0x0F)
+
+
 def test_prompt_changes(v):
     _run(v, "prompt %")
     # the new prompt "% " (note the trailing space) is not a substring of the

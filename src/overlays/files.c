@@ -358,18 +358,13 @@ static unsigned char parse_dec(void)
     return v;
 }
 
-/* which: 0 border ($D020), 1 background ($D021), 2 text color ($0286). */
+/* which: 0 border ($D020), 1 background ($D021), 2 text color ($0286). The
+   no-value case (interactive color picker) is handled resident in config.c, so
+   the overlay only ever gets a value here. */
 static void set_color(unsigned char which)
 {
-    unsigned char val;
+    unsigned char val = parse_dec() & 0x0F;
 
-    if (A1L == 0) {
-        puts_raw(which == 0 ? "usage: border <0-15>" :
-                 which == 1 ? "usage: bg <0-15>" : "usage: text <0-15>");
-        crlf();
-        return;
-    }
-    val = parse_dec() & 0x0F;
     if (which == 0)
         VIC_BORDER = val;
     else if (which == 1)
