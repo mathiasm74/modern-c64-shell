@@ -151,6 +151,12 @@ $(BUILD)/commands/fs.s: $(BUILD)/overlay_pages.h
 # cfg/onerom-stock.json). Each holds whole overlays packed from page 0, so a
 # fetch's SLOT_PEEK always stays within one 8KB chip. The A/B grouping here
 # MUST match LAYOUT in tools/gen_overlay_pages.py.
+#
+# These depend on the Makefile itself: the *order/membership* of OVERLAYS_A/B
+# lives only in this file, so a regrouping (e.g. moving an overlay between sets)
+# leaves the member .bins untouched -- without this dep, make would see the
+# stale set binary as newer than its prereqs and skip the rebuild, baking the
+# old page layout into the firmware (resident macros then mismatch -> stage 5).
 define pack_overlay_set
 	cat $(1) > $@
 	python3 -c "import sys; f=open('$@','r+b'); f.seek(0,2); n=f.tell(); \
@@ -158,10 +164,10 @@ define pack_overlay_set
 	@echo "  $(@F): $$(wc -c < $@) bytes"
 endef
 
-$(BUILD)/overlays_a.bin: $(OVERLAYS_A)
+$(BUILD)/overlays_a.bin: $(OVERLAYS_A) Makefile
 	$(call pack_overlay_set,$(OVERLAYS_A))
 
-$(BUILD)/overlays_b.bin: $(OVERLAYS_B)
+$(BUILD)/overlays_b.bin: $(OVERLAYS_B) Makefile
 	$(call pack_overlay_set,$(OVERLAYS_B))
 
 
