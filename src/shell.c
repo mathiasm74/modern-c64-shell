@@ -127,6 +127,7 @@ void puts_raw(const char *s)
 /* The prompt symbol main() shows (followed by a space). Initialized -> DATA,
    so it survives reset; `prompt` changes it. */
 static char prompt_str[16] = ">";
+static unsigned char prompt_dirty;       /* prompt changed -> persist on next save */
 
 void set_prompt(const char *s)
 {
@@ -137,6 +138,7 @@ void set_prompt(const char *s)
         ++i;
     }
     prompt_str[i] = 0;
+    prompt_dirty = 1;                     /* settings_load clears this after restore */
 }
 
 /* Redraw the whole input line and leave the cursor at column `target`.
@@ -298,10 +300,11 @@ static void dispatch(struct command_line *cl)
  * The transport (src/rbcp/launch.s) runs the RBCP handshake; on a non-One-ROM
  * build it fails, nv_capability() returns 0, and everything here no-ops (so the
  * shell behaves exactly as before in VICE / a plain build). Blob at NV offset
- * 0: "TD" magic, version, 3 color bytes, hist_count, then length-prefixed
- * history lines (oldest first). Restore replays them through history_add so the
- * ring rebuilds exactly. To bound flash wear we write only on a color change or
- * every SAVE_EVERY commands (and on `basic`, via cmd_basic). */
+ * 0: "TD" magic, version, 3 color bytes, font byte, length-prefixed prompt,
+ * hist_count, then length-prefixed history lines (oldest first). Restore replays
+ * history through history_add so the ring rebuilds exactly. To bound flash wear
+ * we write only on a color/prompt change or every SAVE_EVERY commands (and on
+ * `basic`, via cmd_basic, and on a font change). */
 unsigned char nv_capability(void);
 unsigned char nv_read(void);
 unsigned char nv_write(void);
@@ -313,8 +316,8 @@ unsigned char font_get(void);                      /* fs.c: current font (0/1) *
 
 #define NV_MAGIC0    'T'
 #define NV_MAGIC1    'D'
-#define NV_VERSION   2          /* bumped: header gained a font byte (offset 6) */
-#define NV_BLOB_MAX  192        /* 8 header + 8 * (1 + 22) = 192 */
+#define NV_VERSION   3          /* bumped: blob gained a length-prefixed prompt */
+#define NV_BLOB_MAX  208        /* 7 hdr + (1+15) prompt + 1 hcount + 8*(1+22) */
 #define NV_ENTRY_MAX 22         /* chars persisted per history line */
 #define SAVE_EVERY   8          /* periodic history checkpoint, in commands */
 #define VIC_BORDER   (*(unsigned char *)0xD020)
@@ -344,8 +347,14 @@ void settings_load(void)
         VIC_BG     = nv_blob[4] & 0x0F;
         COLOR_REG  = nv_blob[5] & 0x0F;
         font_select(nv_blob[6] & 1);    /* re-apply font B (+ Swedish keys) */
-        hc = nv_blob[7];
+        k = nv_blob[7];                 /* length-prefixed prompt */
         i = 8;
+        for (j = 0; j < k && i < NV_BLOB_MAX && j < LINEMAX; ++j)
+            tmp[j] = nv_blob[i++];
+        tmp[j] = 0;
+        if (j > 0)
+            set_prompt(tmp);            /* restore the saved prompt (sets dirty) */
+        hc = nv_blob[i++];
         for (n = 0; n < hc && n < HIST_N && i < NV_BLOB_MAX; ++n) {
             k = nv_blob[i++];
             j = 0;
@@ -360,6 +369,7 @@ void settings_load(void)
     col_shadow[0] = VIC_BORDER & 0x0F;
     col_shadow[1] = VIC_BG & 0x0F;
     col_shadow[2] = COLOR_REG & 0x0F;
+    prompt_dirty = 0;                    /* the restore above set it; we just loaded */
 }
 
 void settings_save(void)
@@ -376,8 +386,14 @@ void settings_save(void)
     nv_blob[4] = VIC_BG & 0x0F;
     nv_blob[5] = COLOR_REG & 0x0F;
     nv_blob[6] = font_get();             /* persisted font (0 = A, 1 = B) */
-    nv_blob[7] = hist_count;
+    k = 0;                               /* length-prefixed prompt */
+    while (prompt_str[k] && k < sizeof(prompt_str) - 1)
+        ++k;
+    nv_blob[7] = k;
     i = 8;
+    for (j = 0; j < k; ++j)
+        nv_blob[i++] = prompt_str[j];
+    nv_blob[i++] = hist_count;
     oldest = (unsigned char)((hist_next + HIST_N - hist_count) % HIST_N);
     for (n = 0; n < hist_count; ++n) {
         s = hist[(unsigned char)((oldest + n) % HIST_N)];
@@ -395,16 +411,18 @@ void settings_save(void)
     col_shadow[0] = nv_blob[3];
     col_shadow[1] = nv_blob[4];
     col_shadow[2] = nv_blob[5];
+    prompt_dirty = 0;
     cmds_since_save = 0;
 }
 
-/* After a non-empty command: save now if a color changed, else once per
-   SAVE_EVERY commands (a history checkpoint that bounds the flash-write rate). */
+/* After a non-empty command: save now if a color or the prompt changed, else
+   once per SAVE_EVERY commands (a checkpoint that bounds the flash-write rate). */
 static void settings_after_command(void)
 {
     if (!nv_ok)
         return;
-    if ((VIC_BORDER & 0x0F) != col_shadow[0] ||
+    if (prompt_dirty ||
+        (VIC_BORDER & 0x0F) != col_shadow[0] ||
         (VIC_BG & 0x0F) != col_shadow[1] ||
         (COLOR_REG & 0x0F) != col_shadow[2])
         settings_save();

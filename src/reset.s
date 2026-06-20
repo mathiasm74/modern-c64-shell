@@ -380,7 +380,7 @@ restore_colors:
         cmp #$44                ; 'D'
         bne @rc_done
         lda COLORBUF+2
-        cmp #$02                ; blob version
+        cmp #$03                ; blob version
         bne @rc_done
         lda COLORBUF+3
         and #$0F
@@ -396,7 +396,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.74", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.75", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:
