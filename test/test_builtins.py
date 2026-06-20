@@ -22,7 +22,7 @@ CR = 0x0D
 
 
 def _type(v, text):
-    """Seed the files overlay (help/echo live there now), clear, type, RETURN."""
+    """Seed the files overlay (help lives there now), clear, type, RETURN."""
     seed_files(v)
     codes = [CLEAR] + [ord(c) for c in text] + [CR]
     assert len(codes) <= 10, "line exceeds the 10-byte keyboard buffer: %r" % text
@@ -53,7 +53,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("Tardis DOS v0.73")
+    v.assert_screen_contains("Tardis DOS v0.74")
 
 
 # `basic` (formerly `exit`, before that `runstock`) swaps the One ROM to the

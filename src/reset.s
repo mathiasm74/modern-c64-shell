@@ -190,7 +190,7 @@ reset:
         lda #COLOR_ORANGE       ; default background
         sta VIC_BGCOL
 
-        ; --- Clear screen to spaces, color RAM to light blue -------------
+        ; --- Clear screen to spaces, color RAM to white ------------------
         ldx #$00
         lda #SPACE
 @clrscr:
@@ -396,7 +396,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.73", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.74", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:

@@ -11,7 +11,7 @@
 #include "shell.h"
 #include "iec.h"
 #include "fastload.h"
-#include "commands/overlay.h"     /* overlay_run, for the cat/less thunks */
+#include "commands/overlay.h"     /* run_files_overlay / files_run, for the thunks */
 
 #define CR    0x0D
 #define CLEAR 0x93
@@ -56,16 +56,17 @@ static const char *current_device_name(void)
     return "";
 }
 
+static void print_uint(unsigned int n);
+
 /* Print "<dev>[ <name>]" -- the device prefix the shell draws left of the
    prompt character (main() in shell.c calls this before the prompt). chrout
-   uses the current text color. */
+   uses the current text color. The device number goes through print_uint so
+   this stays free of a 16-bit divide too (see print_uint). */
 void print_device_prefix(void)
 {
     const char *name = current_device_name();
 
-    if (default_device >= 10)
-        chrout('0' + default_device / 10);
-    chrout('0' + default_device % 10);
+    print_uint(default_device);
     if (name[0]) {
         chrout(' ');
         puts_raw(name);
@@ -101,23 +102,37 @@ static void progress_end(void)
 }
 
 
-/* Print an unsigned int in decimal (block counts are small, but the
-   blocks-free line can reach a few hundred). */
+/* Print an unsigned int in decimal. Done by repeated subtraction of powers of
+   ten rather than n/10 % 10: a 16-bit divide would pull cc65's udiv/umod (~96
+   bytes of runtime) into the resident ROM, and this is the only divide left in
+   the resident C, so avoiding it drops them entirely. */
+static const unsigned int print_uint_pow10[4] = { 10000, 1000, 100, 10 };
+
 static void print_uint(unsigned int n)
 {
-    char buf[5];
-    unsigned char i = 0;
+    unsigned char i, d, started = 0;
+    unsigned int p;
 
-    if (n == 0) {
-        chrout('0');
-        return;
+    for (i = 0; i < 4; ++i) {
+        p = print_uint_pow10[i];
+        d = 0;
+        while (n >= p) { n -= p; ++d; }
+        if (d || started) {
+            chrout('0' + d);
+            started = 1;
+        }
     }
-    while (n) {
-        buf[i++] = '0' + (n % 10);
-        n /= 10;
-    }
-    while (i)
-        chrout(buf[--i]);
+    chrout('0' + (unsigned char)n);     /* units digit (also prints "0" for 0) */
+}
+
+/* Print "usage: <rest>" + newline. Shared so the "usage: " prefix isn't
+   duplicated as a separate string literal in every command's arg check (cc65
+   doesn't merge identical literals). */
+static void usage(const char *rest)
+{
+    puts_raw("usage: ");
+    puts_raw(rest);
+    chrout(CR);
 }
 
 static void print_hex_nybble(unsigned char n)
@@ -192,8 +207,7 @@ void cmd_load(int argc, char *argv[])
     unsigned char *p;
 
     if (argc < 2) {
-        puts_raw("usage: load <name>");
-        chrout(CR);
+        usage("load <name>");
         return;
     }
 
@@ -371,8 +385,7 @@ void cmd_fload(int argc, char *argv[])
     unsigned int end;
 
     if (argc < 2) {
-        puts_raw("usage: fload <name>");
-        chrout(CR);
+        usage("fload <name>");
         return;
     }
     end = fload_program(argv[1]);
@@ -581,31 +594,31 @@ void files_run(unsigned char cmd, const char *a1, const char *a2)
 
 void cmd_cat(int argc, char *argv[])
 {
-    if (argc < 2) { puts_raw("usage: cat <name>"); chrout(CR); return; }
+    if (argc < 2) { usage("cat <name>"); return; }
     files_run(0, argv[1], 0);
 }
 
 void cmd_less(int argc, char *argv[])
 {
-    if (argc < 2) { puts_raw("usage: less <name>"); chrout(CR); return; }
+    if (argc < 2) { usage("less <name>"); return; }
     files_run(1, argv[1], 0);
 }
 
 void cmd_cp(int argc, char *argv[])
 {
-    if (argc < 3) { puts_raw("usage: cp <src> <dst>"); chrout(CR); return; }
+    if (argc < 3) { usage("cp <src> <dst>"); return; }
     files_run(2, argv[1], argv[2]);
 }
 
 void cmd_mv(int argc, char *argv[])
 {
-    if (argc < 3) { puts_raw("usage: mv <old> <new>"); chrout(CR); return; }
+    if (argc < 3) { usage("mv <old> <new>"); return; }
     files_run(3, argv[1], argv[2]);     /* overlay builds r0:<new>=<old> */
 }
 
 void cmd_rm(int argc, char *argv[])
 {
-    if (argc < 2) { puts_raw("usage: rm <name>"); chrout(CR); return; }
+    if (argc < 2) { usage("rm <name>"); return; }
     files_run(4, argv[1], 0);
 }
 
@@ -628,7 +641,7 @@ void cmd_cd(int argc, char *argv[])
 {
     unsigned char i = 0, j;
 
-    if (argc < 2) { puts_raw("usage: cd <path>"); chrout(CR); return; }
+    if (argc < 2) { usage("cd <path>"); return; }
     CD_CMD[i++] = 'c'; CD_CMD[i++] = 'd';
     if (argv[1][0] == '/' && argv[1][1] == '/' && argv[1][2] == '\0') {
         CD_CMD[i++] = 0x5E;             /* "cd //" -> "CD<up-arrow>" flash root */

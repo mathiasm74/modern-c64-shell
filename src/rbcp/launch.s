@@ -138,24 +138,6 @@ rbcp_copy_to_ram:
         rts
 
 ; -------------------------------------------------------------------------
-; _overlay_fetch_page - tardis overlay loader (C-callable, fastcall:
-; A = overlay page number). Fetches one 256-byte page from the overlays
-; flash set into the overlay cache at $CE00: enter command-response mode,
-; LOAD_SLOT the overlays flash set into RAM slot 1, SLOT_PEEK page*256 into
-; the back-channel window, copy the 256 bytes to the cache, exit. Returns
-; A: 0 = ok, 1 = enter failed, 2 = load failed, 3 = peek failed,
-; 4 = exit failed. Same RAM-copy discipline as the PoC (see _rbcp_poc_peek).
-;
-; LOAD_SLOT on every fetch is deliberate first-pass simplicity: it also
-; repairs RAM slot 1 after a runstock/cart swap clobbered it with the stock
-; ROMs, at the cost of an in-device 8KB copy (~ms) per cache miss.
-; -------------------------------------------------------------------------
-.export _overlay_fetch_page
-_overlay_fetch_page:
-        jsr rbcp_copy_to_ram
-        jmp rbcp_ovl_tramp      ; rts there returns to our caller
-
-; -------------------------------------------------------------------------
 ; _overlay_fetch_multi - fetch N consecutive overlay pages to an arbitrary
 ; RAM destination, one RBCP session for the whole run. Parameters go in the
 ; page-2 mailbox (it must be RAM the library copy doesn't overwrite, and the
@@ -210,14 +192,6 @@ rbcp_trampoline:
         ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
 
-; -------------------------------------------------------------------------
-; rbcp_ovl_tramp - RAM side of _overlay_fetch_page. The 256-byte copy out
-; of the back-channel window happens while still in command-response mode
-; (back-channel reads are ordinary served-ROM reads, the same thing the
-; library's own polling does); only command-page fetches are off limits,
-; and this runs from the RAM copy.
-; -------------------------------------------------------------------------
-OVERLAY_CACHE  = $CE00          ; free RAM above the RBCP_RAM region
 ; The overlay library spans two 8KB flash sets (each holds whole overlays --
 ; no overlay straddles a set, so SLOT_PEEK only ever reads within one 8KB
 ; chip, which is the proven case). The C side puts the target set in the
@@ -226,62 +200,6 @@ OVERLAY_CACHE  = $CE00          ; free RAM above the RBCP_RAM region
 ; don't count).
 OVL_MB_SET     = $02C3          ; flash set for this fetch (set by C caller)
 OVL_RAM_SLOT   = 1              ; staging slot (shared with the stock swap)
-
-rbcp_ovl_tramp:
-        sta ovl_page            ; fastcall A = page number
-        sei
-        jsr rbcp_reset
-        jsr rbcp_cmd_enter_cmd_resp
-        bcs @enter_fail
-        lda #OVL_RAM_SLOT
-        ldx OVL_MB_SET
-        jsr rbcp_cmd_load_slot
-        bcs @load_fail
-        lda #0
-        sta rbcp_arg1           ; offset lo = 0 (pages are 256-aligned)
-        sta rbcp_arg3           ; offset hi
-        lda ovl_page
-        sta rbcp_arg2           ; offset mid = page number
-        lda #0                  ; count 0 = 256 bytes
-        ldx #OVL_RAM_SLOT
-        jsr rbcp_cmd_slot_peek
-        bcs @peek_fail
-        ldy #0
-@copy:
-        lda RBCP_DATA_ADDR,y
-        sta OVERLAY_CACHE,y
-        iny
-        bne @copy
-        jsr rbcp_cmd_exit_cmd_resp
-        bcs @exit_fail
-        cli
-        lda #0
-        ldx #0
-        rts
-@enter_fail:
-        cli
-        lda #1
-        ldx #0
-        rts
-@load_fail:
-        jsr rbcp_cmd_exit_cmd_resp      ; best effort: leave CR mode
-        cli
-        lda #2
-        ldx #0
-        rts
-@peek_fail:
-        jsr rbcp_cmd_exit_cmd_resp
-        cli
-        lda #3
-        ldx #0
-        rts
-@exit_fail:
-        cli
-        lda #4
-        ldx #0
-        rts
-
-ovl_page: .byte 0               ; written at the RAM run address
 
 ; -------------------------------------------------------------------------
 ; rbcp_ovlm_tramp - RAM side of _overlay_fetch_multi: one session, looping

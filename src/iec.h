@@ -22,8 +22,7 @@ void iec_set_fnadr(const void *p);      /* set FNADR (no length scan)      */
 void iec_set_fnlen(unsigned char len);  /* set FNLEN explicitly            */
 
 void iec_open(void);            /* LISTEN, send open-secondary + name, UNLISTEN */
-void iec_command(void);         /* LISTEN, write the name to the command channel*/
-void iec_command_raw(void);     /* same, but send the body verbatim (no fold)   */
+void iec_command_raw(void);     /* LISTEN, write the body verbatim to the cmd chan*/
 void iec_chkin(void);           /* TALK + secondary, turn the bus around        */
 unsigned char iec_getbyte(void);/* receive one byte (ACPTR); sets EOI in status */
 void iec_close(void);           /* LISTEN, send close-secondary, UNLISTEN       */

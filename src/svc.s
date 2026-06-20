@@ -5,7 +5,8 @@
 ; the same idea as the KERNAL jump table, but for our own services. The dir
 ; overlay (src/overlays/dir.c) uses it for the IEC bus and the Epyx fast
 ; receiver so it can list directories (standard and fast) without bundling
-; that code itself.
+; that code itself; the files overlay uses svc 16 (set_prompt) for the
+; `prompt` command.
 ;
 ; The entries' addresses ARE the ABI: src/overlays/svc.h hardcodes them. Keep
 ; this order and the start address ($FF80) in sync with svc.h, and don't let
