@@ -344,7 +344,7 @@ static unsigned int fast_receive_prg(void)
 
 /* Fast-load `name` over the Epyx path into RAM at the PRG's embedded load
    address; sets load_start/load_end. Returns the last written address (the
-   value `floaded`/`run` report), or 0 on any failure -- which it has already
+   value `fload`/`run` report), or 0 on any failure -- which it has already
    reported (no device / not Epyx-capable / broken stream). Shared by `fload`
    and `run <name>`.
 
@@ -391,7 +391,7 @@ void cmd_fload(int argc, char *argv[])
     end = fload_program(argv[1]);
     if (end == 0)
         return;                 /* fload_program already reported the failure */
-    puts_raw("floaded $");
+    puts_raw("Fast-loaded $");
     print_hex16(load_start);
     puts_raw("-$");
     print_hex16(end);

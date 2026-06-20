@@ -214,7 +214,7 @@ reset:
         ; --- Startup banner ----------------------------------------------
         ; row 0: version, right-aligned (5 chars "vX.YY" end at col 38)
         ; row 2: brand, centered (33 chars)   row 4: free bytes, centered (38)
-        ; row 6: "Ready."   row 7: the shell prompt (cursor set below)
+        ; row 6: "Ready."   row 7: blank   row 8: the shell prompt (cursor set below)
         PRINT version, SCREEN_RAM + 40 * 0 + 34
         PRINT brand,   SCREEN_RAM + 40 * 2 + 3
         PRINT freemem, SCREEN_RAM + 40 * 4 + 1    ; ROM free bytes (patched in)
@@ -256,7 +256,7 @@ reset:
         sta COLOR
         lda #$00
         sta PNTR
-        lda #$07                ; prompt on row 7, under the banner / "Ready."
+        lda #$08                ; prompt on row 8: blank row 7 between "Ready." and it
         sta TBLX
         jsr set_line_ptrs
 
@@ -396,7 +396,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.75", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.25", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:
