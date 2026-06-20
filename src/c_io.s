@@ -14,6 +14,7 @@
 .export _soft_reset
 
 .import rbcp_nmi_escape         ; RAM NMI handler for the RUN/STOP+RESTORE escape
+.import rbcp_escape_tramp       ; RAM swap-back: also hooked on BASIC's IMAIN ($0302)
 
 CHROUT = $FFD2
 GETIN  = $FFE4
@@ -141,11 +142,28 @@ _run_stub:
                                 ;   exactly as stock BASIC's LOAD tail ($A52A)
         lda RUN_MODE
         bne @ready
+        ; mode 0 (run): hook BASIC's main-loop vector ($0302/IMAIN) so when the
+        ; program returns to READY (END/STOP/quit) BASIC's JMP ($0302) lands in
+        ; our swap-back instead -- returning to the shell. $E453 above reset
+        ; $0302 to the BASIC default ($A483), so install it now. (mode 1 / READY
+        ; deliberately skips this so `basic` stays in BASIC.)
+        lda #<rbcp_escape_tramp
+        sta $0302
+        lda #>rbcp_escape_tramp
+        sta $0303
         cli
         jmp $A7AE               ; RUN
 @ready: cli
         jmp $A474               ; READY. - stock BASIC immediate mode (LIST/RUN)
 @ml:    ; --- machine-code program: jump through its load address --------
-        cli
+        ; Same IMAIN hook for mode 0: an ML program that quits by returning to
+        ; BASIC READY (the usual fb/pterm exit) then bounces back to the shell.
+        lda RUN_MODE
+        bne @ml_go
+        lda #<rbcp_escape_tramp
+        sta $0302
+        lda #>rbcp_escape_tramp
+        sta $0303
+@ml_go: cli
         jmp (RUN_PARAMS)
 _run_stub_end:

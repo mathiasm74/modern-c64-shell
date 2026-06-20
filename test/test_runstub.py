@@ -55,8 +55,12 @@ def test_run_stub_runs_basic_program(v):
     if not _HAVE_STOCK:
         return  # skip: no user-supplied stock ROMs
     stub = list(_stub_bytes())
-    # 1 PRINT"OK"
-    prog = [0x0B, 0x08, 0x01, 0x00, 0x99, 0x22, 0x4F, 0x4B, 0x22, 0x00, 0x00, 0x00]
+    # 1 PRINT"OK":GOTO1  -- loops forever so the program never returns to READY.
+    # (A program that ENDs would trip the new mode-0 IMAIN hook and reboot,
+    # wiping the screen; the loop keeps "ok" up so we can see RUN happened and
+    # read the installed vectors.)
+    prog = [0x0E, 0x08, 0x01, 0x00, 0x99, 0x22, 0x4F, 0x4B, 0x22,
+            0x3A, 0x89, 0x31, 0x00, 0x00, 0x00]
     with _stock_vice() as sv:
         sv.run_for(2.0)
         # dirty the machine the way our shell leaves it
@@ -64,21 +68,27 @@ def test_run_stub_runs_basic_program(v):
         sv.write_memory(0x0200, [0x55] * 0x100)
         sv.write_memory(0x0300, [0x33] * 0x100)
         sv.write_memory(0x0801, prog)
-        sv.write_memory(0xCFF8, [0x01, 0x08, 0x0D, 0x08])  # load $0801, end $080D
+        sv.write_memory(0xCFF8, [0x01, 0x08, 0x10, 0x08])  # load $0801, end $0810
         sv.write_memory(0xCFFC, [0x00])                    # mode 0 = RUN
         sv.write_memory(0xCFFD, [0x08])                    # device (FA) to restore
         sv.write_memory(0xCF00, stub)
         sv.run_at(0xCF00, 1.5)
         assert sv.read_byte(0x00BA) == 0x08, \
             "stub did not restore $BA -- PEEK(186) would be wrong (?ILLEGAL DEVICE NUMBER)"
-        # The stub points the stock NMI vector ($0318/$0319) at the RAM escape
-        # handler, so RUN/STOP+RESTORE later swaps back to the shell. (The swap
-        # itself is hardware-only; here we just verify the vector is installed.)
-        esc = _labels()["rbcp_nmi_escape"]
-        vec = sv.read_byte(0x0318) | (sv.read_byte(0x0319) << 8)
-        assert vec == esc, \
+        # The stub points the stock NMI vector ($0318) at the RAM escape handler,
+        # so RUN/STOP+RESTORE swaps back to the shell, and -- in mode 0 -- the
+        # BASIC main-loop vector ($0302/IMAIN) at the swap-back, so a program
+        # quitting to READY also returns. (The swap is hardware-only; here we
+        # just verify the vectors are installed.)
+        L = _labels()
+        nmi = sv.read_byte(0x0318) | (sv.read_byte(0x0319) << 8)
+        assert nmi == L["rbcp_nmi_escape"], \
             "stub did not install the RUN/STOP+RESTORE escape vector " \
-            "($0318=%04X, want %04X)" % (vec, esc)
+            "($0318=%04X, want %04X)" % (nmi, L["rbcp_nmi_escape"])
+        imain = sv.read_byte(0x0302) | (sv.read_byte(0x0303) << 8)
+        assert imain == L["rbcp_escape_tramp"], \
+            "mode 0 did not hook IMAIN for the quit-return " \
+            "($0302=%04X, want %04X)" % (imain, L["rbcp_escape_tramp"])
         rows = [r.strip() for r in sv.screen_text().split("\n")]
         assert "ok" in rows, \
             "stub did not RUN the BASIC program\n%s" % sv.screen_text()
@@ -93,19 +103,22 @@ def test_run_stub_relinks_broken_link(v):
     if not _HAVE_STOCK:
         return
     stub = list(_stub_bytes())
-    # 1 PRINT"OK", but the forward link is garbage ($FFFF) instead of $080B.
-    prog = [0xFF, 0xFF, 0x01, 0x00, 0x99, 0x22, 0x4F, 0x4B, 0x22, 0x00, 0x00, 0x00]
+    # 1 PRINT"OK":GOTO1 (loops, as above), but the forward link is garbage
+    # ($FFFF) instead of $080E. LINKPRG must rebuild it -- and GOTO 1 only finds
+    # line 1 once the chain is rebuilt, so the loop itself depends on the relink.
+    prog = [0xFF, 0xFF, 0x01, 0x00, 0x99, 0x22, 0x4F, 0x4B, 0x22,
+            0x3A, 0x89, 0x31, 0x00, 0x00, 0x00]
     with _stock_vice() as sv:
         sv.run_for(2.0)
         sv.write_memory(0x0002, [0xAA] * 254)
         sv.write_memory(0x0300, [0x33] * 0x100)
         sv.write_memory(0x0801, prog)
-        sv.write_memory(0xCFF8, [0x01, 0x08, 0x0D, 0x08])  # load $0801, end $080D
+        sv.write_memory(0xCFF8, [0x01, 0x08, 0x10, 0x08])  # load $0801, end $0810
         sv.write_memory(0xCFFC, [0x00])                    # mode 0 = RUN
         sv.write_memory(0xCF00, stub)
         sv.run_at(0xCF00, 1.5)
         link = list(sv.read_memory(0x0801, 2))
-        assert link == [0x0B, 0x08], \
+        assert link == [0x0E, 0x08], \
             "LINKPRG did not rebuild the broken line link: %r" % (link,)
         rows = [r.strip() for r in sv.screen_text().split("\n")]
         assert "ok" in rows, \
@@ -133,6 +146,12 @@ def test_run_stub_ready_mode_does_not_autorun(v):
         link = list(sv.read_memory(0x0801, 2))
         assert link == [0x0B, 0x08], \
             "LINKPRG did not rebuild the link in READY mode: %r" % (link,)
+        # mode 1 (basic) must NOT hook IMAIN -- it deliberately stays in BASIC,
+        # so $0302 keeps the BASIC default ($A483); a hook would bounce the user
+        # straight back to the shell.
+        imain = sv.read_byte(0x0302) | (sv.read_byte(0x0303) << 8)
+        assert imain == 0xA483, \
+            "mode 1 must not hook IMAIN ($0302=%04X, want A483)" % imain
         rows = [r.strip() for r in sv.screen_text().split("\n")]
         assert any("ready" in r for r in rows), \
             "stub did not drop to BASIC READY.\n%s" % sv.screen_text()
