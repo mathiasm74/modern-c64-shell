@@ -126,4 +126,11 @@ unsigned char __fastcall__ epyx_wait_ready(void);
  * hardware-calibrated (see the PAD note in fastload_recv.s).                 */
 unsigned char __fastcall__ epyx_recv_byte(void);
 
+/* Receive a whole Epyx-streamed PRG into its embedded load address: the block
+ * framing, store, byte count and progress dots all run in tight ASM (the drive
+ * blocks on our DATA-high per byte, so cc65 inner-loop overhead slowed every
+ * byte). Stores the load address at $02AF/$02B0. Returns the end address
+ * (VARTAB), or 0 if fewer than 3 bytes arrived.                              */
+unsigned int __fastcall__ epyx_recv_prg(void);
+
 #endif /* FASTLOAD_H */

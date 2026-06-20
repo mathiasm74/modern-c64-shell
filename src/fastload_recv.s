@@ -19,9 +19,11 @@
 ; loop waits for that CLK low->high before each block's length byte.
 ; ============================================================================
 
-.export _epyx_recv_byte, _epyx_wait_ready
+.export _epyx_recv_byte, _epyx_wait_ready, _epyx_recv_prg
 
 .import wait_clk_lo, wait_clk_hi
+
+CHROUT  = $FFD2
 
 CIA2_PRA = $DD00
 B_DATA   = $20          ; DATA output (1 = pull DATA low)
@@ -160,5 +162,105 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         lda RES
         eor #$FF                        ; wire bits were inverted
         ldx #$00
+        rts
+.endproc
+
+; ----------------------------------------------------------------------------
+; _epyx_recv_prg - receive a whole Epyx-streamed PRG into its embedded load
+; address. Reuses _epyx_recv_byte (the proven timed sampler + badline pacing)
+; and _epyx_wait_ready, but does the block framing, the store, the byte count
+; and the progress dots here in tight ASM instead of the cc65 inner loop the
+; C wrapper used to run. The drive blocks on our DATA-high before EVERY byte
+; (Meatloaf's transmitEpyxByte waits for it), so the cc65 per-byte overhead was
+; directly stalling the transfer -- this cuts it to a JSR + a store + a counter.
+;
+; Stores the PRG load address at LADRL/LADRH ($02AF/$02B0) for the C wrapper.
+; Emits a '.' every 4th block and a CR at the end (the same progress dots as
+; before). Returns the end address (last byte + 1 = VARTAB) in A/X, or $0000 if
+; fewer than 3 bytes arrived (missing file / broken stream). C-callable.
+; ----------------------------------------------------------------------------
+DST   = $FC             ; $FC/$FD dest pointer (zp, for (DST),y); RES=$FB is taken
+BLK   = $FE             ; bytes left in the current block
+TOTL  = $02AC           ; total bytes received (16-bit), for the <3 check
+TOTH  = $02AD
+BLKN  = $02AE           ; block counter: a progress dot every 4th block
+LADRL = $02AF           ; PRG load address, read back by the C wrapper
+LADRH = $02B0
+
+.proc _epyx_recv_prg
+        lda #0
+        sta BLK
+        sta BLKN
+        sta TOTL
+        sta TOTH
+        ; --- load address: the first two data bytes set the destination ------
+        jsr next_byte
+        bcs @fail
+        sta DST
+        sta LADRL
+        jsr next_byte
+        bcs @fail
+        sta DST+1
+        sta LADRH
+        lda #2
+        sta TOTL                        ; the two address bytes are counted
+        ; --- stream the rest into (DST), crossing block boundaries -----------
+@loop:
+        jsr next_byte
+        bcs @eof
+        ldy #$00
+        sta (DST),y
+        inc DST
+        bne :+
+        inc DST+1
+:       inc TOTL
+        bne @loop
+        inc TOTH
+        jmp @loop
+@eof:
+        lda TOTH
+        bne @ok
+        lda TOTL
+        cmp #3                          ; fewer than 3 bytes -> failure
+        bcc @fail
+@ok:
+        lda #$0D
+        jsr CHROUT                      ; CR: fresh line after the dots
+        lda DST                         ; return end address (VARTAB)
+        ldx DST+1
+        rts
+@fail:
+        lda #0
+        tax
+        rts
+.endproc
+
+; next_byte - return the next PRG data byte in A (carry clear), crossing block
+; boundaries. Carry set = end of stream (zero-length block or ready timeout).
+; Emits a progress dot at every 4th block boundary (in the inter-block gap,
+; where the drive is busy fetching the next block anyway). Clobbers A/X/Y.
+.proc next_byte
+        lda BLK
+        bne @have
+        ; --- block boundary --------------------------------------------------
+        inc BLKN
+        lda BLKN
+        and #$03
+        bne @nodot
+        lda #$2E                        ; '.'
+        jsr CHROUT
+@nodot:
+        jsr _epyx_wait_ready            ; A=0 ready, A=1 timeout
+        bne @eof
+        jsr _epyx_recv_byte             ; block length
+        sta BLK
+        beq @eof                        ; zero-length block -> EOF
+@have:
+        dec BLK
+        jsr _epyx_recv_byte             ; the data byte
+        clc
+        rts
+@eof:
+        sec
         rts
 .endproc

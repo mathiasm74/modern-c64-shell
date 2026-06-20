@@ -303,43 +303,21 @@ static unsigned char fold_name(unsigned char *buf, const char *src)
     return n;
 }
 
-/* Receive a PRG over the Epyx stream into its embedded load address, in
-   [length][data...] blocks until a zero-length block. Sets load_start and
-   returns the last written address, or 0 if fewer than 3 bytes arrived
-   (missing file / broken stream). Caller already sent install + header. */
+/* Receive a PRG over the Epyx stream into its embedded load address. The whole
+   per-byte loop -- block framing, store, count, progress dots -- runs in tight
+   ASM (epyx_recv_prg, fastload_recv.s) instead of a cc65 loop: the drive blocks
+   on our DATA-high before every byte, so cc65's per-byte overhead was directly
+   slowing the transfer. Sets load_start/load_end; returns the last written
+   address, or 0 if fewer than 3 bytes arrived. Caller already sent the header. */
 static unsigned int fast_receive_prg(void)
 {
-    unsigned char i, n, b;
-    unsigned int count = 0;
-    unsigned char *dst = (unsigned char *)0x0800;
-    unsigned char lo = 0, hi = 0;
+    unsigned int end = epyx_recv_prg();
 
-    progress_begin();
-    for (;;) {
-        if (epyx_wait_ready() != 0)         /* drive never signalled a block  */
-            break;
-        n = epyx_recv_byte();               /* block length; 0 = end of file  */
-        if (n == 0)
-            break;
-        for (i = 0; i < n; ++i) {
-            b = epyx_recv_byte();
-            if (count == 0)
-                lo = b;
-            else if (count == 1) {
-                hi = b;
-                dst = (unsigned char *)(lo | ((unsigned int)hi << 8));
-            } else
-                *dst++ = b;
-            ++count;
-        }
-        progress(count);                    /* progress dots -- drawn between    */
-    }                                       /* blocks (drive busy reading the    */
-    progress_end();                         /* next sector), never mid timed     */
-    if (count < 3)                          /* receive, so Epyx timing is safe.  */
+    if (end == 0)                       /* fewer than 3 bytes -> failure */
         return 0;
-    load_start = (unsigned int)(lo | ((unsigned int)hi << 8));
-    load_end = (unsigned int)dst;
-    return (unsigned int)(dst - 1);
+    load_start = *(unsigned int *)0x02AF;   /* LADRL/LADRH, set by the ASM */
+    load_end = end;
+    return end - 1;
 }
 
 /* Fast-load `name` over the Epyx path into RAM at the PRG's embedded load
