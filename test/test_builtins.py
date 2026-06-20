@@ -46,19 +46,19 @@ def test_help_lists_every_command(v):
     _type(v, "help")
     txt = v.screen_text()
     assert "Commands" in txt, "help did not print its header"
-    for name in ("help", "clear", "ver", "exit"):
+    for name in ("help", "clear", "ver", "basic"):
         assert name in txt, "help did not list %s" % name
 
 
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("Tardis DOS v0.71")
+    v.assert_screen_contains("Tardis DOS v0.72")
 
 
-# `exit` is no longer a builtin: it now swaps the One ROM to the stock C64 ROMs
-# (cmd_exit in fs.c, formerly `runstock`). Like run/runstock that swap is
-# hardware-only -- inert in VICE -- so there's no behavior test here;
+# `basic` (formerly `exit`, before that `runstock`) swaps the One ROM to the
+# stock C64 ROMs and lands at BASIC (cmd_basic in fs.c). Like run/runstock that
+# swap is hardware-only -- inert in VICE -- so there's no behavior test here;
 # test_help_lists_every_command above still confirms it's registered.
 
 

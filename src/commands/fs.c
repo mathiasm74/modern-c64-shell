@@ -446,9 +446,10 @@ void cmd_run(int argc, char *argv[])
 }
 #pragma code-name (pop)
 
-/* exit - leave the shell by swapping the One ROM to stock C64 ROMs so stock
-   KERNAL/BASIC take over (the closest thing to "exit" we have: there's no OS
-   underneath, but there IS a real C64 one bank-swap away). Uses the
+/* basic - leave the shell for real stock BASIC by swapping the One ROM to the
+   stock C64 ROMs so stock KERNAL/BASIC take over (there's no OS underneath, but
+   there IS a real C64 one bank-swap away -- and it lands you at BASIC, hence the
+   name; `exit` was the old name). Uses the
    host-control plugin's RBCP protocol (see src/rbcp/) to load the stock-ROM
    flash slot into a RAM slot, switch to it, and only then hand off. If a
    program was `load`ed first, it is handed to stock BASIC intact (via the
@@ -462,7 +463,7 @@ void cmd_run(int argc, char *argv[])
    own shell. Never returns; back to the shell needs a power cycle. Lives
    in CODE2 (KERNAL ROM) so its bytes don't push the BASIC ROM over budget. */
 #pragma code-name (push, "CODE2")
-void cmd_exit(int argc, char *argv[])
+void cmd_basic(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     settings_save();                    /* snapshot colors + history before leaving */

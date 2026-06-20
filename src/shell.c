@@ -40,6 +40,7 @@
 #pragma rodata-name (push, "RODATA2")
 const struct command shell_commands[] = {
     { "about",  cmd_about  },
+    { "basic",  cmd_basic  },
     { "bg",     cmd_bg     },
     { "border", cmd_border },
     { "cat",    cmd_cat    },
@@ -49,7 +50,6 @@ const struct command shell_commands[] = {
     { "device", cmd_device },
     { "dir",    cmd_dir    },
     { "edit",   cmd_edit   },
-    { "exit",   cmd_exit   },
     { "fload",  cmd_fload  },
     { "font",   cmd_font   },
     { "help",   cmd_help   },
@@ -301,7 +301,7 @@ static void dispatch(struct command_line *cl)
  * 0: "TD" magic, version, 3 color bytes, hist_count, then length-prefixed
  * history lines (oldest first). Restore replays them through history_add so the
  * ring rebuilds exactly. To bound flash wear we write only on a color change or
- * every SAVE_EVERY commands (and on `exit`, via cmd_exit). */
+ * every SAVE_EVERY commands (and on `basic`, via cmd_basic). */
 unsigned char nv_capability(void);
 unsigned char nv_read(void);
 unsigned char nv_write(void);
