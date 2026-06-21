@@ -35,6 +35,18 @@ unsigned char k_getin(void);            /* crt0_dir.s: GETIN ($FFE4) */
 static char dir_buf[42];
 static unsigned char dir_fast, fdir_left, fdir_eof;
 
+/* The Epyx fast path is a TIMED transfer the drive aborts if we stall (the
+   Meatloaf times out and drops back to its root), so it can't pause for
+   pagination. To use it for ls/dir anyway, slurp the whole listing into RAM in
+   one un-paused fast read, then page over RAM. The buffer is user RAM just above
+   the screen; a listing longer than DBUF_MAX is truncated (the rest is drained
+   from the drive but not shown). Standard IEC has no timeout, so it keeps the
+   old un-buffered incremental path (no $0800 clobber). */
+#define DBUF      ((unsigned char *)0x0800)
+#define DBUF_MAX  0x4000                        /* 16 KB ~ 500+ lines */
+static unsigned int dbuf_len, dbuf_pos;
+static unsigned char dir_buffered;
+
 static void puts_raw(const char *s)
 {
     while (*s)
@@ -54,9 +66,11 @@ static void put_uint(unsigned int v)
         k_chrout(d[--n]);
 }
 
-/* --- directory byte source: fast (Epyx blocks) or standard IEC ----------- */
+/* --- directory byte source: RAM replay, fast (Epyx blocks), or standard IEC - */
 static unsigned char dir_getbyte(void)
 {
+    if (dir_buffered)
+        return (dbuf_pos < dbuf_len) ? DBUF[dbuf_pos++] : 0;
     if (dir_fast) {
         while (fdir_left == 0) {
             if (fdir_eof || svc_epyx_wait_ready() != 0) {
@@ -77,6 +91,8 @@ static unsigned char dir_getbyte(void)
 
 static unsigned char dir_ended(void)
 {
+    if (dir_buffered)
+        return (dbuf_pos >= dbuf_len) ? 1 : 0;
     if (dir_fast)
         return fdir_eof;
     return (svc_iec_status() & (ST_EOI | ST_TIMEOUT)) ? 1 : 0;
@@ -162,18 +178,53 @@ static void dir_end(void)
     }
 }
 
+/* dir_open / dir_close - open the listing for a paged display. Uses the Epyx
+   fast path when the drive is capable: it can't pause, so the whole listing is
+   slurped into RAM here (one un-paused read) and dir_line then replays from RAM.
+   A standard-IEC drive has no timeout, so it stays open and is read incrementally
+   (no buffer, no $0800 clobber) -- the old path. Either way dir_line / dir_ended
+   below see the right source. Returns 0 if the directory couldn't be opened. */
+static unsigned char dir_open(void)
+{
+    unsigned int n = 0;
+    unsigned char b;
+
+    dir_buffered = 0;
+    if (!dir_begin(1))                      /* fast if capable, else standard IEC */
+        return 0;
+    if (dir_fast) {                         /* timed transfer -> slurp to RAM */
+        for (;;) {
+            b = dir_getbyte();
+            if (dir_ended())
+                break;
+            if (n < DBUF_MAX)
+                DBUF[n++] = b;              /* excess is drained but not stored */
+        }
+        dir_end();                          /* close the fast transfer now */
+        dbuf_len = n;
+        dbuf_pos = 0;
+        dir_buffered = 1;                   /* dir_line now replays from RAM */
+    }
+    return 1;
+}
+
+static void dir_close(void)
+{
+    if (!dir_buffered)                      /* standard path still has the drive open */
+        dir_end();
+}
+
 /* Page the listing like `less`. Pressing CTRL at ANY point during the listing
    arms pagination (a sticky `*paged` flag): from then on, every PAGE_LINES
    lines it prints "-- more --" and waits for a key (q quits, any other clears
    the screen and continues). If CTRL is never pressed the listing just scrolls
    past. On quit it emits a CR so the shell prompt lands at the start of a line.
-   Returns 1 on quit. ls/dir read over *standard* IEC (dir_begin(0)) so a pause
-   here can't abort the transfer: standard IEC is per-byte handshaked with no
-   timeout, so the drive just blocks on the next byte while we wait. The Epyx
-   fast path is NOT usable here -- it's a timed transfer the drive aborts if
-   stalled (the Meatloaf times out mid-listing and drops back to its root). The
-   badline garbling that used to need the fast path is fixed in iec_getbyte
-   (it now samples DATA at the clock edge -- see the receive loop in iec.s). */
+   Returns 1 on quit. Pausing here never touches the drive: a fast (Epyx) listing
+   was already slurped into RAM and we're paging over that (dir_open); a standard
+   listing is per-byte handshaked with no timeout, so the drive just blocks on the
+   next byte while we wait. Either way the pause is safe. (The Epyx fast path
+   can't be paged directly -- it's a timed transfer the Meatloaf aborts if stalled
+   -- which is exactly why dir_open buffers it first.) */
 static unsigned char paginate(unsigned char *lines, unsigned char *paged)
 {
     unsigned char c;
@@ -231,7 +282,7 @@ static void do_dir(void)
     unsigned int blocks;
     unsigned char lines = 0, paged = 0;
 
-    if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
+    if (!dir_open())                    /* fast->slurp to RAM, else standard IEC */
         return;
     while (dir_line(&blocks)) {
         put_uint(blocks);
@@ -241,7 +292,7 @@ static void do_dir(void)
         if (paginate(&lines, &paged))
             break;
     }
-    dir_end();
+    dir_close();
 }
 
 static void do_ls(void)
@@ -250,7 +301,7 @@ static void do_ls(void)
     unsigned char i, q2, t, color, saved, first, lines = 0, paged = 0;
     unsigned char col = 0, n;
 
-    if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
+    if (!dir_open())                    /* fast->slurp to RAM, else standard IEC */
         return;
     saved = TEXT_COLOR;
     first = 1;
@@ -298,7 +349,7 @@ static void do_ls(void)
     if (col == 1)                       /* dangling left-column name -> end its row */
         k_chrout(CR);
     TEXT_COLOR = saved;
-    dir_end();
+    dir_close();
 }
 
 static void do_pwd(void)
