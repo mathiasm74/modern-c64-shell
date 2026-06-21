@@ -127,43 +127,49 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         sta CIA2_PRA
         plp
 
-        ; --- assemble (not time-critical). Shift each source bit into carry,
-        ;     MSB first, and ROL it into RES. Bits arrive inverted, so the final
-        ;     EOR #$FF restores the byte. $DD00.bit6 -> ASL,ASL; bit7 -> ASL.  ---
-        lda S0
-        asl a
-        asl a
-        rol RES                         ; d7 = ~S0.bit6
-        lda S1
-        asl a
-        asl a
-        rol RES                         ; d6 = ~S1.bit6
-        lda S0
-        asl a
-        rol RES                         ; d5 = ~S0.bit7
-        lda S1
-        asl a
-        rol RES                         ; d4 = ~S1.bit7
-        lda S2
-        asl a
-        asl a
-        rol RES                         ; d3 = ~S2.bit6
-        lda S3
-        asl a
-        asl a
-        rol RES                         ; d2 = ~S3.bit6
-        lda S2
-        asl a
-        rol RES                         ; d1 = ~S2.bit7
-        lda S3
-        asl a
-        rol RES                         ; d0 = ~S3.bit7
-
-        lda RES
-        eor #$FF                        ; wire bits were inverted
+        ; --- de-interleave the 4 raw samples into the byte (not time-critical:
+        ;     DATA is already released, the drive is waiting). The bits land
+        ;     interleaved -- d7/d5 in S0, d6/d4 in S1, d3/d1 in S2, d2/d0 in S3,
+        ;     each from $DD00 bit6/bit7 -- so this used to be 8 shift/rol steps.
+        ;     Two 256-byte tables do it in 4 indexed loads instead, ~halving the
+        ;     per-byte gap the drive blocks on. detab_hi[s] puts ~s.bit6/~s.bit7
+        ;     at result bits 7/5; >>1 slides them to 6/4 for the 2nd sample.
+        ;     detab_lo does 3/1 (and >>1 -> 2/0). The tables bake in the wire
+        ;     inversion, so no final EOR. (RES is reused as the accumulator.)  ---
+        ldx S0
+        lda detab_hi,x                  ; d7,d5
+        sta RES
+        ldx S1
+        lda detab_hi,x
+        lsr a                           ; -> d6,d4
+        ora RES
+        sta RES
+        ldx S2
+        lda detab_lo,x                  ; d3,d1
+        ora RES
+        sta RES
+        ldx S3
+        lda detab_lo,x
+        lsr a                           ; -> d2,d0
+        ora RES
         ldx #$00
         rts
 .endproc
+
+; Epyx de-interleave tables (see _epyx_recv_byte). detab_hi[s] places the two
+; data bits a sample carries (~bit6, ~bit7) at result bits 7 and 5; detab_lo[s]
+; at bits 3 and 1 (= detab_hi >> 4). The wire inversion is baked in (the `^1`).
+; In the KERNAL ROM half (RODATA2), alongside the receiver in CODE2.
+.export detab_hi, detab_lo
+.segment "RODATA2"
+detab_hi:
+        .repeat 256, s
+            .byte ((((s >> 6) ^ 1) & 1) << 7) | ((((s >> 7) ^ 1) & 1) << 5)
+        .endrepeat
+detab_lo:
+        .repeat 256, s
+            .byte ((((s >> 6) ^ 1) & 1) << 3) | ((((s >> 7) ^ 1) & 1) << 1)
+        .endrepeat
 
 ; ----------------------------------------------------------------------------
 ; _epyx_recv_prg - receive a whole Epyx-streamed PRG into its embedded load

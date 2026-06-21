@@ -54,3 +54,52 @@ def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
         assert got == expect, \
             "Epyx chunk %d ($%04X) sum = $%02X, expected $%02X" \
             % (k + 1, [0x0180, 0x0199, 0x01B2][k], got, expect)
+
+
+# --- Epyx receiver de-interleave tables -----------------------------------
+# The fast receiver (_epyx_recv_byte) turns the 4 raw $DD00 samples of a byte
+# into the byte via two 256-byte lookup tables (detab_hi/detab_lo). The timed
+# receive is hardware-only (VICE has no Epyx-transmit drive), but the TABLE
+# contents -- where a generation bug would hide -- are pure data we check here.
+# A sample byte s carries two data bits inverted on the wire (~s.bit6, ~s.bit7);
+# detab_hi[s] places them at result bits 7/5, detab_lo[s] at 3/1. A full byte is
+#   detab_hi[S0] | (detab_hi[S1]>>1) | detab_lo[S2] | (detab_lo[S3]>>1)
+# with S0..S3 carrying (d7,d5) (d6,d4) (d3,d1) (d2,d0).
+
+def _detab(name):
+    addr = _label_addr(name)
+    rom = open(os.path.join(os.path.dirname(__file__), "..",
+                            "build", "kernal.bin"), "rb").read()
+    return rom[addr - 0xE000:addr - 0xE000 + 256]
+
+
+def test_detab_hi_matches_mapping(v):
+    tab = _detab("detab_hi")
+    for s in range(256):
+        b6, b7 = (s >> 6) & 1, (s >> 7) & 1
+        want = ((1 - b6) << 7) | ((1 - b7) << 5)
+        assert tab[s] == want, "detab_hi[%d]=$%02X want $%02X" % (s, tab[s], want)
+
+
+def test_detab_lo_matches_mapping(v):
+    tab = _detab("detab_lo")
+    for s in range(256):
+        b6, b7 = (s >> 6) & 1, (s >> 7) & 1
+        want = ((1 - b6) << 3) | ((1 - b7) << 1)
+        assert tab[s] == want, "detab_lo[%d]=$%02X want $%02X" % (s, tab[s], want)
+
+
+def test_full_deinterleave_roundtrip(v):
+    # Encode each byte the way Meatloaf's transmitEpyxByte does, then decode it
+    # through the tables the way the receiver does, and check all 256 round-trip.
+    hi, lo = _detab("detab_hi"), _detab("detab_lo")
+
+    def sample(bit6, bit7):                 # one inverted $DD00 sample
+        return ((1 - bit6) << 6) | ((1 - bit7) << 7)
+
+    for byte in range(256):
+        d = [(byte >> i) & 1 for i in range(8)]
+        s0, s1, s2, s3 = (sample(d[7], d[5]), sample(d[6], d[4]),
+                          sample(d[3], d[1]), sample(d[2], d[0]))
+        out = hi[s0] | (hi[s1] >> 1) | lo[s2] | (lo[s3] >> 1)
+        assert out == byte, "round-trip $%02X -> $%02X" % (byte, out)
