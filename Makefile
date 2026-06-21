@@ -25,7 +25,16 @@ ONEROM_CFG   := cfg/onerom.json
 ASFLAGS   := --cpu 6502
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
-CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
+# -Cl makes function locals static rather than stack-allocated: smaller, faster
+# code (~+600 bytes free in the BASIC ROM half). Safe here -- no C function is
+# recursive or re-entered from an IRQ (the IRQ handler is pure asm). One narrow
+# caveat: cc65 <= V2.19 miscompiles a POST-increment subscript on a constant-
+# address base (a cast-pointer #define) when the index has static storage AND is a
+# *char* -- it emits a pre-increment (issue #1077; fixed only on git master). -Cl
+# makes char locals static, so `((unsigned char*)ADDR)[i++]` breaks; an int index
+# or a real array base does NOT. Write such spots as `p[i] = x; ++i;` (cc65's
+# recommended idiom anyway). Only cmd_cd hit this; see its comment in fs.c.
+CC65FLAGS := -t none -O -Cl --cpu 6502 -I src -I $(BUILD)
 
 # cc65 runtime library: the `none` target carries the runtime helpers (stack,
 # zerobss, copydata, ...) without any platform startup or conio. Located

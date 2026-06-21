@@ -26,7 +26,7 @@ A ROM-resident command shell for the Commodore 64, designed to replace the stock
 
 ## Toolchain
 
-- **cc65 suite** (ca65, cc65, ld65) for assembly and C compilation. Version 2.19 or later.
+- **cc65 suite** (ca65, cc65, ld65) for assembly and C compilation. Version 2.18 or later (V2.19 fine). The C is compiled with **`-O -Cl`** (`-Cl` = static locals: ~600 fewer BASIC-ROM bytes; safe because no C function is recursive or re-entered from the asm IRQ). One narrow cc65 gotcha it exposes: a post-increment subscript on a **constant-address base** (a cast-pointer `#define` like `CD_CMD`/`((unsigned char*)0xADDR)`) with a **static `char`** index miscompiles to a *pre*-increment (cc65 [issue #1077](https://github.com/cc65/cc65/issues/1077), fixed only on git master). `-Cl` makes char locals static, so write those spots as `p[i] = x; ++i;` — cc65's recommended idiom anyway. An `int` index or a real array base (`line[len++]`) is unaffected; only `cmd_cd` ever hit it.
 - **VICE** (x64sc specifically) for emulation and testing. Version 3.7 or later.
 - **Python 3** for the test harness.
 - **GNU Make** as the build driver.

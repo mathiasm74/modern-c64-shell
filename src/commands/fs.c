@@ -620,13 +620,22 @@ void cmd_cd(int argc, char *argv[])
     unsigned char i = 0, j;
 
     if (argc < 2) { usage("cd <path>"); return; }
-    CD_CMD[i++] = 'c'; CD_CMD[i++] = 'd';
+    /* Build into CD_CMD ($0340) with the increment split OUT of the subscript
+       (CD_CMD[i] = c; ++i  -- never CD_CMD[i++]). cc65 <= V2.19 miscompiles a
+       post-increment on a constant-address base when the index has STATIC storage
+       AND is a *char* (issue #1077: it emits `inc i` before the address calc, a
+       pre-increment). -Cl makes `i` (a local) static, which triggers it; an int
+       index is unaffected, and so is a real array base. The split form is cc65's
+       recommended idiom anyway (coding.html) and compiles to a tight `sta $0340,y`. */
+    CD_CMD[i] = 'c'; ++i;
+    CD_CMD[i] = 'd'; ++i;
     if (argv[1][0] == '/' && argv[1][1] == '/' && argv[1][2] == '\0') {
-        CD_CMD[i++] = 0x5E;             /* "cd //" -> "CD<up-arrow>" flash root */
+        CD_CMD[i] = 0x5E; ++i;          /* "cd //" -> "CD<up-arrow>" flash root */
     } else {
-        CD_CMD[i++] = (argv[1][0] == '/') ? '/' : ':';
-        for (j = 0; argv[1][j] && i < 39; ++j)
-            CD_CMD[i++] = argv[1][j];
+        CD_CMD[i] = (argv[1][0] == '/') ? '/' : ':'; ++i;
+        for (j = 0; argv[1][j] && i < 39; ++j) {
+            CD_CMD[i] = argv[1][j]; ++i;
+        }
     }
     FB_CMD = 7;
     FB_DEV = default_device;

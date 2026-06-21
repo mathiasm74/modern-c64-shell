@@ -143,7 +143,7 @@ static void copy(void)
     for (;;) {
         if (len >= BUFMAX)              /* keep clear of the $8800 overlay code */
             break;
-        BUF[len++] = k_chrin();
+        BUF[len++] = k_chrin();         /* len is unsigned int -> #1077-safe */
         if (STREG & (ST_EOI | ST_TIMEOUT))
             break;
     }
