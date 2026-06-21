@@ -30,10 +30,8 @@ B_DATA   = $20          ; DATA output (1 = pull DATA low)
 VIC_RASTER = $D012      ; VIC-II raster line (low 8 bits) -- for badline avoidance
 YSCROLL  = $03          ; our $D011 = $1B, so badlines fall on (RASTER & 7) == 3
 
-S0 = $02A8              ; four raw samples (unused page-3 KERNAL RAM)
-S1 = $02A9
-S2 = $02AA
-S3 = $02AB
+A3LOC = $02A8           ; constant-bit smear the fold accumulates (cancel per byte)
+A3TMP = $02A9           ; scratch while computing A3LOC (unused page-3 KERNAL RAM)
 RES = $FB               ; assembled byte scratch (reset's boot pointer; free now)
 
 .segment "CODE2"        ; KERNAL ROM half
@@ -44,6 +42,27 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 ; ("ready" with the next block). Returns A=0 on success, A=1 on timeout.
 ; ----------------------------------------------------------------------------
 .proc _epyx_wait_ready
+        ; --- capture the constant-bit smear for _epyx_recv_byte's fold ---------
+        ; The fold XORs four $DD00 samples together with shifts. Bits 6/7 carry
+        ; the data; bits 0-4 (VIC bank, ATN/CLK-out, etc.) are FIXED for the whole
+        ; transfer and bit5 (DATA-out) reads 0 while sampling -- so they contribute
+        ; a constant pattern A3 = x ^ (x>>2) ^ (x>>4) with x = $DD00 & $1F, which
+        ; recv_byte cancels with one EOR. Recompute it once per block (cheap, and
+        ; both the PRG and the dir paths reach a byte only through here).
+        lda CIA2_PRA
+        and #$1F
+        sta A3TMP                       ; x
+        lsr a
+        lsr a                           ; x>>2
+        eor A3TMP
+        sta A3LOC                       ; x ^ (x>>2)
+        lda A3TMP
+        lsr a
+        lsr a
+        lsr a
+        lsr a                           ; x>>4
+        eor A3LOC
+        sta A3LOC                       ; A3 = x ^ (x>>2) ^ (x>>4)
         ; Wait for the drive's "ready" = CLK high, held while transmitEpyxByte
         ; waits for our DATA-high. We do NOT wait for CLK low first: between
         ; blocks the drive's "not ready" CLK-low is too brief to catch (it pulls
@@ -116,22 +135,37 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ; the still-settling edge) or later (+28, reads the next pair) corrupts
         ; the byte. The drive writes the pairs ~0/17/27/37 us after it sees DATA
         ; high; this lands each read inside its pair's stable region.
+        ;
+        ; The de-interleave is folded INTO this loop (the Epyx cart's trick): the
+        ; four reads stay at the same cycle offsets, but the inter-sample filler
+        ; does `lsr a; lsr a; nop` (6 cyc, was `sta Sx; nop`) so the byte XOR-
+        ; accumulates as we go, and the reads after the first use `eor` instead of
+        ; `lda`. After sample 4 A holds the scrambled fold
+        ;   F = (S0>>6) ^ (S1>>4) ^ (S2>>2) ^ S3
+        ; which carries the data bits (inverted, permuted) plus the constant smear
+        ; A3 captured in _epyx_wait_ready. One `eor A3LOC` clears the constant and
+        ; one 256-byte table descrambles -- ~13 cyc in the drive-blocking gap vs
+        ; the ~68 the separate de-interleave used to cost. Timing is unchanged:
+        ; every $DD00 read is at the same offset as before.
         nop
         nop
         nop
         nop
         nop
         lda CIA2_PRA                    ; sample 1 (+14): ~d7/~d5
-        sta S0
+        lsr a
+        lsr a
         nop
-        lda CIA2_PRA                    ; sample 2 (+24): ~d6/~d4
-        sta S1
+        eor CIA2_PRA                    ; sample 2 (+24): ~d6/~d4
+        lsr a
+        lsr a
         nop
-        lda CIA2_PRA                    ; sample 3 (+34): ~d3/~d1
-        sta S2
+        eor CIA2_PRA                    ; sample 3 (+34): ~d3/~d1
+        lsr a
+        lsr a
         nop
-        lda CIA2_PRA                    ; sample 4 (+44): ~d2/~d0
-        sta S3
+        eor CIA2_PRA                    ; sample 4 (+44): ~d2/~d0
+        tax                             ; stash the fold (got-it clobbers A)
 
         ; "got it": pull DATA low (drive's transmitEpyxByte waits for this).
         lda CIA2_PRA
@@ -139,76 +173,59 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         sta CIA2_PRA
         plp
 
-        ; --- de-interleave the 4 raw samples into the byte (not time-critical:
-        ;     DATA is already released, the drive is waiting). The bits land
-        ;     interleaved -- d7/d5 in S0, d6/d4 in S1, d3/d1 in S2, d2/d0 in S3,
-        ;     each from $DD00 bit6/bit7 -- so this used to be 8 shift/rol steps.
-        ;     One 256-byte table does it in 4 indexed loads instead, cutting the
-        ;     per-byte gap the drive blocks on. detab[s] puts ~s.bit6/~s.bit7 at
-        ;     result bits 7/5; shifting the loaded value right slides that pair
-        ;     to each sample's positions: >>1 -> 6/4 (S1), >>4 -> 3/1 (S2),
-        ;     >>5 -> 2/0 (S3). The table bakes in the wire inversion, so no final
-        ;     EOR. (RES is reused as the accumulator.)  ---
-        ldx S0
-        lda detab,x                     ; d7,d5
-        sta RES
-        ldx S1
-        lda detab,x
-        lsr a                           ; -> d6,d4
-        ora RES
-        sta RES
-        ldx S2
-        lda detab,x
-        lsr a
-        lsr a
-        lsr a
-        lsr a                           ; -> d3,d1
-        ora RES
-        sta RES
-        ldx S3
-        lda detab,x
-        lsr a
-        lsr a
-        lsr a
-        lsr a
-        lsr a                           ; -> d2,d0
-        ora RES
+        ; --- descramble (not time-critical: DATA is low, the drive is waiting).
+        ;     Cancel the constant smear, then one table load turns the folded
+        ;     value into the byte (the table bakes in the wire inversion + the
+        ;     bit permutation; see _epyx_gen_descramble).  ---
+        txa
+        eor A3LOC
+        tay
+        lda descramble,y
         ldx #$00
         rts
 .endproc
 
-; Epyx de-interleave table (see _epyx_recv_byte). detab[s] places the two data
-; bits a sample carries (~bit6, ~bit7) at result bits 7 and 5; right-shifting
-; the loaded value slides that pair to each other sample's positions, so one
-; table serves all four. detab[s] depends ONLY on s's top two bits, so it takes
-; just FOUR distinct values -- so it lives in RAM, generated at boot from a
-; 4-byte ROM seed (~24 ROM bytes total instead of a 256-byte ROM table). The
-; wire inversion is baked into the seed (00->$A0 01->$20 10->$80 11->$00, the
-; values of `(~bit6<<7)|(~bit7<<5)` for the four bit7:bit6 combinations).
-.export detab, _epyx_gen_detab
-
-.segment "RODATA2"
-detab_seed:
-        .byte $A0, $20, $80, $00        ; indexed by (s >> 6) = bits 7:6
+; Epyx descramble table (see _epyx_recv_byte). The fold leaves the data bits
+; inverted and permuted: folded value v has v0=~d7 v1=~d5 v2=~d6 v3=~d4 v4=~d3
+; v5=~d1 v6=~d2 v7=~d0 (after A3 cancels the constant). descramble[v] inverts and
+; reorders them back into the byte d7..d0. It's a fixed 256-entry permutation, so
+; it lives in RAM, generated at boot (~30 ROM bytes vs a 256-byte ROM table).
+; Generation: invert v (all bits are inverted on the wire), swap input bits 1<->2
+; and 5<->6, then bit-reverse -- which lands inv0..inv7 at the byte's d7..d0.
+.export descramble, _epyx_gen_descramble
 
 .segment "BSS"
-detab:  .res 256                        ; RAM de-interleave table (filled at boot)
+descramble: .res 256                    ; RAM descramble table (filled at boot)
+
+GTMP = $FB                              ; boot-only scratch (reset's string ptr,
+GACC = $FC                              ;   free by the time this runs)
 
 .segment "CODE2"
-; _epyx_gen_detab - fan the 4-value seed out over the 256-entry RAM table. Run
-; once at boot (reset.s, after BSS is cleared and before any fload). C-callable.
-.proc _epyx_gen_detab
+; _epyx_gen_descramble - build the 256-entry RAM table. Run once at boot
+; (reset.s, after BSS is cleared and before any fload). C-callable.
+.proc _epyx_gen_descramble
         ldx #$00
 @l:     txa
+        eor #$FF                        ; inv = ~v (wire inversion)
+        ; swap inv bit1<->bit2 and bit5<->bit6:
+        ;   t = (inv ^ (inv>>1)) & $22 ; inv ^= t ^ (t<<1)
+        sta GTMP                        ; inv
         lsr a
-        lsr a
-        lsr a
-        lsr a
-        lsr a
-        lsr a                           ; A = s >> 6 (the top two bits, 0..3)
-        tay
-        lda detab_seed,y
-        sta detab,x
+        eor GTMP
+        and #$22
+        sta GACC                        ; t (low bit of each pair)
+        asl a                           ; t<<1
+        eor GACC                        ; t ^ (t<<1)
+        eor GTMP                        ; inv' = inv ^ t ^ (t<<1)
+        sta GTMP                        ; reverse source
+        ; bit-reverse inv' into GACC: lsr source, rol dest, x8
+        ldy #$08
+@rev:   lsr GTMP
+        rol GACC
+        dey
+        bne @rev
+        lda GACC
+        sta descramble,x
         inx
         bne @l
         rts

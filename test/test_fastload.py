@@ -56,42 +56,65 @@ def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
             % (k + 1, [0x0180, 0x0199, 0x01B2][k], got, expect)
 
 
-# --- Epyx receiver de-interleave table ------------------------------------
-# The fast receiver (_epyx_recv_byte) turns the 4 raw $DD00 samples of a byte
-# into the byte via a 256-byte lookup table (detab). To save ROM the table isn't
-# stored -- reset.s generates it into RAM at boot (_epyx_gen_detab) from a 4-byte
-# seed. The timed receive is hardware-only (VICE has no Epyx-transmit drive), but
-# the generated TABLE -- where a bug would hide -- is data we read back from RAM.
-# A sample byte s carries two data bits inverted on the wire (~s.bit6, ~s.bit7);
-# detab[s] places them at result bits 7/5, and shifting the loaded value right
-# slides the pair to each sample's positions. A full byte is
-#   detab[S0] | (detab[S1]>>1) | (detab[S2]>>4) | (detab[S3]>>5)
-# with S0..S3 carrying (d7,d5) (d6,d4) (d3,d1) (d2,d0).
+# --- Epyx receiver descramble table ---------------------------------------
+# The fast receiver (_epyx_recv_byte) folds a byte's four $DD00 samples into one
+# scrambled value AS it samples (lsr/eor in the inter-sample pads):
+#   F = (S0>>6) ^ (S1>>4) ^ (S2>>2) ^ S3
+# then cancels the constant CIA-port bits (A3, captured per block) and looks the
+# result up in a 256-byte table (descramble) that inverts + reorders the data
+# bits back into the byte. To save ROM the table isn't stored -- reset.s
+# generates it into RAM at boot (_epyx_gen_descramble). The timed receive is
+# hardware-only (VICE has no Epyx-transmit drive), but the generated TABLE and
+# the fold math -- where a bug would hide -- are checkable here: read the table
+# back from RAM and simulate the fold for all bytes and all constant patterns.
 
-def _detab(v):
-    v.run_for(0.3)                          # let reset.s/_epyx_gen_detab fill it
-    return v.read_memory(_label_addr("detab"), 256)
+def _descramble(v):
+    v.run_for(0.3)                          # let reset.s fill it post-zerobss
+    return v.read_memory(_label_addr("descramble"), 256)
 
 
-def test_detab_generated_in_ram(v):
-    tab = _detab(v)
-    for s in range(256):
-        b6, b7 = (s >> 6) & 1, (s >> 7) & 1
-        want = ((1 - b6) << 7) | ((1 - b7) << 5)
-        assert tab[s] == want, "detab[%d]=$%02X want $%02X" % (s, tab[s], want)
+def _a3(const):                             # the per-block constant smear
+    x = const & 0x1F
+    return (x ^ (x >> 2) ^ (x >> 4)) & 0xFF
+
+
+def _fold(s):                               # what the in-loop lsr/eor builds
+    a = s[0]
+    a = (a >> 2) ^ s[1]
+    a = (a >> 2) ^ s[2]
+    a = (a >> 2) ^ s[3]
+    return a & 0xFF
+
+
+def test_descramble_generated_in_ram(v):
+    t = _descramble(v)
+    for x in range(256):                    # folded value -> byte (invert+permute)
+        inv = (~x) & 0xFF
+        want = (((inv & 0x01) << 7) | ((inv & 0x02) << 4) | ((inv & 0x04) << 4)
+                | ((inv & 0x08) << 1) | ((inv & 0x10) >> 1) | ((inv & 0x20) >> 4)
+                | ((inv & 0x40) >> 4) | ((inv & 0x80) >> 7))
+        assert t[x] == want, "descramble[$%02X]=$%02X want $%02X" % (x, t[x], want)
 
 
 def test_full_deinterleave_roundtrip(v):
-    # Encode each byte the way Meatloaf's transmitEpyxByte does, then decode it
-    # through the table the way the receiver does, and check all 256 round-trip.
-    t = _detab(v)
+    # Encode each byte the way Meatloaf's transmitEpyxByte does (the two data bits
+    # land inverted at $DD00 bits 6/7), fold + cancel + table the way the receiver
+    # does, and check all 256 round-trip -- for several constant CIA-port patterns,
+    # since A3 must make the result independent of those fixed low bits.
+    t = _descramble(v)
 
-    def sample(bit6, bit7):                 # one inverted $DD00 sample
-        return ((1 - bit6) << 6) | ((1 - bit7) << 7)
-
-    for byte in range(256):
+    def encode(byte, const):
         d = [(byte >> i) & 1 for i in range(8)]
-        s0, s1, s2, s3 = (sample(d[7], d[5]), sample(d[6], d[4]),
-                          sample(d[3], d[1]), sample(d[2], d[0]))
-        out = t[s0] | (t[s1] >> 1) | (t[s2] >> 4) | (t[s3] >> 5)
-        assert out == byte, "round-trip $%02X -> $%02X" % (byte, out)
+
+        def samp(b6, b7):                   # bits 0-4 = const, bit5=0 (DATA out)
+            return (const & 0x1F) | ((1 - b6) << 6) | ((1 - b7) << 7)
+
+        return [samp(d[7], d[5]), samp(d[6], d[4]),
+                samp(d[3], d[1]), samp(d[2], d[0])]
+
+    for const in range(0x20):               # every bits-0-4 pattern
+        for byte in range(256):
+            f = _fold(encode(byte, const)) ^ _a3(const)
+            out = t[f]
+            assert out == byte, \
+                "const=$%02X round-trip $%02X -> $%02X" % (const, byte, out)
