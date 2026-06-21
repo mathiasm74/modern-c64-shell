@@ -25,19 +25,13 @@ ONEROM_CFG   := cfg/onerom.json
 ASFLAGS   := --cpu 6502
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
+# NOTE: do NOT add -Cl (static locals) here. It saves ~600 BASIC-ROM bytes but
+# miscompiles resident code on cc65 <= V2.19 in ways the VICE suite can't see
+# (the overlay-fetch / RBCP transport and other hardware-only paths) -- it caused
+# intermittent corruption across many commands on real hardware (help garbled,
+# cd stage-5, flaky ls/dir, prompt spacing). The known #1077 post-increment bug
+# was only one instance of the breakage; reverted in full. (V2.18 installed.)
 CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
-
-# The RESIDENT shell C (the pattern rule below) additionally gets -Cl (static
-# locals): smaller, faster code, ~+600 bytes free in the BASIC ROM half. It is
-# NOT applied to the overlays -- they're cached and re-run, so -Cl's static
-# locals would carry stale values between invocations, and they gain nothing
-# (overlays live in flash sets, outside the 16KB ROM the saving frees). -Cl is
-# safe for the resident code: no resident C function recurses or is re-entered
-# from the asm IRQ. One narrow cc65 caveat it exposes: a post-increment subscript
-# on a constant-address base (a cast-pointer #define) with a static *char* index
-# miscompiles to a pre-increment (issue #1077; fixed only on git master). Write
-# such spots as `p[i] = x; ++i;` (cc65's recommended idiom). Only cmd_cd hit it.
-CC65FLAGS_RESIDENT := $(CC65FLAGS) -Cl
 
 # cc65 runtime library: the `none` target carries the runtime helpers (stack,
 # zerobss, copydata, ...) without any platform startup or conio. Located
@@ -201,7 +195,7 @@ $(BUILD)/overlays_b.bin: $(OVERLAYS_B) Makefile
 .PRECIOUS: $(BUILD)/%.s
 $(BUILD)/%.s: src/%.c | $(BUILD)
 	@mkdir -p $(@D)
-	$(CC) $(CC65FLAGS_RESIDENT) -o $@ $<
+	$(CC) $(CC65FLAGS) -o $@ $<
 
 $(BUILD)/%.o: $(BUILD)/%.s | $(BUILD)
 	@mkdir -p $(@D)
