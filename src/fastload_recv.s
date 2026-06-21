@@ -227,20 +227,27 @@ LADRH = $02B0
         sta TOTL
         sta TOTH
         ; --- load address: the first two data bytes set the destination ------
-        jsr next_byte
+        jsr getbyte
         bcs @fail
         sta DST
         sta LADRL
-        jsr next_byte
+        jsr getbyte
         bcs @fail
         sta DST+1
         sta LADRH
         lda #2
         sta TOTL                        ; the two address bytes are counted
-        ; --- stream the rest into (DST), crossing block boundaries -----------
+        ; --- stream the rest into (DST), crossing block boundaries. The fetch
+        ;     is inlined here (the hot path) -- no jsr/rts per byte; only a block
+        ;     boundary (BLK == 0) calls out, to get_block. --------------------
 @loop:
-        jsr next_byte
-        bcs @eof
+        lda BLK
+        bne @have                       ; current block still has bytes
+        jsr get_block                   ; boundary (cold): dots + length -> BLK
+        bcs @eof                        ; end of stream
+@have:
+        dec BLK
+        jsr _epyx_recv_byte             ; data byte in A
         ldy #$00
         sta (DST),y
         inc DST
@@ -268,17 +275,13 @@ LADRH = $02B0
         rts
 .endproc
 
-; next_byte - return the next PRG data byte in A (carry clear), crossing block
-; boundaries. Carry set = end of stream (zero-length block or ready timeout).
-; Emits a progress dot at every 4th block boundary (in the inter-block gap,
-; where the drive is busy fetching the next block anyway). Clobbers A/X/Y.
-.proc next_byte
-        lda BLK
-        bne @have
-        ; --- block boundary: one progress dot per 1024 bytes -----------------
-        ; want = bytes>>10 = TOTH>>2 = kilobytes so far; catch DOTS up to it.
-        ; (Emitted here, in the inter-block gap where the drive is fetching, so
-        ; the CHROUT doesn't stall the per-byte transfer.)
+; get_block - at a block boundary (BLK == 0): emit any due progress dots, wait
+; for the drive's per-block "ready", and read the block length into BLK. Returns
+; carry clear with BLK > 0, or carry set on end of stream (a ready timeout or a
+; zero-length block). Dots are emitted here, in the inter-block gap where the
+; drive is busy fetching, so the CHROUT doesn't stall the per-byte transfer.
+.proc get_block
+        ; one progress dot per 1024 bytes: want = bytes>>10 = TOTH>>2; catch up.
 @dotchk:
         lda TOTH
         lsr a
@@ -297,9 +300,24 @@ LADRH = $02B0
         sta BLK
         cmp #$00                        ; re-test: recv_byte's `ldx #0` left Z=1,
         beq @eof                        ; so test the byte itself. 0 length -> EOF
+        clc
+        rts
+@eof:
+        sec
+        rts
+.endproc
+
+; getbyte - fetch one data byte, crossing block boundaries. A = byte, carry
+; clear; carry set on end of stream. Used for the two load-address bytes; the
+; main stream inlines the same logic (see @loop).
+.proc getbyte
+        lda BLK
+        bne @have
+        jsr get_block
+        bcs @eof
 @have:
         dec BLK
-        jsr _epyx_recv_byte             ; the data byte
+        jsr _epyx_recv_byte
         clc
         rts
 @eof:
