@@ -44,7 +44,7 @@ static unsigned char dir_fast, fdir_left, fdir_eof;
    old un-buffered incremental path (no $0800 clobber). */
 #define DBUF      ((unsigned char *)0x0800)
 #define DBUF_MAX  0x4000                        /* 16 KB ~ 500+ lines */
-static unsigned int dbuf_len, dbuf_pos;
+static unsigned int dbuf_len, dbuf_pos, dbuf_w; /* replay len/pos, slurp write idx */
 static unsigned char dir_buffered;
 
 static void puts_raw(const char *s)
@@ -69,6 +69,8 @@ static void put_uint(unsigned int v)
 /* --- directory byte source: RAM replay, fast (Epyx blocks), or standard IEC - */
 static unsigned char dir_getbyte(void)
 {
+    unsigned char b;
+
     if (dir_buffered)
         return (dbuf_pos < dbuf_len) ? DBUF[dbuf_pos++] : 0;
     if (dir_fast) {
@@ -84,7 +86,10 @@ static unsigned char dir_getbyte(void)
             }
         }
         --fdir_left;
-        return svc_epyx_recv_byte();
+        b = svc_epyx_recv_byte();
+        if (dbuf_w < DBUF_MAX)
+            DBUF[dbuf_w++] = b;         /* buffer each byte for a possible paged replay */
+        return b;
     }
     return svc_iec_getbyte();
 }
@@ -178,39 +183,40 @@ static void dir_end(void)
     }
 }
 
-/* dir_open / dir_close - open the listing for a paged display. Uses the Epyx
-   fast path when the drive is capable: it can't pause, so the whole listing is
-   slurped into RAM here (one un-paused read) and dir_line then replays from RAM.
-   A standard-IEC drive has no timeout, so it stays open and is read incrementally
-   (no buffer, no $0800 clobber) -- the old path. Either way dir_line / dir_ended
-   below see the right source. Returns 0 if the directory couldn't be opened. */
+/* dir_open / finish_slurp / dir_close - drive the listing for a paged display.
+   The Epyx fast path is a timed transfer the Meatloaf aborts if we stall, so it
+   can't pause mid-stream. To page it AND show the first files promptly, we stream
+   it incrementally -- dir_getbyte hands each byte to dir_line for display AND
+   buffers it into RAM -- and only when pagination is about to actually PAUSE do
+   we drain the rest of the transfer into RAM (finish_slurp) and replay the
+   remaining lines from there. A standard-IEC drive has no timeout, so it streams
+   incrementally with no buffering (the old path, no $0800 clobber). */
 static unsigned char dir_open(void)
 {
-    unsigned int n = 0;
-    unsigned char b;
-
     dir_buffered = 0;
-    if (!dir_begin(1))                      /* fast if capable, else standard IEC */
+    dbuf_w = 0;
+    if (!dir_begin(1))                      /* fast if capable; reads 2 load-addr bytes */
         return 0;
-    if (dir_fast) {                         /* timed transfer -> slurp to RAM */
-        for (;;) {
-            b = dir_getbyte();
-            if (dir_ended())
-                break;
-            if (n < DBUF_MAX)
-                DBUF[n++] = b;              /* excess is drained but not stored */
-        }
-        dir_end();                          /* close the fast transfer now */
-        dbuf_len = n;
-        dbuf_pos = 0;
-        dir_buffered = 1;                   /* dir_line now replays from RAM */
-    }
+    dbuf_w = 0;                             /* drop the load-addr bytes; buffer lines from 0 */
     return 1;
+}
+
+/* About to pause a fast (timed) transfer for "-- more --": the drive would time
+   out, so first read everything still pending into RAM (no pause), then have
+   dir_line replay from where the on-screen lines left off. */
+static void finish_slurp(void)
+{
+    dbuf_pos = dbuf_w;                      /* page 2 starts where the shown lines ended */
+    while (!fdir_eof)
+        dir_getbyte();                      /* fast: reads + buffers, to EOF */
+    dir_end();                              /* close the fast transfer (clears dir_fast) */
+    dbuf_len = dbuf_w;
+    dir_buffered = 1;                       /* dir_line now replays from RAM */
 }
 
 static void dir_close(void)
 {
-    if (!dir_buffered)                      /* standard path still has the drive open */
+    if (!dir_buffered)                      /* fast free-scroll or standard: drive still open */
         dir_end();
 }
 
@@ -219,12 +225,11 @@ static void dir_close(void)
    lines it prints "-- more --" and waits for a key (q quits, any other clears
    the screen and continues). If CTRL is never pressed the listing just scrolls
    past. On quit it emits a CR so the shell prompt lands at the start of a line.
-   Returns 1 on quit. Pausing here never touches the drive: a fast (Epyx) listing
-   was already slurped into RAM and we're paging over that (dir_open); a standard
-   listing is per-byte handshaked with no timeout, so the drive just blocks on the
-   next byte while we wait. Either way the pause is safe. (The Epyx fast path
-   can't be paged directly -- it's a timed transfer the Meatloaf aborts if stalled
-   -- which is exactly why dir_open buffers it first.) */
+   Returns 1 on quit. The pause never stalls the drive: a standard listing is
+   per-byte handshaked with no timeout (the drive just blocks); a fast (Epyx)
+   listing is a timed transfer the Meatloaf would abort -- so if one is still
+   live when we're about to pause, finish_slurp drains the rest into RAM first
+   and the rest of the listing replays from there. Either way the pause is safe. */
 static unsigned char paginate(unsigned char *lines, unsigned char *paged)
 {
     unsigned char c;
@@ -236,6 +241,8 @@ static unsigned char paginate(unsigned char *lines, unsigned char *paged)
     *lines = 0;
     if (!*paged)                        /* never armed -> free scroll, no pause */
         return 0;
+    if (dir_fast)                       /* fast transfer still live -> drain it to RAM */
+        finish_slurp();                 /* so the pause below can't abort the drive */
     puts_raw("-- more --");
     do {
         c = k_getin();
