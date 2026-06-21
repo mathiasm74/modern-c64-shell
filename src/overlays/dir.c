@@ -167,12 +167,13 @@ static void dir_end(void)
    lines it prints "-- more --" and waits for a key (q quits, any other clears
    the screen and continues). If CTRL is never pressed the listing just scrolls
    past. On quit it emits a CR so the shell prompt lands at the start of a line.
-   Returns 1 on quit. Pausing here is safe on either transport: the Epyx fast
-   path (now badline-paced) and standard IEC are both per-byte handshaked, so
-   while we wait the drive just blocks on the next byte rather than aborting.
-   ls/dir use the fast path (dir_begin(1)) when the drive is Epyx-capable -- the
-   standard receiver has no badline handling and garbles names on a fast drive
-   (lowercased letters / stray digits); the fast receiver paces around badlines. */
+   Returns 1 on quit. ls/dir read over *standard* IEC (dir_begin(0)) so a pause
+   here can't abort the transfer: standard IEC is per-byte handshaked with no
+   timeout, so the drive just blocks on the next byte while we wait. The Epyx
+   fast path is NOT usable here -- it's a timed transfer the drive aborts if
+   stalled (the Meatloaf times out mid-listing and drops back to its root). The
+   badline garbling that used to need the fast path is fixed in iec_getbyte
+   (it now samples DATA at the clock edge -- see the receive loop in iec.s). */
 static unsigned char paginate(unsigned char *lines, unsigned char *paged)
 {
     unsigned char c;
@@ -230,7 +231,7 @@ static void do_dir(void)
     unsigned int blocks;
     unsigned char lines = 0, paged = 0;
 
-    if (!dir_begin(1))                  /* fast Epyx path (badline-safe) when capable */
+    if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
         return;
     while (dir_line(&blocks)) {
         put_uint(blocks);
@@ -249,7 +250,7 @@ static void do_ls(void)
     unsigned char i, q2, t, color, saved, first, lines = 0, paged = 0;
     unsigned char col = 0, n;
 
-    if (!dir_begin(1))                  /* fast Epyx path (badline-safe) when capable */
+    if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
         return;
     saved = TEXT_COLOR;
     first = 1;

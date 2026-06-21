@@ -131,6 +131,12 @@ iec_wait_dev:
 ; line reaches the wanted state, carry set on timeout. The bound is generous
 ; because the talker may pause to read a disk sector; it exists only so a
 ; dead or disk-less drive can't wedge the shell. Clobbers A, X, Y, TMOUT.
+;
+; wait_clk_hi CONTRACT (relied on by iec_getbyte): on success (carry clear) the
+; N flag holds DATA in ($DD00 bit 7) sampled by the same `bit DD00` that saw CLK
+; go high -- the receive loop uses that instead of a separate read, so there's
+; no edge-to-sample gap for a badline to corrupt. Keep @ok flag-preserving
+; (clc/rts) so N survives.
 wait_clk_hi:
         lda #$02
         sta TMOUT
@@ -509,11 +515,17 @@ _iec_getbyte:
         lda #$08
         sta COUNT
 @bit:
-        jsr wait_clk_hi         ; bit valid on the rising edge
+        jsr wait_clk_hi         ; bit valid on the rising edge; returns N = DATA,
+                                ; sampled by the very `bit DD00` that saw CLK go
+                                ; high -- no re-read, so a VIC-II badline can't
+                                ; slip into an edge-to-sample gap and shift the
+                                ; bit (the garbling fast `ls`/`dir` used to hit).
         bcs @timeout
-        lda DD00
-        asl a                   ; DATA in (bit7) -> carry
-        ror BSOUR               ; shift in, LSB first
+        bpl @bit0               ; N (DATA) clear -> shift in a 0
+        sec                     ; N set -> DATA = 1
+        bcs @bitsh              ; (always taken)
+@bit0:  clc
+@bitsh: ror BSOUR               ; shift DATA into BSOUR, LSB first
         jsr wait_clk_lo         ; talker prepping the next bit
         bcs @timeout
         dec COUNT
