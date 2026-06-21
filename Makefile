@@ -25,16 +25,19 @@ ONEROM_CFG   := cfg/onerom.json
 ASFLAGS   := --cpu 6502
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
-# -Cl makes function locals static rather than stack-allocated: smaller, faster
-# code (~+600 bytes free in the BASIC ROM half). Safe here -- no C function is
-# recursive or re-entered from an IRQ (the IRQ handler is pure asm). One narrow
-# caveat: cc65 <= V2.19 miscompiles a POST-increment subscript on a constant-
-# address base (a cast-pointer #define) when the index has static storage AND is a
-# *char* -- it emits a pre-increment (issue #1077; fixed only on git master). -Cl
-# makes char locals static, so `((unsigned char*)ADDR)[i++]` breaks; an int index
-# or a real array base does NOT. Write such spots as `p[i] = x; ++i;` (cc65's
-# recommended idiom anyway). Only cmd_cd hit this; see its comment in fs.c.
-CC65FLAGS := -t none -O -Cl --cpu 6502 -I src -I $(BUILD)
+CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
+
+# The RESIDENT shell C (the pattern rule below) additionally gets -Cl (static
+# locals): smaller, faster code, ~+600 bytes free in the BASIC ROM half. It is
+# NOT applied to the overlays -- they're cached and re-run, so -Cl's static
+# locals would carry stale values between invocations, and they gain nothing
+# (overlays live in flash sets, outside the 16KB ROM the saving frees). -Cl is
+# safe for the resident code: no resident C function recurses or is re-entered
+# from the asm IRQ. One narrow cc65 caveat it exposes: a post-increment subscript
+# on a constant-address base (a cast-pointer #define) with a static *char* index
+# miscompiles to a pre-increment (issue #1077; fixed only on git master). Write
+# such spots as `p[i] = x; ++i;` (cc65's recommended idiom). Only cmd_cd hit it.
+CC65FLAGS_RESIDENT := $(CC65FLAGS) -Cl
 
 # cc65 runtime library: the `none` target carries the runtime helpers (stack,
 # zerobss, copydata, ...) without any platform startup or conio. Located
@@ -198,7 +201,7 @@ $(BUILD)/overlays_b.bin: $(OVERLAYS_B) Makefile
 .PRECIOUS: $(BUILD)/%.s
 $(BUILD)/%.s: src/%.c | $(BUILD)
 	@mkdir -p $(@D)
-	$(CC) $(CC65FLAGS) -o $@ $<
+	$(CC) $(CC65FLAGS_RESIDENT) -o $@ $<
 
 $(BUILD)/%.o: $(BUILD)/%.s | $(BUILD)
 	@mkdir -p $(@D)
