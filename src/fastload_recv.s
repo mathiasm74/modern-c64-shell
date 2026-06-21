@@ -181,16 +181,16 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 ; ----------------------------------------------------------------------------
 DST   = $FC             ; $FC/$FD dest pointer (zp, for (DST),y); RES=$FB is taken
 BLK   = $FE             ; bytes left in the current block
-TOTL  = $02AC           ; total bytes received (16-bit), for the <3 check
+TOTL  = $02AC           ; total bytes received (16-bit): <3 check + progress
 TOTH  = $02AD
-BLKN  = $02AE           ; block counter: a progress dot every 4th block
+DOTS  = $02AE           ; progress dots printed so far (one per 1024 bytes)
 LADRL = $02AF           ; PRG load address, read back by the C wrapper
 LADRH = $02B0
 
 .proc _epyx_recv_prg
         lda #0
         sta BLK
-        sta BLKN
+        sta DOTS
         sta TOTL
         sta TOTH
         ; --- load address: the first two data bytes set the destination ------
@@ -242,13 +242,21 @@ LADRH = $02B0
 .proc next_byte
         lda BLK
         bne @have
-        ; --- block boundary --------------------------------------------------
-        inc BLKN
-        lda BLKN
-        and #$03
-        bne @nodot
+        ; --- block boundary: one progress dot per 1024 bytes -----------------
+        ; want = bytes>>10 = TOTH>>2 = kilobytes so far; catch DOTS up to it.
+        ; (Emitted here, in the inter-block gap where the drive is fetching, so
+        ; the CHROUT doesn't stall the per-byte transfer.)
+@dotchk:
+        lda TOTH
+        lsr a
+        lsr a
+        cmp DOTS
+        bcc @nodot                      ; want < printed (defensive) -> done
+        beq @nodot                      ; caught up
         lda #$2E                        ; '.'
         jsr CHROUT
+        inc DOTS
+        jmp @dotchk
 @nodot:
         jsr _epyx_wait_ready            ; A=0 ready, A=1 timeout
         bne @eof

@@ -167,10 +167,12 @@ static void dir_end(void)
    lines it prints "-- more --" and waits for a key (q quits, any other clears
    the screen and continues). If CTRL is never pressed the listing just scrolls
    past. On quit it emits a CR so the shell prompt lands at the start of a line.
-   Returns 1 on quit. ls/dir read over *standard* IEC (dir_begin(0)) so the wait
-   can't abort a timed transfer -- the drive just blocks on the next handshaked
-   byte. (The old CTRL-hold pause-while-down ran over the timed Epyx fast path,
-   which the drive aborts if stalled too long.) */
+   Returns 1 on quit. Pausing here is safe on either transport: the Epyx fast
+   path (now badline-paced) and standard IEC are both per-byte handshaked, so
+   while we wait the drive just blocks on the next byte rather than aborting.
+   ls/dir use the fast path (dir_begin(1)) when the drive is Epyx-capable -- the
+   standard receiver has no badline handling and garbles names on a fast drive
+   (lowercased letters / stray digits); the fast receiver paces around badlines. */
 static unsigned char paginate(unsigned char *lines, unsigned char *paged)
 {
     unsigned char c;
@@ -228,7 +230,7 @@ static void do_dir(void)
     unsigned int blocks;
     unsigned char lines = 0, paged = 0;
 
-    if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
+    if (!dir_begin(1))                  /* fast Epyx path (badline-safe) when capable */
         return;
     while (dir_line(&blocks)) {
         put_uint(blocks);
@@ -247,7 +249,7 @@ static void do_ls(void)
     unsigned char i, q2, t, color, saved, first, lines = 0, paged = 0;
     unsigned char col = 0, n;
 
-    if (!dir_begin(0))                  /* standard IEC: pageable (see paginate) */
+    if (!dir_begin(1))                  /* fast Epyx path (badline-safe) when capable */
         return;
     saved = TEXT_COLOR;
     first = 1;
