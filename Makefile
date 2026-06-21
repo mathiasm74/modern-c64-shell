@@ -33,6 +33,14 @@ ASFLAGS   := --cpu 6502
 # was only one instance of the breakage; reverted in full. (V2.18 installed.)
 CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
 
+# cc65 data dir (asminc, include, cfg, target libs). The tools normally find this
+# relative to their own binary, but a cc65 built from source and installed to a
+# non-default prefix (e.g. ~/.local) can bake in the wrong search path -- the
+# assembler then can't find asminc headers like longbranch.mac. Set it explicitly,
+# relative to the cc65 binary, so it's correct for a brew install AND a from-source
+# install. (Harmless when the tools would have found it anyway.)
+export CC65_HOME := $(abspath $(dir $(shell command -v cc65))../share/cc65)
+
 # cc65 runtime library: the `none` target carries the runtime helpers (stack,
 # zerobss, copydata, ...) without any platform startup or conio. Located
 # relative to the cc65 binary so the build is self-contained on any install.
