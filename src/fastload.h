@@ -103,6 +103,11 @@ unsigned char __fastcall__ epyx_send_begin(void);
 /* Clock one byte out to the drive (LSB first, inverted, handshaked).         */
 void __fastcall__ epyx_send_byte(unsigned char b);
 
+/* Send the 256-byte "op routine" the drive expects before the header: 255 zero
+ * filler bytes then the checksum byte. A tight ASM loop (no cc65 per-byte loop)
+ * since it's all pre-transfer overhead.                                       */
+void __fastcall__ epyx_send_op(unsigned char checksum);
+
 /* Release the bus and re-enable IRQs.                                        */
 void __fastcall__ epyx_send_end(void);
 

@@ -185,17 +185,16 @@ void fastload_epyx_install(void)
 
 unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen)
 {
-    unsigned int k;
     unsigned char rc = epyx_send_begin();
 
     if (rc != 0)                        /* drive never signalled "ready"     */
         return rc;
 
     /* 256-byte op routine: Meatloaf only sums it (and discards the bytes), so
-       send 255 x $00 + $86 = checksum $86 ("V2 load file").                  */
-    for (k = 0; k < 255; ++k)
-        epyx_send_byte(0x00);
-    epyx_send_byte(0x86);
+       255 x $00 + $86 = checksum $86 ("V2 load file"). Shipped by a tight ASM
+       loop (epyx_send_op) -- it's all pre-transfer overhead before the first
+       progress dot, so don't pay cc65's 16-bit per-byte loop for it.         */
+    epyx_send_op(0x86);
 
     /* filename length, then the name in reverse (the drive reads it backwards
        into m_buffer[n-1..0], so the last character goes out first).          */

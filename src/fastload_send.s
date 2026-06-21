@@ -27,7 +27,10 @@ TMP    = $FB            ; byte being shifted out (reset's boot scratch; free now
 DDST   = $FC            ; our current $DD00 output bits (CLK/DATA we drive)
 
 .import wait_clk_lo, wait_clk_hi
-.export _epyx_send_begin, _epyx_send_byte, _epyx_send_end
+.export _epyx_send_begin, _epyx_send_byte, _epyx_send_end, _epyx_send_op
+
+OPCNT = $FD            ; op-routine byte counter (reset boot scratch; free now)
+OPSUM = $FE            ; the checksum byte to send last
 
 .segment "CODE2"        ; KERNAL ROM half (the BASIC ROM is full)
 
@@ -86,6 +89,25 @@ DDST   = $FC            ; our current $DD00 output bits (CLK/DATA we drive)
         dex
         bne @bit
         rts
+.endproc
+
+; ---------------------------------------------------------------------------
+; _epyx_send_op - send the 256-byte "op routine" the drive expects before the
+; header: 255 x $00 then the checksum byte (A). Meatloaf only sums and discards
+; it, so the bytes are filler -- but the count and the sum must be exact. A tight
+; ASM loop, no cc65 16-bit-counter loop per byte. fastcall: A = checksum.
+; (OPCNT/OPSUM are disjoint from _epyx_send_byte's TMP/DDST at $FB/$FC.)
+; ---------------------------------------------------------------------------
+.proc _epyx_send_op
+        sta OPSUM
+        lda #255
+        sta OPCNT
+@l:     lda #$00
+        jsr _epyx_send_byte             ; a filler $00
+        dec OPCNT
+        bne @l
+        lda OPSUM
+        jmp _epyx_send_byte             ; the checksum byte (tail call)
 .endproc
 
 ; ---------------------------------------------------------------------------
