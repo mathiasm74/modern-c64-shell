@@ -131,60 +131,51 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ;     DATA is already released, the drive is waiting). The bits land
         ;     interleaved -- d7/d5 in S0, d6/d4 in S1, d3/d1 in S2, d2/d0 in S3,
         ;     each from $DD00 bit6/bit7 -- so this used to be 8 shift/rol steps.
-        ;     One 256-byte table does it in 4 indexed loads instead, cutting the
-        ;     per-byte gap the drive blocks on. detab[s] puts ~s.bit6/~s.bit7 at
-        ;     result bits 7/5; shifting the loaded value right slides that pair
-        ;     to each sample's positions: >>1 -> 6/4 (S1), >>4 -> 3/1 (S2),
-        ;     >>5 -> 2/0 (S3). The table bakes in the wire inversion, so no final
-        ;     EOR. (RES is reused as the accumulator.)  ---
+        ;     Two lookup tables do it in 4 indexed loads: detab_hi[s] puts
+        ;     ~s.bit6/~s.bit7 at result bits 7/5, detab_lo[s] at 3/1; a single
+        ;     >>1 slides each to the second sample's positions (6/4 and 2/0).
+        ;     The tables bake in the wire inversion, so no final EOR. (RES is the
+        ;     accumulator.)  ---
         ldx S0
-        lda detab,x                     ; d7,d5
+        lda detab_hi,x                  ; d7,d5
         sta RES
         ldx S1
-        lda detab,x
+        lda detab_hi,x
         lsr a                           ; -> d6,d4
         ora RES
         sta RES
         ldx S2
-        lda detab,x
-        lsr a
-        lsr a
-        lsr a
-        lsr a                           ; -> d3,d1
+        lda detab_lo,x                  ; d3,d1
         ora RES
         sta RES
         ldx S3
-        lda detab,x
-        lsr a
-        lsr a
-        lsr a
-        lsr a
+        lda detab_lo,x
         lsr a                           ; -> d2,d0
         ora RES
         ldx #$00
         rts
 .endproc
 
-; Epyx de-interleave table (see _epyx_recv_byte). detab[s] places the two data
-; bits a sample carries (~bit6, ~bit7) at result bits 7 and 5; right-shifting
-; the loaded value slides that pair to each other sample's positions, so one
-; table serves all four. detab[s] depends ONLY on s's top two bits, so it takes
-; just FOUR distinct values -- so it lives in RAM, generated at boot from a
-; 4-byte ROM seed (~24 ROM bytes total instead of a 256-byte ROM table). The
-; wire inversion is baked into the seed (00->$A0 01->$20 10->$80 11->$00, the
-; values of `(~bit6<<7)|(~bit7<<5)` for the four bit7:bit6 combinations).
-.export detab, _epyx_gen_detab
+; Epyx de-interleave tables (see _epyx_recv_byte). detab_hi[s] places the two
+; data bits a sample carries (~bit6, ~bit7) at result bits 7 and 5; detab_lo[s]
+; at 3 and 1 (= detab_hi >> 4). Each depends ONLY on s's top two bits, so each
+; has four distinct values -- so they live in RAM, generated at boot from a
+; 4-byte ROM seed (the values of `(~bit6<<7)|(~bit7<<5)` for the four bit7:bit6
+; combinations). ~28 ROM bytes total instead of two 256-byte ROM tables.
+.export detab_hi, detab_lo, _epyx_gen_detab
 
 .segment "RODATA2"
 detab_seed:
-        .byte $A0, $20, $80, $00        ; indexed by (s >> 6) = bits 7:6
+        .byte $A0, $20, $80, $00        ; detab_hi values, indexed by (s >> 6)
 
 .segment "BSS"
-detab:  .res 256                        ; RAM de-interleave table (filled at boot)
+detab_hi: .res 256                      ; RAM de-interleave tables (filled at boot)
+detab_lo: .res 256
 
 .segment "CODE2"
-; _epyx_gen_detab - fan the 4-value seed out over the 256-entry RAM table. Run
-; once at boot (reset.s, after BSS is cleared and before any fload). C-callable.
+; _epyx_gen_detab - fan the 4-value seed out over both 256-entry RAM tables.
+; detab_lo = detab_hi >> 4. Run once at boot (reset.s, after BSS is cleared and
+; before any fload). C-callable.
 .proc _epyx_gen_detab
         ldx #$00
 @l:     txa
@@ -196,7 +187,12 @@ detab:  .res 256                        ; RAM de-interleave table (filled at boo
         lsr a                           ; A = s >> 6 (the top two bits, 0..3)
         tay
         lda detab_seed,y
-        sta detab,x
+        sta detab_hi,x
+        lsr a
+        lsr a
+        lsr a
+        lsr a                           ; detab_lo = detab_hi >> 4
+        sta detab_lo,x
         inx
         bne @l
         rts
