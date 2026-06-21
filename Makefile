@@ -25,12 +25,6 @@ ONEROM_CFG   := cfg/onerom.json
 ASFLAGS   := --cpu 6502
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
-# NOTE: do NOT add -Cl (static locals) here. It saves ~600 BASIC-ROM bytes but
-# miscompiles resident code on cc65 <= V2.19 in ways the VICE suite can't see
-# (the overlay-fetch / RBCP transport and other hardware-only paths) -- it caused
-# intermittent corruption across many commands on real hardware (help garbled,
-# cd stage-5, flaky ls/dir, prompt spacing). The known #1077 post-increment bug
-# was only one instance of the breakage; reverted in full. (V2.18 installed.)
 CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
 
 # cc65 data dir (asminc, include, cfg, target libs). The tools normally find this
@@ -40,6 +34,24 @@ CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
 # relative to the cc65 binary, so it's correct for a brew install AND a from-source
 # install. (Harmless when the tools would have found it anyway.)
 export CC65_HOME := $(abspath $(dir $(shell command -v cc65))../share/cc65)
+
+# -Cl (static locals) on the RESIDENT shell C only: ~+470 free BASIC-ROM bytes.
+# It trips cc65 issue #1077 on released compilers (<= V2.19) -- a post-increment
+# subscript on a constant-address base (cast-pointer #define) with a static char
+# index miscompiles to a pre-increment. This codebase uses constant-address
+# accesses everywhere (mailboxes, fixed buffers), so on V2.18 it corrupted
+# hardware-only paths the VICE suite can't see (garbled help, cd stage-5, flaky
+# ls/dir, "8 >" prompt; v0.39-v0.41). Only a FROM-SOURCE (git) cc65 has the #1077
+# fix, so gate -Cl on that: a "Git" build gets it, a released build silently skips
+# it and stays correct. Overlays never get -Cl (cached/re-run; outside the 16KB
+# ROM, so no benefit). Validated: test_cd (the #1077 canary) passes with -Cl on
+# the git compiler; full suite green. Re-enabled v0.43 after the from-source swap.
+CC65_IS_GIT := $(shell cc65 --version 2>&1 | grep -c Git)
+ifeq ($(CC65_IS_GIT),1)
+CC65FLAGS_RESIDENT := $(CC65FLAGS) -Cl
+else
+CC65FLAGS_RESIDENT := $(CC65FLAGS)
+endif
 
 # cc65 runtime library: the `none` target carries the runtime helpers (stack,
 # zerobss, copydata, ...) without any platform startup or conio. Located
@@ -203,7 +215,7 @@ $(BUILD)/overlays_b.bin: $(OVERLAYS_B) Makefile
 .PRECIOUS: $(BUILD)/%.s
 $(BUILD)/%.s: src/%.c | $(BUILD)
 	@mkdir -p $(@D)
-	$(CC) $(CC65FLAGS) -o $@ $<
+	$(CC) $(CC65FLAGS_RESIDENT) -o $@ $<
 
 $(BUILD)/%.o: $(BUILD)/%.s | $(BUILD)
 	@mkdir -p $(@D)
