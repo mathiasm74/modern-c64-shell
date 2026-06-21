@@ -56,38 +56,35 @@ def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
             % (k + 1, [0x0180, 0x0199, 0x01B2][k], got, expect)
 
 
-# --- Epyx receiver de-interleave tables -----------------------------------
+# --- Epyx receiver de-interleave table ------------------------------------
 # The fast receiver (_epyx_recv_byte) turns the 4 raw $DD00 samples of a byte
-# into the byte via two 256-byte lookup tables (detab_hi/detab_lo). To save ROM
-# they aren't stored -- reset.s generates them into RAM at boot (_epyx_gen_detab)
-# from a 4-byte seed. The timed receive is hardware-only (VICE has no Epyx
-# drive), but the generated TABLES -- where a bug would hide -- are data we read
-# back from RAM. A sample byte s carries two data bits inverted on the wire
-# (~s.bit6, ~s.bit7); detab_hi[s] places them at result bits 7/5, detab_lo[s] at
-# 3/1, and a >>1 slides each to the second sample's positions. A full byte is
-#   detab_hi[S0] | (detab_hi[S1]>>1) | detab_lo[S2] | (detab_lo[S3]>>1)
+# into the byte via a 256-byte lookup table (detab). To save ROM the table isn't
+# stored -- reset.s generates it into RAM at boot (_epyx_gen_detab) from a 4-byte
+# seed. The timed receive is hardware-only (VICE has no Epyx-transmit drive), but
+# the generated TABLE -- where a bug would hide -- is data we read back from RAM.
+# A sample byte s carries two data bits inverted on the wire (~s.bit6, ~s.bit7);
+# detab[s] places them at result bits 7/5, and shifting the loaded value right
+# slides the pair to each sample's positions. A full byte is
+#   detab[S0] | (detab[S1]>>1) | (detab[S2]>>4) | (detab[S3]>>5)
 # with S0..S3 carrying (d7,d5) (d6,d4) (d3,d1) (d2,d0).
 
-def _detabs(v):
-    v.run_for(0.3)                          # let reset.s/_epyx_gen_detab fill them
-    return (v.read_memory(_label_addr("detab_hi"), 256),
-            v.read_memory(_label_addr("detab_lo"), 256))
+def _detab(v):
+    v.run_for(0.3)                          # let reset.s/_epyx_gen_detab fill it
+    return v.read_memory(_label_addr("detab"), 256)
 
 
-def test_detabs_generated_in_ram(v):
-    hi, lo = _detabs(v)
+def test_detab_generated_in_ram(v):
+    tab = _detab(v)
     for s in range(256):
         b6, b7 = (s >> 6) & 1, (s >> 7) & 1
-        whi = ((1 - b6) << 7) | ((1 - b7) << 5)
-        wlo = ((1 - b6) << 3) | ((1 - b7) << 1)
-        assert hi[s] == whi, "detab_hi[%d]=$%02X want $%02X" % (s, hi[s], whi)
-        assert lo[s] == wlo, "detab_lo[%d]=$%02X want $%02X" % (s, lo[s], wlo)
+        want = ((1 - b6) << 7) | ((1 - b7) << 5)
+        assert tab[s] == want, "detab[%d]=$%02X want $%02X" % (s, tab[s], want)
 
 
 def test_full_deinterleave_roundtrip(v):
     # Encode each byte the way Meatloaf's transmitEpyxByte does, then decode it
-    # through the tables the way the receiver does, and check all 256 round-trip.
-    hi, lo = _detabs(v)
+    # through the table the way the receiver does, and check all 256 round-trip.
+    t = _detab(v)
 
     def sample(bit6, bit7):                 # one inverted $DD00 sample
         return ((1 - bit6) << 6) | ((1 - bit7) << 7)
@@ -96,5 +93,5 @@ def test_full_deinterleave_roundtrip(v):
         d = [(byte >> i) & 1 for i in range(8)]
         s0, s1, s2, s3 = (sample(d[7], d[5]), sample(d[6], d[4]),
                           sample(d[3], d[1]), sample(d[2], d[0]))
-        out = hi[s0] | (hi[s1] >> 1) | lo[s2] | (lo[s3] >> 1)
+        out = t[s0] | (t[s1] >> 1) | (t[s2] >> 4) | (t[s3] >> 5)
         assert out == byte, "round-trip $%02X -> $%02X" % (byte, out)

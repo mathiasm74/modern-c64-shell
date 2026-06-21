@@ -131,51 +131,60 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ;     DATA is already released, the drive is waiting). The bits land
         ;     interleaved -- d7/d5 in S0, d6/d4 in S1, d3/d1 in S2, d2/d0 in S3,
         ;     each from $DD00 bit6/bit7 -- so this used to be 8 shift/rol steps.
-        ;     Two lookup tables do it in 4 indexed loads: detab_hi[s] puts
-        ;     ~s.bit6/~s.bit7 at result bits 7/5, detab_lo[s] at 3/1; a single
-        ;     >>1 slides each to the second sample's positions (6/4 and 2/0).
-        ;     The tables bake in the wire inversion, so no final EOR. (RES is the
-        ;     accumulator.)  ---
+        ;     One 256-byte table does it in 4 indexed loads instead, cutting the
+        ;     per-byte gap the drive blocks on. detab[s] puts ~s.bit6/~s.bit7 at
+        ;     result bits 7/5; shifting the loaded value right slides that pair
+        ;     to each sample's positions: >>1 -> 6/4 (S1), >>4 -> 3/1 (S2),
+        ;     >>5 -> 2/0 (S3). The table bakes in the wire inversion, so no final
+        ;     EOR. (RES is reused as the accumulator.)  ---
         ldx S0
-        lda detab_hi,x                  ; d7,d5
+        lda detab,x                     ; d7,d5
         sta RES
         ldx S1
-        lda detab_hi,x
+        lda detab,x
         lsr a                           ; -> d6,d4
         ora RES
         sta RES
         ldx S2
-        lda detab_lo,x                  ; d3,d1
+        lda detab,x
+        lsr a
+        lsr a
+        lsr a
+        lsr a                           ; -> d3,d1
         ora RES
         sta RES
         ldx S3
-        lda detab_lo,x
+        lda detab,x
+        lsr a
+        lsr a
+        lsr a
+        lsr a
         lsr a                           ; -> d2,d0
         ora RES
         ldx #$00
         rts
 .endproc
 
-; Epyx de-interleave tables (see _epyx_recv_byte). detab_hi[s] places the two
-; data bits a sample carries (~bit6, ~bit7) at result bits 7 and 5; detab_lo[s]
-; at 3 and 1 (= detab_hi >> 4). Each depends ONLY on s's top two bits, so each
-; has four distinct values -- so they live in RAM, generated at boot from a
-; 4-byte ROM seed (the values of `(~bit6<<7)|(~bit7<<5)` for the four bit7:bit6
-; combinations). ~28 ROM bytes total instead of two 256-byte ROM tables.
-.export detab_hi, detab_lo, _epyx_gen_detab
+; Epyx de-interleave table (see _epyx_recv_byte). detab[s] places the two data
+; bits a sample carries (~bit6, ~bit7) at result bits 7 and 5; right-shifting
+; the loaded value slides that pair to each other sample's positions, so one
+; table serves all four. detab[s] depends ONLY on s's top two bits, so it takes
+; just FOUR distinct values -- so it lives in RAM, generated at boot from a
+; 4-byte ROM seed (~24 ROM bytes total instead of a 256-byte ROM table). The
+; wire inversion is baked into the seed (00->$A0 01->$20 10->$80 11->$00, the
+; values of `(~bit6<<7)|(~bit7<<5)` for the four bit7:bit6 combinations).
+.export detab, _epyx_gen_detab
 
 .segment "RODATA2"
 detab_seed:
-        .byte $A0, $20, $80, $00        ; detab_hi values, indexed by (s >> 6)
+        .byte $A0, $20, $80, $00        ; indexed by (s >> 6) = bits 7:6
 
 .segment "BSS"
-detab_hi: .res 256                      ; RAM de-interleave tables (filled at boot)
-detab_lo: .res 256
+detab:  .res 256                        ; RAM de-interleave table (filled at boot)
 
 .segment "CODE2"
-; _epyx_gen_detab - fan the 4-value seed out over both 256-entry RAM tables.
-; detab_lo = detab_hi >> 4. Run once at boot (reset.s, after BSS is cleared and
-; before any fload). C-callable.
+; _epyx_gen_detab - fan the 4-value seed out over the 256-entry RAM table. Run
+; once at boot (reset.s, after BSS is cleared and before any fload). C-callable.
 .proc _epyx_gen_detab
         ldx #$00
 @l:     txa
@@ -187,12 +196,7 @@ detab_lo: .res 256
         lsr a                           ; A = s >> 6 (the top two bits, 0..3)
         tay
         lda detab_seed,y
-        sta detab_hi,x
-        lsr a
-        lsr a
-        lsr a
-        lsr a                           ; detab_lo = detab_hi >> 4
-        sta detab_lo,x
+        sta detab,x
         inx
         bne @l
         rts
@@ -227,27 +231,20 @@ LADRH = $02B0
         sta TOTL
         sta TOTH
         ; --- load address: the first two data bytes set the destination ------
-        jsr getbyte
+        jsr next_byte
         bcs @fail
         sta DST
         sta LADRL
-        jsr getbyte
+        jsr next_byte
         bcs @fail
         sta DST+1
         sta LADRH
         lda #2
         sta TOTL                        ; the two address bytes are counted
-        ; --- stream the rest into (DST), crossing block boundaries. The fetch
-        ;     is inlined here (the hot path) -- no jsr/rts per byte; only a block
-        ;     boundary (BLK == 0) calls out, to get_block. --------------------
+        ; --- stream the rest into (DST), crossing block boundaries -----------
 @loop:
-        lda BLK
-        bne @have                       ; current block still has bytes
-        jsr get_block                   ; boundary (cold): dots + length -> BLK
-        bcs @eof                        ; end of stream
-@have:
-        dec BLK
-        jsr _epyx_recv_byte             ; data byte in A
+        jsr next_byte
+        bcs @eof
         ldy #$00
         sta (DST),y
         inc DST
@@ -275,13 +272,17 @@ LADRH = $02B0
         rts
 .endproc
 
-; get_block - at a block boundary (BLK == 0): emit any due progress dots, wait
-; for the drive's per-block "ready", and read the block length into BLK. Returns
-; carry clear with BLK > 0, or carry set on end of stream (a ready timeout or a
-; zero-length block). Dots are emitted here, in the inter-block gap where the
-; drive is busy fetching, so the CHROUT doesn't stall the per-byte transfer.
-.proc get_block
-        ; one progress dot per 1024 bytes: want = bytes>>10 = TOTH>>2; catch up.
+; next_byte - return the next PRG data byte in A (carry clear), crossing block
+; boundaries. Carry set = end of stream (zero-length block or ready timeout).
+; Emits a progress dot at every 4th block boundary (in the inter-block gap,
+; where the drive is busy fetching the next block anyway). Clobbers A/X/Y.
+.proc next_byte
+        lda BLK
+        bne @have
+        ; --- block boundary: one progress dot per 1024 bytes -----------------
+        ; want = bytes>>10 = TOTH>>2 = kilobytes so far; catch DOTS up to it.
+        ; (Emitted here, in the inter-block gap where the drive is fetching, so
+        ; the CHROUT doesn't stall the per-byte transfer.)
 @dotchk:
         lda TOTH
         lsr a
@@ -300,24 +301,9 @@ LADRH = $02B0
         sta BLK
         cmp #$00                        ; re-test: recv_byte's `ldx #0` left Z=1,
         beq @eof                        ; so test the byte itself. 0 length -> EOF
-        clc
-        rts
-@eof:
-        sec
-        rts
-.endproc
-
-; getbyte - fetch one data byte, crossing block boundaries. A = byte, carry
-; clear; carry set on end of stream. Used for the two load-address bytes; the
-; main stream inlines the same logic (see @loop).
-.proc getbyte
-        lda BLK
-        bne @have
-        jsr get_block
-        bcs @eof
 @have:
         dec BLK
-        jsr _epyx_recv_byte
+        jsr _epyx_recv_byte             ; the data byte
         clc
         rts
 @eof:
