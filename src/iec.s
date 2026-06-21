@@ -172,6 +172,27 @@ wait_clk_lo:
 @ok:    clc
         rts
 
+; wait_clk_lo_short - like wait_clk_lo but with a SHORT (~75ms) timeout, used
+; only for the post-EOI final byte (iec_getbyte): once we ack EOI, a 1541 clocks
+; that last byte out within ~1ms, but a Meatloaf/SD2IEC sends nothing and goes
+; idle -- the full ~1.4s wait_clk_lo then stalled the prompt at the end of every
+; cat/less/load/dir. ~75ms is ample for any 1541-family drive (the byte is
+; already in its buffer, no sector read) yet imperceptible on an idle bus.
+; Carry clear = CLK went low (a real final byte follows), set = timed out (idle).
+wait_clk_lo_short:
+        ldx #$20                ; ~32 * 256 * 9cyc ~= ~75ms
+@x:     ldy #$00
+@y:     bit DD00
+        bvc @ok                 ; CLK low
+        dey
+        bne @y
+        dex
+        bne @x
+        sec
+        rts
+@ok:    clc
+        rts
+
 ; Wait for DATA in to go low (~0.7s timeout). Carry clear once it does, carry
 ; set on timeout. iec_sendbyte's first handshake uses this so an absent or
 ; unaddressed device (which never pulls DATA low) can't wedge the send; once a
@@ -502,7 +523,9 @@ _iec_getbyte:
         jsr data_lo             ; pulse DATA low ...
         jsr iec_settle
         jsr data_hi             ; ... then release; a 1541 now sends its last byte
-        jsr wait_clk_lo         ; patient: a 1541 clocks out its final EOI byte
+        jsr wait_clk_lo_short   ; a 1541 clocks out its final EOI byte within ~1ms;
+                                ; a Meatloaf sends none, so use a short timeout so
+                                ; the idle bus doesn't stall the prompt ~1.4s
         bcc @gotclk             ; CLK low -> read that byte (returned with EOI set)
         ; timed out -> the bus is idle (Meatloaf-style end of stream). ST already
         ; carries EOI (no $02), so the caller stops without a "read error". Return
