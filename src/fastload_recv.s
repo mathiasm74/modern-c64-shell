@@ -86,10 +86,22 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ; clear. The raster free-runs (independent of the CPU), so this always
         ; advances to a clear offset within a few lines. Inside the SEI so no
         ; IRQ perturbs the read->release->sample gap; screen stays visible.
+        ; Badlines only fire while the raster is in the visible window $30..$F7
+        ; (RASTER & 7 == YSCROLL there). Outside it -- top/bottom border -- every
+        ; raster line is safe, so gate the offset check by the window first. The
+        ; last raster a byte must avoid is $F3 (the highest badline line); from
+        ; $F4 up the worst-case sample window can't reach a badline, so accept.
+        ; This is the Epyx cart's trick (it uses a 256-byte raster table; the two
+        ; compares bracket the same band for our single contiguous window) and it
+        ; drops the needless border waits the old `and #7` check imposed.
 @badline:
         lda VIC_RASTER
+        cmp #$30
+        bcc @clear                      ; below the window -> no badlines, safe
+        cmp #$F4
+        bcs @clear                      ; past the last dangerous line -> safe
         and #$07
-        beq @clear                      ; offset 0 -> clear
+        beq @clear                      ; offset 0 inside window -> clear
         cmp #(YSCROLL + 1)              ; offsets 1..3 -> still in the danger band
         bcc @badline                    ; wait it out (raster advances)
 @clear:
