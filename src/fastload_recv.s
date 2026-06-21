@@ -131,45 +131,76 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ;     DATA is already released, the drive is waiting). The bits land
         ;     interleaved -- d7/d5 in S0, d6/d4 in S1, d3/d1 in S2, d2/d0 in S3,
         ;     each from $DD00 bit6/bit7 -- so this used to be 8 shift/rol steps.
-        ;     Two 256-byte tables do it in 4 indexed loads instead, ~halving the
-        ;     per-byte gap the drive blocks on. detab_hi[s] puts ~s.bit6/~s.bit7
-        ;     at result bits 7/5; >>1 slides them to 6/4 for the 2nd sample.
-        ;     detab_lo does 3/1 (and >>1 -> 2/0). The tables bake in the wire
-        ;     inversion, so no final EOR. (RES is reused as the accumulator.)  ---
+        ;     One 256-byte table does it in 4 indexed loads instead, cutting the
+        ;     per-byte gap the drive blocks on. detab[s] puts ~s.bit6/~s.bit7 at
+        ;     result bits 7/5; shifting the loaded value right slides that pair
+        ;     to each sample's positions: >>1 -> 6/4 (S1), >>4 -> 3/1 (S2),
+        ;     >>5 -> 2/0 (S3). The table bakes in the wire inversion, so no final
+        ;     EOR. (RES is reused as the accumulator.)  ---
         ldx S0
-        lda detab_hi,x                  ; d7,d5
+        lda detab,x                     ; d7,d5
         sta RES
         ldx S1
-        lda detab_hi,x
+        lda detab,x
         lsr a                           ; -> d6,d4
         ora RES
         sta RES
         ldx S2
-        lda detab_lo,x                  ; d3,d1
+        lda detab,x
+        lsr a
+        lsr a
+        lsr a
+        lsr a                           ; -> d3,d1
         ora RES
         sta RES
         ldx S3
-        lda detab_lo,x
+        lda detab,x
+        lsr a
+        lsr a
+        lsr a
+        lsr a
         lsr a                           ; -> d2,d0
         ora RES
         ldx #$00
         rts
 .endproc
 
-; Epyx de-interleave tables (see _epyx_recv_byte). detab_hi[s] places the two
-; data bits a sample carries (~bit6, ~bit7) at result bits 7 and 5; detab_lo[s]
-; at bits 3 and 1 (= detab_hi >> 4). The wire inversion is baked in (the `^1`).
-; In the KERNAL ROM half (RODATA2), alongside the receiver in CODE2.
-.export detab_hi, detab_lo
+; Epyx de-interleave table (see _epyx_recv_byte). detab[s] places the two data
+; bits a sample carries (~bit6, ~bit7) at result bits 7 and 5; right-shifting
+; the loaded value slides that pair to each other sample's positions, so one
+; table serves all four. detab[s] depends ONLY on s's top two bits, so it takes
+; just FOUR distinct values -- so it lives in RAM, generated at boot from a
+; 4-byte ROM seed (~24 ROM bytes total instead of a 256-byte ROM table). The
+; wire inversion is baked into the seed (00->$A0 01->$20 10->$80 11->$00, the
+; values of `(~bit6<<7)|(~bit7<<5)` for the four bit7:bit6 combinations).
+.export detab, _epyx_gen_detab
+
 .segment "RODATA2"
-detab_hi:
-        .repeat 256, s
-            .byte ((((s >> 6) ^ 1) & 1) << 7) | ((((s >> 7) ^ 1) & 1) << 5)
-        .endrepeat
-detab_lo:
-        .repeat 256, s
-            .byte ((((s >> 6) ^ 1) & 1) << 3) | ((((s >> 7) ^ 1) & 1) << 1)
-        .endrepeat
+detab_seed:
+        .byte $A0, $20, $80, $00        ; indexed by (s >> 6) = bits 7:6
+
+.segment "BSS"
+detab:  .res 256                        ; RAM de-interleave table (filled at boot)
+
+.segment "CODE2"
+; _epyx_gen_detab - fan the 4-value seed out over the 256-entry RAM table. Run
+; once at boot (reset.s, after BSS is cleared and before any fload). C-callable.
+.proc _epyx_gen_detab
+        ldx #$00
+@l:     txa
+        lsr a
+        lsr a
+        lsr a
+        lsr a
+        lsr a
+        lsr a                           ; A = s >> 6 (the top two bits, 0..3)
+        tay
+        lda detab_seed,y
+        sta detab,x
+        inx
+        bne @l
+        rts
+.endproc
 
 ; ----------------------------------------------------------------------------
 ; _epyx_recv_prg - receive a whole Epyx-streamed PRG into its embedded load

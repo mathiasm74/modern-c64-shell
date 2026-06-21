@@ -17,6 +17,7 @@
 
 ; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
 .import _main                   ; the C shell (src/shell.c)
+.import _epyx_gen_detab         ; fill the RAM Epyx de-interleave table at boot
 .import zerobss                 ; clear the BSS segment in RAM
 .import copydata                ; copy initialized DATA from ROM to RAM
 .importzp sp                    ; cc65 C software stack pointer
@@ -326,6 +327,7 @@ reset:
         sta sp+1
         jsr zerobss
         jsr copydata
+        jsr _epyx_gen_detab     ; fill the RAM Epyx de-interleave table (post-zerobss)
         jsr _main               ; the shell loops forever; should not return
 @halt:
         jmp @halt               ; trap, just in case main() ever returns
@@ -396,7 +398,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.30", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.31", 0          ; right-aligned at col 34 (assumes 5 chars)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:
