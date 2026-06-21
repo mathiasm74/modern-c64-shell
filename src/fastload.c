@@ -206,6 +206,23 @@ unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen)
     return 0;
 }
 
+/* 0-argument "$"-directory variant for OVERLAY callers (svc 12).
+ *
+ * An svc function may take at most ONE argument: an overlay and the resident
+ * shell run on SEPARATE cc65 C stacks (overlay sp in ZP $40-$5F, resident sp in
+ * $02-$1F), so the LAST argument -- passed in registers -- crosses the boundary
+ * fine, but an earlier stack-passed argument does NOT: it's pushed on the
+ * overlay's stack and read from the resident's, arriving as garbage. The 2-arg
+ * fastload_epyx_send_header(name, namelen) therefore corrupted `name` when the
+ * dir overlay called it through the svc table -- "$" arrived as 0xEE, so the
+ * Meatloaf tried to cd into a nonexistent path and the listing failed. The dir
+ * overlay always sends "$", so it calls this 0-arg wrapper instead; the call to
+ * send_header below is resident->resident (one stack), so the name is correct.   */
+unsigned char fastload_epyx_send_dir_header(void)
+{
+    return fastload_epyx_send_header("$", 1);
+}
+
 #pragma code-name (pop)
 #pragma rodata-name (pop)
 

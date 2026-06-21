@@ -113,7 +113,7 @@ static unsigned char dir_begin(unsigned char allow_fast)
     if (allow_fast && svc_fastload_epyx_capable()) {
         svc_fastload_epyx_install();
         if (!(svc_iec_status() & ST_NODEV)) {
-            if (svc_fastload_epyx_send_header("$", 1) == 0) {
+            if (svc_fastload_epyx_send_dir_header() == 0) {
                 dir_fast = 1;
                 dir_getbyte();              /* load address (2 bytes) */
                 dir_getbyte();

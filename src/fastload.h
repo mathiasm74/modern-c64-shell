@@ -120,6 +120,11 @@ void __fastcall__ epyx_send_end(void);
  * entered Epyx mode -- bad fingerprint, or Epyx not enabled on the drive).   */
 unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen);
 
+/* 0-argument "$"-directory variant for overlay callers (svc 12). The overlay
+   can't call the 2-arg send_header across the svc boundary -- its first,
+   stack-passed argument lands on the wrong C stack. See fastload.c.            */
+unsigned char fastload_epyx_send_dir_header(void);
+
 /* --- Step 3: drive -> host receive over the timed 2-bit protocol
  *               (src/fastload_recv.s) -------------------------------------- */
 

@@ -12,11 +12,18 @@
 ; this order and the start address ($FF80) in sync with svc.h, and don't let
 ; CODE2 grow past $FF80 (cfg/rom.cfg pins this segment there). 17 entries,
 ; $FF80-$FFB2, sitting in the KERNAL ROM gap below the $FFBA file-I/O stubs.
+;
+; CONSTRAINT: an svc routine may take AT MOST ONE argument. An overlay and the
+; resident shell run on SEPARATE cc65 C stacks (overlay sp in ZP $40-$5F,
+; resident sp in $02-$1F), so the LAST argument -- passed in registers -- crosses
+; fine, but an earlier STACK-passed argument lands on the wrong stack as garbage.
+; For a multi-value call, add a resident 0/1-arg wrapper (svc 12 is exactly that:
+; the "$" variant of the 2-arg send_header, which corrupted its name otherwise).
 
 .import _iec_set_fa, _iec_set_sa, _iec_setname, _iec_open, _iec_status
 .import _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
 .import _fastload_set_device, _fastload_epyx_capable, _fastload_epyx_install
-.import _fastload_epyx_send_header, _fastload_epyx_mark_unsupported
+.import _fastload_epyx_send_dir_header, _fastload_epyx_mark_unsupported
 .import _epyx_wait_ready, _epyx_recv_byte
 .import _set_prompt
 
@@ -34,7 +41,7 @@
         jmp _fastload_set_device            ; $FF9B  svc 9
         jmp _fastload_epyx_capable          ; $FF9E  svc 10
         jmp _fastload_epyx_install          ; $FFA1  svc 11
-        jmp _fastload_epyx_send_header      ; $FFA4  svc 12
+        jmp _fastload_epyx_send_dir_header  ; $FFA4  svc 12 (0-arg "$"; see note)
         jmp _fastload_epyx_mark_unsupported ; $FFA7  svc 13
         jmp _epyx_wait_ready                ; $FFAA  svc 14
         jmp _epyx_recv_byte                 ; $FFAD  svc 15
