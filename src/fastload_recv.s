@@ -254,7 +254,8 @@ LADRH = $02B0
         bne @eof
         jsr _epyx_recv_byte             ; block length
         sta BLK
-        beq @eof                        ; zero-length block -> EOF
+        cmp #$00                        ; re-test: recv_byte's `ldx #0` left Z=1,
+        beq @eof                        ; so test the byte itself. 0 length -> EOF
 @have:
         dec BLK
         jsr _epyx_recv_byte             ; the data byte
