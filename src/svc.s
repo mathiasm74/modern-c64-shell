@@ -5,13 +5,12 @@
 ; the same idea as the KERNAL jump table, but for our own services. The dir
 ; overlay (src/overlays/dir.c) uses it for the IEC bus and the Epyx fast
 ; receiver so it can list directories (standard and fast) without bundling
-; that code itself; the files overlay uses svc 16 (set_prompt) for the
-; `prompt` command.
+; that code itself.
 ;
 ; The entries' addresses ARE the ABI: src/overlays/svc.h hardcodes them. Keep
 ; this order and the start address ($FF80) in sync with svc.h, and don't let
-; CODE2 grow past $FF80 (cfg/rom.cfg pins this segment there). 17 entries,
-; $FF80-$FFB2, sitting in the KERNAL ROM gap below the $FFBA file-I/O stubs.
+; CODE2 grow past $FF80 (cfg/rom.cfg pins this segment there). 16 entries,
+; $FF80-$FFAF, sitting in the KERNAL ROM gap below the $FFBA file-I/O stubs.
 ;
 ; CONSTRAINT: an svc routine may take AT MOST ONE argument. An overlay and the
 ; resident shell run on SEPARATE cc65 C stacks (overlay sp in ZP $40-$5F,
@@ -25,7 +24,6 @@
 .import _fastload_set_device, _fastload_epyx_capable, _fastload_epyx_install
 .import _fastload_epyx_send_dir_header, _fastload_epyx_mark_unsupported
 .import _epyx_wait_ready, _epyx_recv_byte
-.import _set_prompt
 
 .segment "SVC_TABLE"
 
@@ -45,4 +43,3 @@
         jmp _fastload_epyx_mark_unsupported ; $FFA7  svc 13
         jmp _epyx_wait_ready                ; $FFAA  svc 14
         jmp _epyx_recv_byte                 ; $FFAD  svc 15
-        jmp _set_prompt                     ; $FFB0  svc 16

@@ -59,7 +59,6 @@ const struct command shell_commands[] = {
     { "mv",     cmd_mv     },
     { "peek",   cmd_peek   },
     { "poke",   cmd_poke   },
-    { "prompt", cmd_prompt },
     { "pwd",    cmd_pwd    },
     { "reset",  cmd_reset  },
     { "rm",     cmd_rm     },
@@ -124,22 +123,11 @@ void puts_raw(const char *s)
         chrout(*s++);
 }
 
-/* The prompt symbol main() shows (followed by a space). Initialized -> DATA,
-   so it survives reset; `prompt` changes it. */
+/* The prompt symbol main() shows (followed by a space). Fixed ">"; the `prompt`
+   command that used to change it was removed. Kept as a writable[16] so the NV
+   blob (v3) keeps its length-prefixed prompt field -- preserving the on-flash
+   format so already-saved settings still load -- though it's always ">" now. */
 static char prompt_str[16] = ">";
-static unsigned char prompt_dirty;       /* prompt changed -> persist on next save */
-
-void set_prompt(const char *s)
-{
-    unsigned char i = 0;
-
-    while (s[i] && i < sizeof(prompt_str) - 1) {
-        prompt_str[i] = s[i];
-        ++i;
-    }
-    prompt_str[i] = 0;
-    prompt_dirty = 1;                     /* settings_load clears this after restore */
-}
 
 /* Redraw the whole input line and leave the cursor at column `target`.
  *
@@ -347,13 +335,10 @@ void settings_load(void)
         VIC_BG     = nv_blob[4] & 0x0F;
         COLOR_REG  = nv_blob[5] & 0x0F;
         font_select(nv_blob[6] & 1);    /* re-apply font B (+ Swedish keys) */
-        k = nv_blob[7];                 /* length-prefixed prompt */
-        i = 8;
-        for (j = 0; j < k && i < NV_BLOB_MAX && j < LINEMAX; ++j)
-            tmp[j] = nv_blob[i++];
-        tmp[j] = 0;
-        if (j > 0)
-            set_prompt(tmp);            /* restore the saved prompt (sets dirty) */
+        k = nv_blob[7];                 /* length-prefixed prompt: skip it (the */
+        i = 8;                          /* prompt command was removed; it's fixed ">") */
+        for (j = 0; j < k && i < NV_BLOB_MAX; ++j)
+            ++i;
         hc = nv_blob[i++];
         for (n = 0; n < hc && n < HIST_N && i < NV_BLOB_MAX; ++n) {
             k = nv_blob[i++];
@@ -369,7 +354,6 @@ void settings_load(void)
     col_shadow[0] = VIC_BORDER & 0x0F;
     col_shadow[1] = VIC_BG & 0x0F;
     col_shadow[2] = COLOR_REG & 0x0F;
-    prompt_dirty = 0;                    /* the restore above set it; we just loaded */
 }
 
 void settings_save(void)
@@ -411,18 +395,16 @@ void settings_save(void)
     col_shadow[0] = nv_blob[3];
     col_shadow[1] = nv_blob[4];
     col_shadow[2] = nv_blob[5];
-    prompt_dirty = 0;
     cmds_since_save = 0;
 }
 
-/* After a non-empty command: save now if a color or the prompt changed, else
-   once per SAVE_EVERY commands (a checkpoint that bounds the flash-write rate). */
+/* After a non-empty command: save now if a color changed, else once per
+   SAVE_EVERY commands (a checkpoint that bounds the flash-write rate). */
 static void settings_after_command(void)
 {
     if (!nv_ok)
         return;
-    if (prompt_dirty ||
-        (VIC_BORDER & 0x0F) != col_shadow[0] ||
+    if ((VIC_BORDER & 0x0F) != col_shadow[0] ||
         (VIC_BG & 0x0F) != col_shadow[1] ||
         (COLOR_REG & 0x0F) != col_shadow[2])
         settings_save();

@@ -20,8 +20,6 @@
  *
  * State is all local (crt0 does not zero our BSS).
  */
-#include "svc.h"                         /* svc_set_prompt (the prompt command) */
-
 unsigned char __fastcall__ k_chrout(unsigned char c);
 unsigned char k_getin(void);
 void __fastcall__ k_setlfs(unsigned char dev, unsigned char sa);
@@ -373,21 +371,6 @@ static void set_color(unsigned char which)
         COLOR_REG = val;
 }
 
-/* prompt <str> -> set the shell prompt via the resident set_prompt service. */
-static void set_prompt_cmd(void)
-{
-    char buf[16];
-    unsigned char i;
-
-    if (A1L == 0) {
-        svc_set_prompt(">");
-        return;
-    }
-    for (i = 0; i < A1L && i < 15; ++i)
-        buf[i] = A1[i];
-    buf[i] = 0;
-    svc_set_prompt(buf);
-}
 
 /* ---- peek / poke / help: resident commands moved here (cmd 12,13,15) ------ */
 
@@ -596,8 +579,6 @@ void files_main(void)
         cd_path();
     else if (cmd == 8 || cmd == 9 || cmd == 10)
         set_color(cmd - 8);             /* border / bg / text */
-    else if (cmd == 11)
-        set_prompt_cmd();               /* prompt */
     else if (cmd == 12)
         do_peek();
     else if (cmd == 13)

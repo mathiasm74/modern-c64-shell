@@ -28,9 +28,6 @@ unsigned char getin(void);
 /* Print a NUL-terminated string through CHROUT. */
 void puts_raw(const char *s);
 
-/* Set the shell prompt string (shown by main(), defined in shell.c). */
-void set_prompt(const char *s);
-
 /* Persist colors + history to the One ROM NV flash (shell.c). No-op when NV
    isn't available. cmd_exit calls this to snapshot before swapping ROMs. */
 void settings_save(void);

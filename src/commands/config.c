@@ -1,10 +1,9 @@
-/* config.c - appearance commands (border / bg / text / prompt).
+/* config.c - appearance commands (border / bg / text).
  *
  * These are thin resident thunks: the bodies live in the files overlay
- * (src/overlays/files.c, cmds 8-11), so the parse + register pokes + the
- * prompt-set (via the svc_set_prompt service) cost overlay flash, not the
- * 16KB ROM. The thunk just drops the command id and the argument string into
- * the shared mailbox at $02D0 and runs the overlay.
+ * (src/overlays/files.c, cmds 8-10), so the parse + register pokes cost overlay
+ * flash, not the 16KB ROM. The thunk just drops the command id and the argument
+ * string into the shared mailbox at $02D0 and runs the overlay.
  */
 #include "shell.h"
 #include "commands/config.h"
@@ -42,4 +41,3 @@ void cmd_text(int argc, char *argv[])
 {
     if (argc < 2) run_picker(2); else config_run(10, argc, argv);
 }
-void cmd_prompt(int argc, char *argv[]) { config_run(11, argc, argv); }

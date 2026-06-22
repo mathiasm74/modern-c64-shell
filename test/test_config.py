@@ -1,10 +1,9 @@
-"""Appearance commands: border / bg / text colors and the prompt string.
+"""Appearance commands: border / bg / text colors.
 
-border/bg poke the VIC registers ($D020/$D021), text sets the KERNAL text
-color ($0286), and prompt changes the symbol main() shows. All four now live
-in the files overlay (cmds 8-11) -- the bodies cost overlay flash, not the
-16KB ROM -- so the tests seed that overlay first. No disk needed (these never
-touch the drive).
+border/bg poke the VIC registers ($D020/$D021) and text sets the KERNAL text
+color ($0286). All three live in the files overlay (cmds 8-10) -- the bodies
+cost overlay flash, not the 16KB ROM -- so the tests seed that overlay first.
+No disk needed (these never touch the drive).
 """
 
 from lib.overlays import seed_files, seed_picker
@@ -102,12 +101,3 @@ def test_picker_down_moves_left(v):
         "down should move back by 2 from %d" % start
 
 
-def test_prompt_changes(v):
-    _run(v, "prompt %")
-    # the new prompt "% " (note the trailing space) is not a substring of the
-    # typed "prompt %", so seeing it proves the prompt actually changed.
-    for _ in range(6):
-        if "% " in v.screen_text():
-            break
-        v.run_for(0.3)
-    assert "% " in v.screen_text(), "prompt did not change"
