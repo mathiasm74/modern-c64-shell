@@ -22,6 +22,14 @@ ONEROM       := tools/onerom
 ONEROM_BOARD ?= fire-24-e
 ONEROM_CFG   := cfg/onerom.json
 
+# Version string, taken from the single source of truth (the boot banner in
+# reset.s, e.g. "v0.1.48") so the flashable artifact name can't go stale.
+VERSION := $(shell grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' src/reset.s | head -1)
+
+# The flashable deliverable (stock-fallback firmware): named for distribution as
+# c64-tardis-dos-<version>-for-onerom-<board>.bin.
+ONEROM_STOCK_OUT := $(BUILD)/c64-tardis-dos-$(VERSION)-for-onerom-$(ONEROM_BOARD).bin
+
 ASFLAGS   := --cpu 6502
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
@@ -283,8 +291,8 @@ ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_K
 onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) \
 		--config-file cfg/onerom-stock.json \
-		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
-	@echo "  onerom-stock fw : $$(wc -c < $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
+		--out $(ONEROM_STOCK_OUT)
+	@echo "  onerom fw : $$(wc -c < $(ONEROM_STOCK_OUT)) bytes -> $(ONEROM_STOCK_OUT)"
 
 # Build the firmware AND flash a connected One ROM, then reboot it into the
 # running (byte-serving) state. Plug the device in (USB), then `make onerom-
@@ -296,7 +304,7 @@ onerom-stock: $(ONEROM_STOCK_DEPS)
 onerom-flash: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --config-file cfg/onerom-stock.json \
-		--out $(BUILD)/onerom-stock-$(ONEROM_BOARD).bin
+		--out $(ONEROM_STOCK_OUT)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 
 # Baseline / bisect target: flash *only* stock C64 BASIC+KERNAL (plus the
