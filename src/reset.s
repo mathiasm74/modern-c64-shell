@@ -213,10 +213,10 @@ reset:
         bne @clrcol
 
         ; --- Startup banner ----------------------------------------------
-        ; row 0: version, right-aligned (5 chars "vX.YY" end at col 38)
+        ; row 0: version, right-aligned (7 chars "vX.Y.ZZ" end at col 38)
         ; row 2: brand, centered (33 chars)   row 4: free bytes, centered (38)
         ; row 6: "Ready."   row 7: blank   row 8: the shell prompt (cursor set below)
-        PRINT version, SCREEN_RAM + 40 * 0 + 34
+        PRINT version, SCREEN_RAM + 40 * 0 + 32
         PRINT brand,   SCREEN_RAM + 40 * 2 + 3
         PRINT freemem, SCREEN_RAM + 40 * 4 + 1    ; ROM free bytes (patched in)
         PRINT banner2, SCREEN_RAM + 40 * 6 + 0
@@ -398,7 +398,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.48", 0          ; right-aligned at col 34 (assumes 5 chars)
+        .byte "v0.1.48", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:
