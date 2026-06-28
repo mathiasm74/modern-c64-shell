@@ -87,30 +87,39 @@ moremsg:
         .byte "-- more --", 0
 
 ; Each line ends in CR; a lone CR is a blank line between paragraphs. Lines are
-; <= 40 chars so they don't wrap.
+; <= 39 chars: a 40-char line fills the row, the cursor auto-wraps, and then the
+; CR adds a SECOND line break (a stray blank line) -- so keep them under 40.
 msg:
-        .byte "Tardis DOS - a command shell for the", CR
-        .byte "Commodore 64, in place of BASIC and", CR
-        .byte "KERNAL. Named for Doctor Who's TARDIS,", CR
-        .byte "the 16K ROM is bigger on the inside.", CR
+        .byte "TARDIS DOS", CR
         .byte CR
-        .byte "It runs from a OneROM, a flash cart that", CR
-        .byte "serves the C64's ROM sockets. Bigger", CR
-        .byte "commands - editor, file tools, this", CR
-        .byte "about text - stay on the cart as", CR
-        .byte "overlays and load into RAM on demand,", CR
-        .byte "so the shell does far more than 16K.", CR
+        .byte "This shell with a modern feel is built", CR
+        .byte "specifically for legacy C64 hardware", CR
+        .byte "upgraded with @piers.rocks'", CR
+        .byte "OneROM chip.", CR
         .byte CR
-        .byte "Disk reads drive the IEC bus directly.", CR
-        .byte "Programs can load through an Epyx-", CR
-        .byte "compatible fast loader, far quicker", CR
-        .byte "than the stock KERNAL.", CR
+        .byte "A single 24-pin OneROM then serves both", CR
+        .byte "the BASIC and KERNAL sockets. The", CR
+        .byte "original 2x 8KB is much too little for", CR
+        .byte "anything but the literal basics, but", CR
+        .byte "the OneROM offers a way around this;", CR
+        .byte "while some code lives in ROM, most is", CR
+        .byte "streamed through a small address", CR
+        .byte $22, "window", $22, ", as needed. This", CR
+        .byte "essentially makes the ROM bigger on", CR
+        .byte "the inside than the outside, just", CR
+        .byte "like the Doctor's TARDIS.", CR
         .byte CR
-        .byte "font swaps the charset and keyboard", CR
-        .byte "together, so the C64 speaks more than", CR
-        .byte "one language - English and Swedish.", CR
-        .byte "run starts a program on the stock ROMs.", CR
+        .byte "While in the shell, none of the", CR
+        .byte "original BASIC or KERNAL is present -", CR
+        .byte "so legacy software can't run directly.", CR
+        .byte "On calling RUN (or cartridge insert),", CR
+        .byte "the OneROM swaps in the genuine C64", CR
+        .byte "ROMs and warm-boots before launching.", CR
+        .byte CR
+        .byte "This is the ideal companion to the", CR
+        .byte "Meatloaf device, which it accesses", CR
+        .byte "with built-in Epyx fast loading.", CR
         .byte CR
         .byte "Made by Mathias Malmqvist with Claude", CR
-        .byte "Code, 2026.", CR
+        .byte "Code in 2026.", CR
         .byte 0
