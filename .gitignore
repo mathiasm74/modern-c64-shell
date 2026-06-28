@@ -1,6 +1,11 @@
 # Build output
 build/
 
+# Release firmware binaries: distributed as GitHub Release assets, not tracked
+# in git history (each is ~512KB). `make onerom-stock` builds them into build/;
+# copy the one you ship into releases/ and attach it to the GitHub Release.
+releases/
+
 # Delivery archive (its contents — CLAUDE.md, PLAN.md — are tracked directly)
 files.zip
 
