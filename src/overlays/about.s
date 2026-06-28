@@ -103,11 +103,11 @@ msg:
         .byte "anything but the literal basics, but", CR
         .byte "the OneROM offers a way around this;", CR
         .byte "while some code lives in ROM, most is", CR
-        .byte "streamed through a small address", CR
-        .byte $22, "window", $22, ", as needed. This", CR
-        .byte "essentially makes the ROM bigger on", CR
-        .byte "the inside than the outside, just", CR
-        .byte "like the Doctor's TARDIS.", CR
+        .byte "streamed as needed through a small", CR
+        .byte "address ", $22, "window", $22, ". This essentially", CR
+        .byte "makes the ROM bigger on the inside", CR
+        .byte "than the outside, just like the", CR
+        .byte "Doctor's TARDIS.", CR
         .byte CR
         .byte "While in the shell, none of the", CR
         .byte "original BASIC or KERNAL is present -", CR
