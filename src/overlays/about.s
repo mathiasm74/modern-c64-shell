@@ -109,15 +109,17 @@ msg:
         .byte "than the outside, just like the", CR
         .byte "Doctor's TARDIS.", CR
         .byte CR
-        .byte "While in the shell, none of the", CR
-        .byte "original BASIC or KERNAL is present -", CR
-        .byte "so legacy software can't run directly.", CR
-        .byte "On calling RUN (or cartridge insert),", CR
-        .byte "the OneROM swaps in the genuine C64", CR
-        .byte "ROMs and warm-boots before launching.", CR
+        .byte "While in the Tardis shell, none of", CR
+        .byte "the original BASIC or KERNAL is", CR
+        .byte "present - so legacy software can't", CR
+        .byte "run directly. Thus, on calling RUN", CR
+        .byte "(or inserting a cartridge), the", CR
+        .byte "OneROM hot-swaps ROMs to the stock", CR
+        .byte "C64 ones before launching the", CR
+        .byte "program.", CR
         .byte CR
-        .byte "This is the ideal companion to the", CR
-        .byte "Meatloaf device, which it accesses", CR
+        .byte "Tardis DOS is the ideal companion to", CR
+        .byte "the Meatloaf device, which it accesses", CR
         .byte "with built-in Epyx fast loading.", CR
         .byte CR
         .byte "Made by Mathias Malmqvist with Claude", CR
