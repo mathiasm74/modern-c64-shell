@@ -89,13 +89,15 @@ moremsg:
 ; Each line ends in CR; a lone CR is a blank line between paragraphs. Lines are
 ; <= 39 chars: a 40-char line fills the row, the cursor auto-wraps, and then the
 ; CR adds a SECOND line break (a stray blank line) -- so keep them under 40.
+; EXCEPTION: a line that is EXACTLY 40 chars may omit its CR -- the auto-wrap is
+; then the line break, and the next CR (here the paragraph blank) lands cleanly.
+; The "...OneROM chip." line below uses this to fill the row without an orphan.
 msg:
         .byte "TARDIS DOS", CR
         .byte CR
         .byte "This shell with a modern feel is built", CR
         .byte "specifically for legacy C64 hardware", CR
-        .byte "upgraded with @piers.rocks'", CR
-        .byte "OneROM chip.", CR
+        .byte "upgraded with @piers.rocks' OneROM chip."   ; 40 cols, NO CR (see above)
         .byte CR
         .byte "A single 24-pin OneROM then serves both", CR
         .byte "the BASIC and KERNAL sockets. The", CR
@@ -104,18 +106,16 @@ msg:
         .byte "the OneROM offers a way around this;", CR
         .byte "while some code lives in ROM, most is", CR
         .byte "streamed as needed through a small", CR
-        .byte "address ", $22, "window", $22, ". This essentially", CR
-        .byte "makes the ROM bigger on the inside", CR
-        .byte "than the outside, just like the", CR
-        .byte "Doctor's TARDIS.", CR
+        .byte "address ", $22, "window", $22, ". This essentially makes"   ; 40 cols, NO CR (see above)
+        .byte "the ROM bigger on the inside than the", CR
+        .byte "outside, just like the Doctor's TARDIS.", CR
         .byte CR
-        .byte "While in the Tardis shell, none of", CR
-        .byte "the original BASIC or KERNAL is", CR
-        .byte "present - so legacy software can't", CR
-        .byte "run directly. Thus, on calling RUN", CR
-        .byte "(or inserting a cartridge), the", CR
-        .byte "OneROM hot-swaps ROMs to the stock", CR
-        .byte "C64 ones before launching the", CR
+        .byte "While in the Tardis shell, none of the", CR
+        .byte "original BASIC or KERNAL is present -", CR
+        .byte "so legacy software can't run directly.", CR
+        .byte "Thus, on calling RUN (or inserting a", CR
+        .byte "cartridge), the OneROM hot-swaps ROMs to"   ; 40 cols, NO CR (see above)
+        .byte "the stock C64 ones before launching the", CR
         .byte "program.", CR
         .byte CR
         .byte "Tardis DOS is the ideal companion to", CR
