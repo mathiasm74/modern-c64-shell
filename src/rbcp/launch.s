@@ -31,6 +31,7 @@
 .import rbcp_cmd_nv_poke_begin, rbcp_cmd_nv_poke
 .import rbcp_cmd_nv_poke_commit, rbcp_cmd_nv_poke_discard
 .import rbcp_cmd_switch_slot     ; live char-ROM (font) switch
+.import rbcp_cmd_slot_poke       ; patch bytes into a loaded slot (Swedish kbd)
 
 ; Where the library sits in ROM (load) and runs (run); both defined by ld65
 ; when the RBCP_CODE segment has `define = yes`.
@@ -46,6 +47,12 @@
 ; load it into a RAM slot the device isn't serving and switch to it.
 RBCP_STOCK_FLASH_SLOT = 1
 RBCP_STOCK_RAM_SLOT   = 1
+
+; Keyboard layout flag the shell maintains (irq.s / cmd_font): 0 = US, 1 =
+; Swedish. Page-2 RAM, so it survives into the swap trampoline. When 1, the
+; trampoline patches the stock KERNAL's keyboard decode tables in the loaded
+; (not-yet-served) stock slot so stock BASIC/KERNAL scans the Swedish layout.
+KBD_LAYOUT = $02CB
 
 ; Scratch in the gap above iec.s's $A9 SECADR and below the KERNAL's $B7
 ; FNLEN. Used only inside _rbcp_launch_stock (which never returns).
@@ -172,6 +179,46 @@ rbcp_trampoline:
         lda #RBCP_STOCK_RAM_SLOT
         ldx #RBCP_STOCK_FLASH_SLOT
         jsr rbcp_cmd_load_slot          ; flash slot -> RAM slot
+
+        ; --- Swedish keyboard under stock ROMs --------------------------------
+        ; If font B (Swedish) is active, patch the stock KERNAL's keyboard decode
+        ; tables in the just-loaded (not-yet-served) slot so stock BASIC/KERNAL
+        ; scans the Swedish layout. The tables are at $EB81 (unshift) / $EBC2
+        ; (shift); the served slot is KERNAL-first (offset 0 = $E000, hardware-
+        ; verified), so those are slot offsets $0B81 / $0BC2. Only 8 cells per
+        ; table differ from US (the symbol cluster + 3 letter keys), so 16 single-
+        ; byte SLOT_POKEs (see se_kbd_off / se_kbd_byte). SLOT_POKE targets a RAM
+        ; slot, so this is RE-APPLIED every swap (not persistent across power-off
+        ; -- RAM slots reload from flash at boot; that's why it lives here, not in
+        ; cmd_font). If the plugin doesn't implement SLOT_POKE (carry set), bail
+        ; and boot stock US -- never wedge the swap. (Display still needs the
+        ; Swedish charset, which the served stock set lacks -- keyboard only.)
+        lda KBD_LAYOUT
+        cmp #1
+        bne @no_se
+        ldx #0
+@se_loop:
+        lda se_kbd_off,x
+        sta rbcp_arg1                   ; offset lo
+        lda #$0B
+        sta rbcp_arg2                   ; offset mid (both tables in page $0B)
+        lda #$00
+        sta rbcp_arg3                   ; offset hi
+        lda se_kbd_byte,x
+        sta rbcp_arg0                   ; the Swedish cell value
+        lda #RBCP_STOCK_RAM_SLOT
+        sta rbcp_arg4                   ; target the loaded stock slot
+        txa
+        pha                             ; preserve the loop index (carry survives
+        jsr rbcp_cmd_slot_poke          ;   pla/tax; only N/Z are touched)
+        pla
+        tax
+        bcs @no_se                      ; SLOT_POKE unsupported -> US fallback
+        inx
+        cpx #16
+        bne @se_loop
+@no_se:
+
         lda #RBCP_STOCK_RAM_SLOT
         jsr rbcp_cmd_switch_and_exit    ; activate it; the device begins
                                         ; serving the new slot immediately
@@ -191,6 +238,22 @@ rbcp_trampoline:
         ; they can't rely on them, and keeping the handoff a single JMP avoids
         ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
+
+; Swedish keyboard patch (used by the trampoline above). The 8 cells that differ
+; from the US layout in each of the stock KERNAL's two decode tables -- the
+; symbol cluster (+ - @ * : ; =) and the 3 letter keys (ae oe aring). se_kbd_off
+; is the low byte of the slot offset (high bytes are $0B/$00 for all 16: $EB81+n
+; unshift, $EBC2+n shift); se_kbd_byte is the PETSCII value to write. These match
+; keytab_se / keytab_se_shift (irq.s) at matrix indices 40,43,45,46,48,49,50,53.
+; In RBCP_CODE so they ride the copy-to-RAM with the trampoline; placed after the
+; JMP so they're never executed. HARDWARE-VALIDATE the slot offsets ($EB81/$EBC2)
+; and the resulting layout against a real Swedish keyboard.
+se_kbd_off:
+        .byte $A9,$AC,$AE,$AF,$B1,$B2,$B3,$B6   ; $EB81 (unshift) + {40,43,45,46,48,49,50,53}
+        .byte $EA,$ED,$EF,$F0,$F2,$F3,$F4,$F7   ; $EBC2 (shift)   + same indices
+se_kbd_byte:
+        .byte $2D,$3D,$5C,$5B,$3A,$40,$5D,$3B   ; -  =  oe ae :  @  aring ;
+        .byte $2D,$3D,$DC,$DB,$2A,$40,$DD,$2B   ; -  =  Oe Ae *  @  Aring +
 
 ; The overlay library spans two 8KB flash sets (each holds whole overlays --
 ; no overlay straddles a set, so SLOT_PEEK only ever reads within one 8KB

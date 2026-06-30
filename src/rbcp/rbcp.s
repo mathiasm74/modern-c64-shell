@@ -435,6 +435,21 @@ rbcp_cmd_load_slot:
     lda #2
     jmp rbcp_issue_cmd
 
+; rbcp_cmd_slot_poke: write ONE byte into a RAM slot at a 24-bit offset. Caller
+; sets rbcp_arg0 = byte, rbcp_arg1/2/3 = offset lo/mid/hi, rbcp_arg4 = RAM slot.
+; The slot need not be active -- the protocol intends this for patching known
+; locations (vectors, decode tables) before the slot is switched in. MODIFY
+; group, 5 args. Returns carry SET on failure (e.g. a plugin that doesn't
+; implement SLOT_POKE), so callers can fall back gracefully.
+.export rbcp_cmd_slot_poke
+rbcp_cmd_slot_poke:
+    lda #RBCP_GRP_MODIFY
+    sta rbcp_zp_0
+    lda #RBCP_CMD_SLOT_POKE
+    sta rbcp_zp_1
+    lda #5
+    jmp rbcp_issue_cmd
+
 ; rbcp_cmd_switch_slot: A = RAM slot to make the active/served slot. Unlike
 ; switch_and_exit this stays in command-response mode (so the caller can keep
 ; issuing commands and then exit cleanly). Live: the bus keeps being served, so
