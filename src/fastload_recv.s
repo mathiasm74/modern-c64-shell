@@ -32,6 +32,7 @@ YSCROLL  = $03          ; our $D011 = $1B, so badlines fall on (RASTER & 7) == 3
 
 A3LOC = $02A8           ; constant-bit smear the fold accumulates (cancel per byte)
 A3TMP = $02A9           ; scratch while computing A3LOC (unused page-3 KERNAL RAM)
+RETRY = $02AA           ; wait_ready retry countdown (memory: wait_clk_hi eats X)
 RES = $FB               ; assembled byte scratch (reset's boot pointer; free now)
 
 .segment "CODE2"        ; KERNAL ROM half
@@ -74,11 +75,12 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 @settle:
         dey
         bne @settle                     ; ~80 us
-        ldx #$0A                         ; ~10 * 1.2s, covers a slow file lookup
-@hi:
-        jsr wait_clk_hi
-        bcc @ok
-        dex
+        lda #$0A                        ; ~10 * 1.4s, covers a slow file lookup
+        sta RETRY                       ; count in memory, NOT X: wait_clk_hi
+@hi:                                    ; exits its timeout with X=0, so an X
+        jsr wait_clk_hi                 ; ladder wrapped to $FF on every retry
+        bcc @ok                         ; and never gave up -- the give-up had
+        dec RETRY                       ; never actually fired until this fix
         bne @hi
         lda #$01                         ; no "ready" (CLK high) -> give up
         rts
@@ -243,10 +245,15 @@ GACC = $FC                              ;   free by the time this runs)
 ; Stores the PRG load address at LADRL/LADRH ($02AF/$02B0) for the C wrapper.
 ; Emits a '.' every 4th block and a CR at the end (the same progress dots as
 ; before). Returns the end address (last byte + 1 = VARTAB) in A/X, or $0000 if
-; fewer than 3 bytes arrived (missing file / broken stream). C-callable.
+; fewer than 3 bytes arrived (missing file / broken stream) OR the stream ended
+; on a ready-timeout instead of the drive's zero-length block (TMOFL): a
+; conforming drive ALWAYS terminates with the 0-block, so a timeout mid-file
+; means the transfer died and the data is truncated -- report failure rather
+; than hand a partial program to `run`. C-callable.
 ; ----------------------------------------------------------------------------
 DST   = $FC             ; $FC/$FD dest pointer (zp, for (DST),y); RES=$FB is taken
 BLK   = $FE             ; bytes left in the current block
+TMOFL = $02AB           ; ready-timeout flag: EOF via timeout, not the 0-block
 TOTL  = $02AC           ; total bytes received (16-bit): <3 check + progress
 TOTH  = $02AD
 DOTS  = $02AE           ; progress dots printed so far (one per 1024 bytes)
@@ -259,6 +266,7 @@ LADRH = $02B0
         sta DOTS
         sta TOTL
         sta TOTH
+        sta TMOFL
         ; --- load address: the first two data bytes set the destination ------
         jsr next_byte
         bcs @fail
@@ -284,6 +292,8 @@ LADRH = $02B0
         inc TOTH
         jmp @loop
 @eof:
+        lda TMOFL
+        bne @fail                       ; timeout EOF = truncated -> failure
         lda TOTH
         bne @ok
         lda TOTL
@@ -302,9 +312,11 @@ LADRH = $02B0
 .endproc
 
 ; next_byte - return the next PRG data byte in A (carry clear), crossing block
-; boundaries. Carry set = end of stream (zero-length block or ready timeout).
-; Emits a progress dot at every 4th block boundary (in the inter-block gap,
-; where the drive is busy fetching the next block anyway). Clobbers A/X/Y.
+; boundaries. Carry set = end of stream: the drive's zero-length block (normal
+; EOF) or a ready timeout (broken stream -- flagged in TMOFL so the caller can
+; tell a truncated transfer from a clean one). Emits a progress dot at every
+; 4th block boundary (in the inter-block gap, where the drive is busy fetching
+; the next block anyway). Clobbers A/X/Y.
 .proc next_byte
         lda BLK
         bne @have
@@ -325,7 +337,7 @@ LADRH = $02B0
         jmp @dotchk
 @nodot:
         jsr _epyx_wait_ready            ; A=0 ready, A=1 timeout
-        bne @eof
+        bne @tmo
         jsr _epyx_recv_byte             ; block length
         sta BLK
         cmp #$00                        ; re-test: recv_byte's `ldx #0` left Z=1,
@@ -335,6 +347,8 @@ LADRH = $02B0
         jsr _epyx_recv_byte             ; the data byte
         clc
         rts
+@tmo:
+        sta TMOFL                       ; A=1 here: mark EOF-by-timeout
 @eof:
         sec
         rts

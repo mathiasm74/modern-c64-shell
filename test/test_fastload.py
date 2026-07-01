@@ -118,3 +118,46 @@ def test_full_deinterleave_roundtrip(v):
             out = t[f]
             assert out == byte, \
                 "const=$%02X round-trip $%02X -> $%02X" % (const, byte, out)
+
+
+# --- ready-timeout = failure, not EOF --------------------------------------
+# The drive ends a transfer in-band with a zero-length block; a ready timeout
+# in _epyx_wait_ready is always an error (dead/aborted drive). next_byte flags
+# it in TMOFL ($02AB) and _epyx_recv_prg must report failure ($0000) even if
+# data already arrived -- otherwise a drive dying mid-file would be reported
+# as a successful (truncated) load. The timed transmit can't run in VICE, but
+# the timeout path can: pulling CLK low from the C64 side (CLK OUT, $DD00 bit
+# 4) holds the wired-AND bus line low, so wait_clk_hi never sees "ready" and
+# the full retry ladder (~11s emulated) runs dry. The mid-stream variant
+# (blocks, then a stall) needs an Epyx sender, so the TOTL>=3 ordering at @eof
+# is hardware-validated; this covers the flag set + the failure return.
+
+TMOFL = 0x02AB
+
+
+def test_recv_prg_ready_timeout_fails_and_flags(v):
+    recv = _label_addr("_epyx_recv_prg")
+    stub = [
+        0xAD, 0x00, 0xDD,               # LDA $DD00
+        0x09, 0x10,                     # ORA #$10      (pull CLK low)
+        0x8D, 0x00, 0xDD,               # STA $DD00
+        0x20, recv & 0xFF, recv >> 8,   # JSR _epyx_recv_prg
+        0x8D, 0xF0, 0x10,               # STA $10F0     (end address lo)
+        0x8E, 0xF1, 0x10,               # STX $10F1     (end address hi)
+        0xA9, 0x01,
+        0x8D, 0xF2, 0x10,               # STA $10F2     (done marker)
+        0x4C, 0x16, 0x10,               # JMP self      (park)
+    ]
+    v.write_memory(0x1000, stub)
+    v.write_memory(0x10F0, [0xEE, 0xEE, 0xEE])  # sentinels
+    v.write_byte(TMOFL, 0xEE)                   # prove recv_prg writes it
+    v.run_at(0x1000, 1.0)
+    for _ in range(40):                          # ~11s emulated, warp is fast
+        if v.read_byte(0x10F2) == 0x01:
+            break
+        v.run_for(2.0)
+    assert v.read_byte(0x10F2) == 0x01, "recv_prg never returned (wedged?)"
+    assert v.read_memory(0x10F0, 2) == [0x00, 0x00], \
+        "timeout must return $0000 (failure), got $%02X%02X" \
+        % (v.read_byte(0x10F1), v.read_byte(0x10F0))
+    assert v.read_byte(TMOFL) == 0x01, "TMOFL not set on ready timeout"
