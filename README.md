@@ -1,0 +1,116 @@
+# Tardis DOS
+
+**A modern command-line shell for the Commodore 64 — booting in place of BASIC and the KERNAL.**
+
+Tardis DOS replaces the C64's stock BASIC + KERNAL with a modern command line: line editing, command history, a built-in fast loader, disk and file tools, a text editor, and more. It runs from a [OneROM](https://onerom.org/) — a flash-based ROM-replacement chip that drops into the C64's internal KERNAL/BASIC ROM sockets (it is **not** a cartridge).
+
+<p align="center">
+  <img src="media/boot-screen.jpg" alt="Tardis DOS booting on a real C64" width="560">
+</p>
+
+## Bigger on the inside
+
+The C64's ROM sockets give you only 16 KB — far too little for a rich shell. Tardis DOS gets around this the way the Doctor's TARDIS does: some code lives in the 16 KB ROM, but most of the bigger commands (the editor, file tools, directory listing, the colour picker, this shell's own `about` text) are **streamed in from the OneROM's flash as overlays, on demand**. The result is a shell that does far more than 16 KB — bigger on the inside than the outside. That's where the name comes from.
+
+There's **no BASIC interpreter** — that's a deliberate trade to reclaim 8 KB of ROM. To run legacy software, Tardis DOS hands off to the *genuine* C64 ROMs: on `run` (or inserting a real cartridge), the OneROM hot-swaps back to the stock BASIC/KERNAL and warm-boots before launching the program.
+
+## Features
+
+- **Modern shell** — line editing with cursor movement, insert/delete, and an 8-deep command history (↑/↓).
+- **Epyx-compatible fast loader** — `fload` / `run` stream programs fast; pairs beautifully with the [Meatloaf](https://github.com/idolpx/meatloaf), and also works with a stock 1541, SD2IEC, Pi1541, and 1541 Ultimate.
+- **Disk & file tools** — `ls`, `dir`, `cd`, `pwd`, `cp`, `mv`, `rm`, `cat`, `less`, `status`, `device`, driving the IEC bus directly.
+- **Text editor** — `edit`, a nano-style editor with cut/copy/paste.
+- **Memory tools** — `peek` (with hex-dump), `poke`.
+- **Configurable look** — `border` / `bg` / `text` colours, with an interactive colour picker.
+- **Switchable fonts & keyboard** — `font` live-swaps the character ROM *and* keyboard layout together (English / Swedish).
+- **Persistent settings** — colours, command history, and the selected font survive a power cycle (stored in the OneROM's NV flash).
+- **Stock-ROM handoff** — `run` / `basic` swap the OneROM to genuine C64 ROMs to launch BASIC / machine-language programs and cartridges. **RUN/STOP + RESTORE** escapes a launched program back to the shell.
+
+## Commands
+
+| | | |
+|---|---|---|
+| `help` | list commands | `ls` / `dir` | directory (names / full listing) |
+| `ver` | show version | `cd` / `pwd` | change / show path |
+| `clear` | clear the screen | `load` / `fload` | load a program (standard / fast) |
+| `reset` | soft-reboot | `run` | fast-load and launch a program |
+| `basic` | swap to stock C64 BASIC | `cat` / `less` | show / page a file |
+| `edit` | text editor | `cp` / `mv` / `rm` | copy / rename / delete |
+| `peek` / `poke` | read / write memory | `status` | read the drive's error channel |
+| `border` / `bg` / `text` | set colours | `device` | select the IEC device |
+| `font` | switch charset + keyboard | `about` | about Tardis DOS |
+
+## Hardware
+
+- A **Commodore 64** (PAL — see [Status](#status--caveats) for NTSC).
+- A **[OneROM](https://onerom.org/)** flashed with the Tardis DOS firmware, in the C64's ROM sockets.
+- Optional but recommended: a **[Meatloaf](https://github.com/idolpx/meatloaf)** (or any IEC drive) for loading software.
+
+## Getting it onto your C64
+
+**Download a build:** grab the firmware image from the [Releases](../../releases) page (e.g. `c64-tardis-dos-vX.Y.ZZ-for-onerom-fire-24-e.bin`) and flash it to your OneROM with the `onerom` CLI.
+
+**Or build & flash from source** (with the OneROM connected over USB):
+
+```sh
+make onerom-flash                          # build the firmware and flash it
+make onerom-flash ONEROM_BOARD=fire-28-a   # for a different board
+```
+
+This builds the *stock-fallback* firmware: Tardis DOS plus genuine C64 ROMs as a second bank (so `run`/`basic`/cartridges can hand off to the real ROMs). The stock ROMs are user-supplied and live in a gitignored `stock-roms/` directory.
+
+## Building from source
+
+**Toolchain** (all must be on `PATH` — verify with `make check-tools`):
+
+- **[cc65](https://cc65.github.io/)** (built from git master) — C compiler + assembler.
+- **[VICE](https://vice-emu.sourceforge.io/)** 3.7+ (`x64sc`) — for the test harness.
+- **Python 3** and **GNU Make**.
+
+```sh
+make            # build build/kernal.bin ($E000-$FFFF) and build/basic.bin ($A000-$BFFF)
+make test       # build and run the test suite (headless VICE)
+make run        # launch VICE with the ROM
+make run DISK=test/data/test.d64   # ...with a disk attached
+make sizes      # per-command ROM size report
+```
+
+The 16 KB ROM is two 8 KB halves — `build/kernal.bin` at `$E000` and `build/basic.bin` at `$A000` — that together replace the C64's KERNAL and BASIC ROMs.
+
+## Testing
+
+The test suite drives a headless `x64sc` over VICE's binary monitor, asserting on screen contents, memory, and registers. Tests are Python modules under `test/`, run in parallel:
+
+```sh
+make test                 # full suite
+VICE_VERBOSE=1 make test  # verbose (monitor traffic, tracebacks)
+```
+
+Features that touch the OneROM hardware (the stock-ROM swap, RBCP, NV settings, and the timed fast-loader receive) can't be exercised in VICE and are validated on real hardware.
+
+## Status & caveats
+
+- Developed and tested on **PAL** hardware. NTSC should work for everything except possibly the cycle-timed Epyx fast loader, which is calibrated for PAL; standard `load` is unaffected.
+- The stock-ROM handoff, persistent settings, and font switching require a OneROM (they're inert on a plain emulator / shell-only build).
+- The character-set half of the Swedish layout under the stock ROMs is still keyboard-only (see the design notes).
+
+## Project layout
+
+```
+src/            reset, IRQ, KERNAL stubs, IEC + fast loader (asm); shell, parser,
+                commands (C)
+src/overlays/   streamed-on-demand commands (editor, file tools, dir, picker, about)
+src/rbcp/       OneROM Bus Control Protocol library + the bank-swap launcher
+cfg/            linker + OneROM firmware configs
+test/           VICE test harness and per-feature tests
+docs/           design notes (RBCP, Epyx receiver, compatibility, ...)
+```
+
+## Credits
+
+- **[Piers Finlayson](https://piers.rocks/)** — the [OneROM](https://onerom.org/) and the ROM Bus Control Protocol that make the whole thing possible.
+- **[Meatloaf](https://github.com/idolpx/meatloaf)** — the IEC device Tardis DOS is happiest paired with.
+- Built with the **[cc65](https://cc65.github.io/)** toolchain and tested under **[VICE](https://vice-emu.sourceforge.io/)**.
+- Genuine C64 BASIC/KERNAL/character ROMs remain © Commodore and are user-supplied.
+
+Made by Mathias Malmqvist with [Claude Code](https://claude.com/claude-code).
