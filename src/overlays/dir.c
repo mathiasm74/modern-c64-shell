@@ -346,7 +346,9 @@ static unsigned char type_color(const char *type)
     case 'S': return 0x03;                          /* SEQ  cyan        */
     case 'R': return 0x0A;                          /* REL  light red   */
     case 'U': return 0x07;                          /* USR / URL yellow */
-    case 'D': return (b == 'I') ? 0x07 : 0x0C;      /* DIR yellow, DEL grey */
+    case 'D': return (b == 'I' || (b >= '0' && b <= '9'))
+                     ? 0x07 : 0x0C;     /* DIR + disk images (D64/D71/D81...,
+                                           all cd-able) yellow, DEL grey */
     default:  return 0x00;
     }
 }
