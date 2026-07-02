@@ -239,6 +239,9 @@ reset:
         sta NDX
         sta $028E               ; CTRL-tap state (irq.s CTRLTAP): page-2 RAM is
                                 ; garbage at power-on; 1 would fire a phantom TAB
+        sta $02BC               ; IEC probe-mode flag (iec.s PROBEF): garbage
+                                ; here would bound every send and falsely drop
+                                ; busy drives mid-transfer
         sta $CE00               ; TAB-completion cache valid flag: the $CE00
                                 ; page is power-on garbage; a nonzero flag would
                                 ; let the first TAB complete from noise
@@ -409,7 +412,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.1.61", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.1.62", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:

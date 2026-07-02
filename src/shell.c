@@ -51,7 +51,9 @@ const struct command shell_commands[] = {
     { "cd",     cmd_cd     },
     { "clear",  cmd_clear  },
     { "cp",     cmd_cp     },
+    { "dev",    cmd_device },
     { "device", cmd_device },
+    { "devices", cmd_devices },
     { "dir",    cmd_dir    },
     { "edit",   cmd_edit   },
     { "fload",  cmd_fload  },
@@ -466,6 +468,7 @@ void main(void)
     unsigned char n;
 
     settings_load();                     /* apply saved colors + replay history */
+    identify_boot_device();              /* "8: meatloaf>" from the first prompt */
     for (;;) {
         print_prompt();
         n = readline();

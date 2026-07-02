@@ -127,10 +127,10 @@ OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/ove
 # Set/page order MUST match LAYOUT in tools/gen_overlay_pages.py. set A keeps
 # files+dir (30 pages); set B holds edit+about+picker (27) -- the two 20-page
 # overlays (files, edit) must stay in different 32-page chips.
-# Set packing: files+dir (20+13 pages) no longer pair under one 32-page chip
-# (the device-identity fetch grew files past it, v0.1.61); the only 2-set
-# packing that fits is files+about+picker (29) / edit+dir (32 -- exactly full:
-# the next edit or dir growth forces a third set or a diet).
+# Set packing: files+dir no longer pair under one 32-page chip (v0.1.61);
+# the only 2-set packing that fits is files+about+picker / edit+dir. As of
+# v0.1.62 (devices scan) BOTH sets are at/near the 32-page cap -- the next
+# growth in any overlay forces a third set (overlays_c) or a diet.
 OVERLAYS_A := $(BUILD)/overlays/files.bin $(BUILD)/overlays/about.bin $(BUILD)/overlays/picker.bin
 OVERLAYS_B := $(BUILD)/overlays/edit.bin $(BUILD)/overlays/dir.bin
 OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin

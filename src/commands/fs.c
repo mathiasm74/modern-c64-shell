@@ -72,13 +72,13 @@ void print_device_prefix(void)
 {
     const char *name = current_device_name();
 
-    if (name[0]) {                      /* a user-given or fetched identity name
-                                           replaces the unit number (pwd still
-                                           shows the number for orientation) */
-        puts_raw(name);
-        return;
-    }
     print_uint(default_device);
+    if (name[0]) {                      /* "8: meatloaf" -- the unit number plus
+                                           the user-given or fetched identity */
+        chrout(':');
+        chrout(' ');
+        puts_raw(name);
+    }
 }
 
 /* --- load progress: a row of dots ------------------------------------------
@@ -677,6 +677,32 @@ void cmd_cd(int argc, char *argv[])
    "blinking red light" check (`OPEN 1,8,15: INPUT#1,A,B$,C,D`). The read +
    reformatting lives in the files overlay (cmd 6, status_read): buffering and
    the comma-field parse cost too much resident ROM. Thin thunk only. */
+/* devices - scan units 8-15 and print each present drive's identity (files
+   overlay cmd 18; it also fills empty name slots as it goes). */
+void cmd_devices(int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+    *(unsigned char **)0x02F4 = &default_device;
+    *(char **)0x02F6 = &device_name[0][0];
+    files_run(18, 0, 0);
+}
+
+/* Boot-time device identity (called once from main): quietly fill the default
+   unit's name slot so the first prompt already reads "8: meatloaf>". Quiet
+   twice over -- the overlay cmd prints nothing, and a failed overlay fetch
+   (VICE: no One ROM) is swallowed. The bus waits run in probe mode inside the
+   overlay, so an absent or still-booting drive can't wedge the boot. */
+void identify_boot_device(void)
+{
+    *(unsigned char **)0x02F4 = &default_device;
+    *(char **)0x02F6 = &device_name[0][0];
+    FB_CMD = 17;
+    FB_DEV = default_device;
+    FB_A1L = 0;
+    FB_A2L = 0;
+    run_files_overlay_quiet();
+}
+
 void cmd_status(int argc, char *argv[])
 {
     (void)argc; (void)argv;

@@ -516,39 +516,52 @@ static void do_help(void)
    20260629.19", "SD2IEC V1.x", ... A known model number wins ("1541" etc.),
    else the first word, lowercased, capped at DEVNAME_MAX. slot[] is left
    empty on any failure -- the prompt then falls back to the unit number. */
+static void derive_short_name(const char *t, char *slot)
+{
+    unsigned char i;
+
+    slot[0] = 0;
+    for (i = 0; t[i]; ++i) {            /* a model number anywhere in the text */
+        if (t[i] == '1' && t[i + 1] == '5' && t[i + 3] == '1'
+            && (t[i + 2] == '4' || t[i + 2] == '7' || t[i + 2] == '8')) {
+            slot[0] = '1';
+            slot[1] = '5';
+            slot[2] = t[i + 2];
+            slot[3] = '1';
+            slot[4] = 0;
+            return;
+        }
+    }
+    for (i = 0; i < 10 && t[i] && t[i] != ' '; ++i)
+        slot[i] = (t[i] >= 'A' && t[i] <= 'Z')  /* first word, lowercased */
+                ? (char)(t[i] + 32) : t[i];
+    slot[i] = 0;
+}
+
+/* Send "UI" to `unit` and read its 73-identity from channel 15 into buf/f;
+   returns nonzero with f[1] = the identity text, 0 on any failure. */
+static unsigned char read_identity(unsigned char unit, char *buf, char **f)
+{
+    unsigned char ok = 0;
+
+    k_setnam("ui", 2);                  /* OPEN of ch15 executes the command */
+    k_setlfs(unit, 15);
+    k_open();
+    if (!(STREG & ST_NODEV) && read_status(buf, f) >= 0 && f[1][0])
+        ok = 1;
+    k_close();
+    k_clrchn();
+    return ok;
+}
+
 static void fetch_identity(unsigned char unit, char *slot)
 {
     char buf[64];
     char *f[4];
-    char *t;
-    unsigned char i;
 
     slot[0] = 0;
-    k_setnam("ui", 2);                  /* OPEN of ch15 executes the command */
-    k_setlfs(unit, 15);
-    k_open();
-    if (!(STREG & ST_NODEV) && read_status(buf, f) >= 0) {
-        t = f[1];
-        for (i = 0; t[i]; ++i) {        /* a model number anywhere in the text */
-            if (t[i] == '1' && t[i + 1] == '5' && t[i + 3] == '1'
-                && (t[i + 2] == '4' || t[i + 2] == '7' || t[i + 2] == '8')) {
-                slot[0] = '1';
-                slot[1] = '5';
-                slot[2] = t[i + 2];
-                slot[3] = '1';
-                slot[4] = 0;
-                break;
-            }
-        }
-        if (!slot[0] && t[0]) {         /* else: first word, lowercased */
-            for (i = 0; i < 10 && t[i] && t[i] != ' '; ++i)
-                slot[i] = (t[i] >= 'A' && t[i] <= 'Z')
-                        ? (char)(t[i] + 32) : t[i];
-            slot[i] = 0;
-        }
-    }
-    k_close();
-    k_clrchn();
+    if (read_identity(unit, buf, f))
+        derive_short_name(f[1], slot);
 }
 
 static unsigned char device_present_ov(unsigned char dev)
@@ -606,6 +619,58 @@ static void do_device(void)
     crlf();
 }
 
+/* IEC probe mode (iec.s PROBEF): bounds the ready-wait so a unit in an
+   unknown state (absent, still powering up, wedged) times out instead of
+   hanging the scan. Only for the scan paths below. */
+#define PROBE (*(unsigned char *)0x02BC)
+
+/* devices (cmd 18): scan units 8-15, print each present unit's identity
+   ("UI" + channel-15 73-message), and fill any empty name slot on the way
+   (so a later `device <n>` -- and the prompt -- get the name for free). */
+static void do_devices(void)
+{
+    char buf[64];
+    char *f[4];
+    char *slot;
+    unsigned char u, found = 0;
+
+    PROBE = 1;
+    for (u = 8; u <= 15; ++u) {
+        if (read_identity(u, buf, f)) {
+            put_uint(u);
+            puts_raw(": ");
+            puts_raw(f[1]);
+            crlf();
+            slot = DNADDR + (u - 8) * DEVNAME_STRIDE;
+            if (!slot[0])
+                derive_short_name(f[1], slot);
+            found = 1;
+        }
+    }
+    PROBE = 0;
+    if (!found) {
+        puts_raw("no devices found");
+        crlf();
+    }
+}
+
+/* quiet identify (cmd 17): boot-time fill of the current unit's name slot so
+   the first prompt already reads "8: meatloaf>". Prints nothing; probe mode
+   so a missing/booting drive can't wedge the boot (the AUTOEXEC hazard). */
+static void identify_quiet(void)
+{
+    char *slot;
+
+    if (dev < 8 || dev > 15)
+        return;
+    slot = DNADDR + (dev - 8) * DEVNAME_STRIDE;
+    if (slot[0])
+        return;
+    PROBE = 1;
+    fetch_identity(dev, slot);
+    PROBE = 0;
+}
+
 void files_main(void)
 {
     unsigned char cmd = MB_CMD;
@@ -633,6 +698,10 @@ void files_main(void)
         do_help();
     else if (cmd == 16)
         do_device();
+    else if (cmd == 17)
+        identify_quiet();
+    else if (cmd == 18)
+        do_devices();
     else
         scratch();                      /* rm */
 }

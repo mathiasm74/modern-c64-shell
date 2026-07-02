@@ -90,5 +90,25 @@ def test_device_fetches_identity_for_prompt(v):
     for r in v.screen_rows():
         if r.strip().endswith(">"):
             prompt = r.strip()
-    assert prompt == "1541>", \
-        "prompt should show the identity instead of the number, got %r" % prompt
+    assert prompt == "8: 1541>", \
+        "prompt should show number + identity, got %r" % prompt
+
+
+def test_dev_alias(v):
+    # "dev" is an alias for "device" (same handler, second dispatch entry).
+    seed_files(v)
+    _type(v, "dev 9", clear=True)
+    assert _wait_for(v, "device 9 not present"), \
+        "dev alias did not run the device command: %r" % v.screen_text()
+
+
+def test_devices_scans_the_bus(v):
+    # `devices` (files overlay cmd 18) probes units 8-15 in bounded probe
+    # mode and prints each present drive's identity line. VICE has only the
+    # 1541 on unit 8; the seven absent units must time out, not wedge.
+    seed_files(v)
+    _type(v, "devices", clear=True)
+    assert _wait_for(v, "8: CBM DOS V2.6 1541", tries=30), \
+        "devices did not list the 1541: %r" % v.screen_text()
+    assert "9:" not in v.screen_text(), \
+        "devices listed an absent unit: %r" % v.screen_text()

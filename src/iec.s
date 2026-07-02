@@ -34,6 +34,15 @@ B_CLK  = $10
 B_DATA = $20
 ; input senses tested via BIT: V = bit6 (CLK in), N = bit7 (DATA in)
 
+; Probe mode ($02BC, cleared at boot; set by the device-scan/boot-identify
+; paths in the files overlay): bounds the normally-unbounded ready-wait in
+; iec_sendbyte so probing an absent, powering-up, or wedged unit times out
+; (~0.7s) instead of hanging -- the AUTOEXEC-class hazard (VICE's empty
+; drive holds DATA low on OPEN, sailing past the listener gate). The cost:
+; in probe mode a busy-but-present drive can be falsely reported absent,
+; which is why it is only for scans, never for normal transfers.
+PROBEF = $02BC
+
 ; --- working storage (standard KERNAL zero-page locations) ---------------
 ST     = $90            ; I/O status byte
 FNLEN  = $B7            ; filename length
@@ -212,6 +221,33 @@ wait_data_lo:
 @ok:    clc
         rts
 
+; Mirror of wait_data_lo: wait for DATA in to go high (~0.7s timeout).
+wait_data_hi:
+        ldx #$00
+@x:     ldy #$00
+@y:     bit DD00
+        bmi @ok                 ; DATA high (N set)
+        dey
+        bne @y
+        dex
+        bne @x
+        sec
+        rts
+@ok:    clc
+        rts
+
+; iec_sendbyte's ready-for-data wait: unbounded on purpose (a drive that
+; just took an OPEN may seek for seconds before servicing the next byte;
+; the stock KERNAL waits forever here too) -- EXCEPT in probe mode, where
+; a unit in an unknown state must not be able to wedge the scan.
+hs_ready:
+        lda PROBEF
+        bne wait_data_hi        ; probe mode: bounded
+@spin:  bit DD00
+        bpl @spin               ; wait for listener to release DATA = "ready"
+        clc
+        rts
+
 ; iec_sendbyte's byte-ack wait. For DATA bytes (ATN released) it spins
 ; unbounded on purpose: a present-but-busy drive (flushing a write to disk)
 ; may legitimately stall an ack well past any reasonable timeout. UNDER ATN
@@ -307,9 +343,8 @@ iec_sendbyte:
         ; can stall the byte-ack well past a timeout, and we must not abandon a
         ; device we've already confirmed is there.
         jsr clk_hi              ; release CLK = "ready to send"
-@wready:
-        bit DD00
-        bpl @wready             ; wait for listener to release DATA = "ready"
+        jsr hs_ready            ; listener releases DATA (bounded in probe mode)
+        bcs @nodev
 
         bit EOIBUF
         bpl @noeoi              ; EOI flag clear -> no EOI handshake

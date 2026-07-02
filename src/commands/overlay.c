@@ -148,6 +148,16 @@ void run_files_overlay(void)
     OVL8_ENTRY();
 }
 
+/* Like run_files_overlay, but a fetch failure is silent: used by the boot-
+   time device identify, where "overlay load failed" would deface the banner
+   (and on VICE -- no One ROM -- would print at every boot). The prompt just
+   falls back to the bare unit number. */
+void run_files_overlay_quiet(void)
+{
+    if (mp_fetch(FILES_FIRST_PAGE, "fil1", FILES_SET) == 0)
+        OVL8_ENTRY();
+}
+
 /* Run the dir overlay (dir/ls/pwd). The fs.c thunk fills the mailbox first. */
 void run_dir_overlay(void)
 {
