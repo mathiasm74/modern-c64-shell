@@ -81,12 +81,14 @@ Rejected alternatives, for the record:
 
 ## Code placement & budget
 
-- **Resident** (shell.c readline, BASIC half): `complete_word` + helpers —
-  word extraction, cache scan, common-prefix computation, insertion, and the
-  candidate listing + prompt/line reprint. (as-built) cc65 made this ~1.3KB,
-  not the draft's 250-350 bytes; BASIC free fell 1768 -> 446. If the BASIC
-  half gets tight, this is the first candidate to restructure (or partially
-  overlay).
+- **Resident** (src/complete.s, BASIC half `CODE` segment): word extraction,
+  cache scan, common-prefix computation, insertion, and the candidate listing
+  + prompt/line reprint. (as-built, v0.1.60) This is hand-written assembly:
+  the first cut was C in shell.c and cc65 rendered it at ~1.3KB; the asm is
+  ~600 bytes. ABI: readline passes the line length/cursor via $02B1/$02B2 and
+  the shared `line` buffer; state lives at $02B3-$02BB and the zp walk
+  pointers borrow $FB-$FE (free while readline runs). It sits in the BASIC
+  half deliberately -- the KERNAL half is the scarcer resource.
 - **Overlay** (dir.c): cache_reset/cache_name/cache_done around the ls/dir
   draw loops. Free ROM-wise (overlays live outside the 16KB); no mailbox
   needed since the cache page is fixed.
