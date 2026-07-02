@@ -1,112 +1,122 @@
 {
-  "version": 1,
-  "name": "C64 Shell ROM + Stock Fallback",
-  "description": "Shell ROM + stock C64 BASIC/KERNAL fallback + a character ROM served on a 3rd chip-select (the char socket /CS), switchable between two fonts. Loadable ROM sets: 0 = shell KERNAL+BASIC+charset (boot), 1 = stock+charset, 2/3 = overlays_a/b, 4 = shell KERNAL+BASIC+swedish (font B). The `font` command live-switches the char ROM via RBCP SWITCH_SLOT (sets 0<->4 carry identical KERNAL/BASIC, so only the font changes).",
-  "chip_sets": [
+ "version": 1,
+ "name": "C64 Shell ROM + Stock Fallback",
+ "description": "Shell ROM + stock C64 BASIC/KERNAL fallback + a character ROM served on a 3rd chip-select (the char socket /CS), switchable between two fonts. Loadable ROM sets: 0 = shell KERNAL+BASIC+charset (boot), 1 = stock+charset, 2/3 = overlays_a/b, 4 = shell KERNAL+BASIC+swedish (font B), 5 = overlays_c (appended so font B's set index stays 4). The `font` command live-switches the char ROM via RBCP SWITCH_SLOT (sets 0<->4 carry identical KERNAL/BASIC, so only the font changes).",
+ "chip_sets": [
+  {
+   "type": "single",
+   "chips": [
     {
-      "type": "single",
-      "chips": [
-        {
-          "file": "https://images.onerom.org/plugins/system/usb/v0.1.2/plugin.bin",
-          "type": "system_plugin",
-          "size_handling": "pad"
-        }
-      ]
-    },
-    {
-      "type": "single",
-      "chips": [
-        {
-          "file": "https://images.onerom.org/plugins/user/host-control/v0.1.0/plugin.bin",
-          "type": "user_plugin"
-        }
-      ]
-    },
-    {
-      "type": "multi",
-      "serve_alg": "two_cs_one_addr",
-      "chips": [
-        {
-          "file": "build/kernal.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        },
-        {
-          "file": "stock-roms/c64-charset.bin",
-          "type": "Chip2364",
-          "cs1": "active_low",
-          "size_handling": "duplicate"
-        },
-        {
-          "file": "build/basic.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        }
-      ]
-    },
-    {
-      "type": "multi",
-      "serve_alg": "two_cs_one_addr",
-      "chips": [
-        {
-          "file": "stock-roms/kernal.901227-03.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        },
-        {
-          "file": "stock-roms/c64-charset.bin",
-          "type": "Chip2364",
-          "cs1": "active_low",
-          "size_handling": "duplicate"
-        },
-        {
-          "file": "stock-roms/basic.901226-01.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        }
-      ]
-    },
-    {
-      "type": "single",
-      "chips": [
-        {
-          "file": "build/overlays_a.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        }
-      ]
-    },
-    {
-      "type": "single",
-      "chips": [
-        {
-          "file": "build/overlays_b.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        }
-      ]
-    },
-    {
-      "type": "multi",
-      "serve_alg": "two_cs_one_addr",
-      "chips": [
-        {
-          "file": "build/kernal.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        },
-        {
-          "file": "stock-roms/c64-swedish4.bin",
-          "type": "Chip2364",
-          "cs1": "active_low",
-          "size_handling": "duplicate"
-        },
-        {
-          "file": "build/basic.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        }
-      ]
+     "file": "https://images.onerom.org/plugins/system/usb/v0.1.2/plugin.bin",
+     "type": "system_plugin",
+     "size_handling": "pad"
     }
-  ]
+   ]
+  },
+  {
+   "type": "single",
+   "chips": [
+    {
+     "file": "https://images.onerom.org/plugins/user/host-control/v0.1.0/plugin.bin",
+     "type": "user_plugin"
+    }
+   ]
+  },
+  {
+   "type": "multi",
+   "serve_alg": "two_cs_one_addr",
+   "chips": [
+    {
+     "file": "build/kernal.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    },
+    {
+     "file": "stock-roms/c64-charset.bin",
+     "type": "Chip2364",
+     "cs1": "active_low",
+     "size_handling": "duplicate"
+    },
+    {
+     "file": "build/basic.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    }
+   ]
+  },
+  {
+   "type": "multi",
+   "serve_alg": "two_cs_one_addr",
+   "chips": [
+    {
+     "file": "stock-roms/kernal.901227-03.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    },
+    {
+     "file": "stock-roms/c64-charset.bin",
+     "type": "Chip2364",
+     "cs1": "active_low",
+     "size_handling": "duplicate"
+    },
+    {
+     "file": "stock-roms/basic.901226-01.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    }
+   ]
+  },
+  {
+   "type": "single",
+   "chips": [
+    {
+     "file": "build/overlays_a.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    }
+   ]
+  },
+  {
+   "type": "single",
+   "chips": [
+    {
+     "file": "build/overlays_b.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    }
+   ]
+  },
+  {
+   "type": "multi",
+   "serve_alg": "two_cs_one_addr",
+   "chips": [
+    {
+     "file": "build/kernal.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    },
+    {
+     "file": "stock-roms/c64-swedish4.bin",
+     "type": "Chip2364",
+     "cs1": "active_low",
+     "size_handling": "duplicate"
+    },
+    {
+     "file": "build/basic.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    }
+   ]
+  },
+  {
+   "type": "single",
+   "chips": [
+    {
+     "file": "build/overlays_c.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    }
+   ]
+  }
+ ]
 }

@@ -127,13 +127,14 @@ OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/ove
 # Set/page order MUST match LAYOUT in tools/gen_overlay_pages.py. set A keeps
 # files+dir (30 pages); set B holds edit+about+picker (27) -- the two 20-page
 # overlays (files, edit) must stay in different 32-page chips.
-# Set packing: files+dir no longer pair under one 32-page chip (v0.1.61);
-# the only 2-set packing that fits is files+about+picker / edit+dir. As of
-# v0.1.62 (devices scan) BOTH sets are at/near the 32-page cap -- the next
-# growth in any overlay forces a third set (overlays_c) or a diet.
-OVERLAYS_A := $(BUILD)/overlays/files.bin $(BUILD)/overlays/about.bin $(BUILD)/overlays/picker.bin
+# Set packing (three 32-page sets since v0.1.63): A = files alone (room to
+# grow -- it's the overlay that keeps growing), B = edit+dir (32, exactly
+# full), C = about+picker (9). overlays_c is APPENDED in onerom-stock.json so
+# font B's loadable set index stays 4; C is loadable set 5.
+OVERLAYS_A := $(BUILD)/overlays/files.bin
 OVERLAYS_B := $(BUILD)/overlays/edit.bin $(BUILD)/overlays/dir.bin
-OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin
+OVERLAYS_C := $(BUILD)/overlays/about.bin $(BUILD)/overlays/picker.bin
+OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin $(BUILD)/overlays_c.bin
 
 # The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;
 # cfg/overlay_edit.cfg). crt0 must link first so the header sits at the base.
@@ -224,6 +225,9 @@ endef
 
 $(BUILD)/overlays_a.bin: $(OVERLAYS_A) Makefile
 	$(call pack_overlay_set,$(OVERLAYS_A))
+
+$(BUILD)/overlays_c.bin: $(OVERLAYS_C) Makefile
+	$(call pack_overlay_set,$(OVERLAYS_C))
 
 $(BUILD)/overlays_b.bin: $(OVERLAYS_B) Makefile
 	$(call pack_overlay_set,$(OVERLAYS_B))

@@ -632,11 +632,18 @@ static void do_devices(void)
     char buf[64];
     char *f[4];
     char *slot;
-    unsigned char u, found = 0;
+    unsigned char u, found = 0, dots = 0;
 
     PROBE = 1;
     for (u = 8; u <= 15; ++u) {
+        k_chrout('.');                  /* progress: one dot per unit probed */
+        ++dots;
         if (read_identity(u, buf, f)) {
+            while (dots) {              /* blank the dots (DEL erases + steps
+                                           left), then the entry takes the line */
+                k_chrout(0x14);
+                --dots;
+            }
             put_uint(u);
             puts_raw(": ");
             puts_raw(f[1]);
@@ -648,6 +655,10 @@ static void do_devices(void)
         }
     }
     PROBE = 0;
+    while (dots) {                      /* wipe any trailing dots */
+        k_chrout(0x14);
+        --dots;
+    }
     if (!found) {
         puts_raw("no devices found");
         crlf();

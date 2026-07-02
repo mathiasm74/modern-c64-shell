@@ -110,5 +110,13 @@ def test_devices_scans_the_bus(v):
     _type(v, "devices", clear=True)
     assert _wait_for(v, "8: CBM DOS V2.6 1541", tries=30), \
         "devices did not list the 1541: %r" % v.screen_text()
+    # the seven absent units are still being probed (a dot each, ~1s emulated
+    # apiece); wait for the scan to finish before judging the final screen
+    for _ in range(40):
+        if "..." not in v.screen_text():
+            break
+        v.run_for(0.5)
     assert "9:" not in v.screen_text(), \
         "devices listed an absent unit: %r" % v.screen_text()
+    assert "..." not in v.screen_text(), \
+        "progress dots were not wiped after the scan: %r" % v.screen_text()
