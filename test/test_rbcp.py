@@ -78,7 +78,9 @@ def test_launch_copies_library_to_ram(v):
     ram_first = v.read_byte(run)
     assert rom_first == ram_first, \
         "library first byte mismatch: ROM=$%02X RAM=$%02X" % (rom_first, ram_first)
-    assert rom_first == 0xAD, "expected library to start with LDA absolute ($AD)"
+    # rbcp_knock opens with `jsr rbcp_vic_guard` (the badline guard) since
+    # v0.1.56; before that it began with its first RBCP_READ (LDA absolute).
+    assert rom_first == 0x20, "expected library to start with JSR ($20)"
 
 
 def test_escape_invalidates_planted_cbm80(v):

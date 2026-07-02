@@ -186,6 +186,48 @@ _overlay_fetch_multi:
 ; =========================================================================
 .segment "RBCP_CODE"
 
+; -------------------------------------------------------------------------
+; rbcp_vic_guard - hold off a command-page send until the VIC-II can't
+; interfere. RBCP commands are reads of the $E0xx command page (the byte is
+; the address's low bits); when the VIC sets up a badline it drops BA three
+; cycles before seizing the bus, and the CPU stalls on its next read cycle
+; RE-PRESENTING THE SAME ADDRESS for several ph2 cycles -- which the device
+; counts as extra protocol bytes (it cannot deduplicate: frames legitimately
+; contain repeated bytes, e.g. ENTER_CMD_RESP's two consecutive $00s). One
+; duplicated byte shifts the frame: commands vanish (stage 1), sessions die
+; (stage 3), or a SLOT_PEEK with a corrupted offset "succeeds" and returns
+; the wrong page (stage 5 bad magic). This was the transport glitch that
+; forced overlay.c's 5-attempt retry; the boot-path swap never glitched
+; because the display is blanked there (DEN=0 -> no badlines).
+;
+; Same idea as fastload_recv.s's badline pacing: wait until the raster is
+; somewhere a whole command frame (~300 cycles ~= 5 lines) fits before the
+; next badline. Assumes YSCROLL=3 ($D011=$1B, the shell's fixed setting) and
+; no sprites (the shell uses none). Accepted starts: display blanked, raster
+; outside the badline window, or block offsets 4-6 (>= 5 clear lines). The
+; $D012 aliasing of PAL lines $100-$137 only ever errs toward waiting.
+; Runs from RAM (RBCP_CODE); called by rbcp_knock/rbcp_send_cmd. Clobbers A.
+; -------------------------------------------------------------------------
+.export rbcp_vic_guard
+rbcp_vic_guard:
+        lda $D011
+        and #$10                        ; DEN off (display blanked)?
+        beq @safe                       ; -> no badlines ever, go
+@wait:
+        lda $D012
+        cmp #$2C                        ; well below the window (first badline
+        bcc @safe                       ;   is $33; 5-line frame from $2B ends
+                                        ;   at $2F/$30 < $33)
+        cmp #$F4                        ; past the last badline ($F3)
+        bcs @safe
+        and #$07
+        cmp #4
+        bcc @wait                       ; offsets 0-3: on/too close to one
+        cmp #7
+        bcs @wait                       ; offset 7: not enough clear lines
+@safe:
+        rts
+
 rbcp_trampoline:
         sei                             ; IRQs would fetch from $E0xx, which
                                         ; is our command page in CR mode -- a

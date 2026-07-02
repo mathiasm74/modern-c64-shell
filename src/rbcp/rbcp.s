@@ -41,8 +41,15 @@
 ; rbcp_knock — sends "!RBCP!" as 6 ROM address reads. Clobbers: A.
 ; ---------------------------------------------------------------------------
 
+; LOCAL ADDITION (not upstream): rbcp_vic_guard (src/rbcp/launch.s) delays a
+; command-page read burst until VIC-II badline DMA can't stall the CPU into
+; re-presenting a command address (the device would count it twice). See the
+; comment at rbcp_vic_guard.
+.import rbcp_vic_guard
+
 .export rbcp_knock
 rbcp_knock:
+    jsr rbcp_vic_guard      ; LOCAL ADDITION: badline-safe window
     RBCP_READ RBCP_KNOCK_0
     RBCP_READ RBCP_KNOCK_1
     RBCP_READ RBCP_KNOCK_2
@@ -67,6 +74,8 @@ rbcp_knock:
 .export rbcp_send_cmd
 rbcp_send_cmd:
     sta rbcp_zp_4           ; save argument count
+    jsr rbcp_vic_guard      ; LOCAL ADDITION: badline-safe window (after the
+                            ;   sta -- the guard clobbers A)
 
     lda rbcp_zp_0
     sta rbcp_sm_group+1
