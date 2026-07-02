@@ -187,10 +187,20 @@ A test is a function `test_<name>(v)` in a `test_*.py` module that asserts on th
 passed-in `Vice`. `test/run_tests.py` discovers the modules, runs every test
 function (one fresh VICE per module, for isolation), and prints a pass/fail
 summary. `make test` runs it headless; modules run **in parallel** (one VICE each,
-up to 8 workers -- `VICE_JOBS=1` restores serial for debugging) and each
-module's wall time is printed for spotting slowpokes. Prefer polled waits
-(loop `run_for` until the expected text appears) over long fixed sleeps --
-VICE runs `-warp`, so completion usually beats the timeout by a lot.
+up to 6 workers -- more flakes the timing-sensitive drive tests; `VICE_JOBS=1`
+restores serial for debugging), scheduled longest-first from the previous
+run's per-module times (`build/test-times.json`), and each module's wall time
+is printed for spotting slowpokes. **Fast iteration: `make test M=<substr>`**
+runs only the modules whose name contains the substring(s) (`M="disk rm"`
+works too) -- the full suite is ~35s, a single module is seconds. Prefer
+polled waits (loop `run_for` until the expected text appears) over long fixed
+sleeps -- VICE runs `-warp`, so completion usually beats the timeout by a lot.
+When injecting keys and waiting for them to be consumed, poll NDX ($C6) back
+to zero rather than sleeping a fixed interval (see test_edit's `_keys`). The
+harness's `_drain` is prompt-aware (returns at the trailing `(C:$xxxx) `
+instead of waiting for a quiet gap) -- this is what makes per-command monitor
+round-trips ~ms; if VICE's monitor prompt format ever changes, update
+`_PROMPT_RE` in `test/lib/vice.py`.
 `make test-verbose` (or `VICE_VERBOSE=1`)
 shows the launch command, monitor traffic, and tracebacks. `VICE_HEADLESS=0`
 opens the GUI window for debugging.

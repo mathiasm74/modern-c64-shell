@@ -264,8 +264,11 @@ check-tools:
 run: all
 	SKIP_BUILD=1 VICE=$(VICE) DISK=$(DISK) ./run.sh $(VICEFLAGS)
 
+# Full suite: `make test`. Fast iteration: `make test M=fastload` (or
+# M="disk rm") runs only the modules whose name contains the substring(s).
+# VICE_JOBS=N overrides the parallel worker count.
 test: all $(OVERLAY_SETS)
-	$(PYTHON) test/run_tests.py
+	$(PYTHON) test/run_tests.py $(M)
 
 # Build a One ROM firmware image holding both halves as a single multi-ROM set
 # (kernal.bin + basic.bin, served via two_cs_one_addr -- two active-low chip

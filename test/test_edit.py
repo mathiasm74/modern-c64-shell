@@ -46,22 +46,33 @@ def _seed(v):
 
 
 def _keys(v, codes):
-    """Inject key codes through the 10-byte keyboard buffer, chunked."""
+    """Inject key codes through the 10-byte keyboard buffer, chunked.
+
+    Waits by polling the buffer count (NDX $C6) back to zero rather than
+    sleeping a fixed interval: the machine consumes a chunk in milliseconds
+    of emulated time, so under warp one short run_for usually suffices --
+    the old fixed 0.4s per chunk made this module the whole suite's
+    critical path."""
     codes = [c if isinstance(c, int) else ord(c) for c in codes]
     while codes:
         chunk = codes[:8]
         codes = codes[8:]
         v.write_memory(0x0277, chunk)
         v.write_byte(0x00C6, len(chunk))
-        v.run_for(0.4)
+        for _ in range(20):
+            v.run_for(0.05)
+            if v.read_byte(0x00C6) == 0:
+                break
 
 
 def _row(v, n):
     return v.screen_rows()[n]
 
 
-def _wait(v, needle, tries=12, chunk=0.4):
-    """Poll until `needle` appears on screen; early-exits long waits."""
+def _wait(v, needle, tries=32, chunk=0.15):
+    """Poll until `needle` appears on screen; early-exits long waits.
+    (Same ~4.8s total budget as the old 12 x 0.4s, but finer-grained so a
+    hit costs a fraction of a second.)"""
     for _ in range(tries):
         if needle in v.screen_text():
             return True

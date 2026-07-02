@@ -12,11 +12,15 @@ A test function takes a connected Vice and asserts on it:
         v.assert_screen_contains("READY")
 
 Usage:
-    python3 test/run_tests.py          # headless (default)
-    VICE_VERBOSE=1 python3 ...         # show monitor traffic and tracebacks
+    python3 test/run_tests.py            # run everything, headless (default)
+    python3 test/run_tests.py disk rm    # only modules matching a substring
+                                         # (test_disk, test_disk_nodrive, test_rm)
+    VICE_VERBOSE=1 python3 ...           # show monitor traffic and tracebacks
+    VICE_JOBS=8 python3 ...              # override the parallel worker count
 """
 
 import importlib.util
+import json
 import os
 import sys
 import time
@@ -65,7 +69,7 @@ def run_module(modname):
     mod = load_module(modname)
     fns = test_functions(mod)
     if not fns:
-        return passed, failures, lines
+        return passed, failures, lines, modname, 0.0
     # A module may request a disk image (mounted on device 8, true drive)
     # by setting VICE_DISK to a path relative to the test directory, and/or
     # extra x64sc arguments via VICE_ARGS (e.g. ["-drive8type", "0"] for a
@@ -90,9 +94,32 @@ def run_module(modname):
         label = "%s (launch)" % modname
         lines.append("ERROR %s: %s" % (label, exc))
         failures.append((label, repr(exc), traceback.format_exc()))
+    elapsed = time.time() - t0
     if lines:
-        lines.append("      (%s: %.1fs)" % (modname, time.time() - t0))
-    return passed, failures, lines
+        lines.append("      (%s: %.1fs)" % (modname, elapsed))
+    return passed, failures, lines, modname, elapsed
+
+
+# Per-module wall times from the previous run, used to schedule longest-first
+# so a slow module can't start last and drag the whole run's tail. Lives in
+# build/ (gitignored); absent or stale entries just fall back to 0.
+TIMES_FILE = os.path.join(TEST_DIR, "..", "build", "test-times.json")
+
+
+def load_times():
+    try:
+        with open(TIMES_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_times(times):
+    try:
+        with open(TIMES_FILE, "w") as f:
+            json.dump(times, f, indent=0, sort_keys=True)
+    except OSError:
+        pass
 
 
 def main():
@@ -101,16 +128,33 @@ def main():
     failures = []
     modules = discover_modules()
 
+    # Positional args are module filters: keep modules whose name contains
+    # any of them ("disk" -> test_disk + test_disk_nodrive). This is the
+    # fast-iteration path: run only the module you are working on.
+    filters = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if filters:
+        modules = [m for m in modules
+                   if any(f in m for f in filters)]
+        if not modules:
+            print("no test modules match %r" % (filters,))
+            return 1
+
+    # Longest-first (by the previous run's times) packs the workers so the
+    # slowest module starts immediately instead of last.
+    times = load_times()
+    modules.sort(key=lambda m: times.get(m, 0.0), reverse=True)
+
     # Parallel by default: one VICE per module, one module per worker.
     # VICE_JOBS=1 restores the old serial behavior (e.g. for debugging);
     # the cap keeps a pile of warp-mode VICEs from starving each other.
     jobs = int(os.environ.get("VICE_JOBS", "0") or "0")
     if jobs <= 0:
-        # Conservative by default: a few timing-sensitive tests wait on
+        # Leave headroom by default: a few timing-sensitive tests wait on
         # cycle-based drive timeouts (device probe, no-disk read timeout),
-        # and oversubscribing -warp VICEs starves those past their budget.
-        # Leave headroom; VICE_JOBS overrides for a faster (riskier) run.
-        jobs = min(4, os.cpu_count() or 1, len(modules))
+        # and oversubscribing -warp VICEs starves those past their budget
+        # (8 jobs on a 10-core M-series flaked test_device; 6 is green).
+        # VICE_JOBS overrides for a faster (riskier) run.
+        jobs = min(6, max(1, (os.cpu_count() or 1) - 2), len(modules))
 
     if jobs == 1:
         results = [run_module(m) for m in modules]
@@ -119,11 +163,13 @@ def main():
         with ProcessPoolExecutor(max_workers=jobs) as pool:
             results = list(pool.map(run_module, modules))
 
-    for p, f, lines in results:
+    for p, f, lines, modname, elapsed in results:
         passed += p
         failures.extend(f)
+        times[modname] = elapsed
         for line in lines:
             print(line)
+    save_times(times)
 
     elapsed = time.time() - start
     print("-" * 56)

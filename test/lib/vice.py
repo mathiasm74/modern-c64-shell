@@ -223,26 +223,57 @@ class Vice:
                 time.sleep(0.25)
         raise ViceError("could not reach VICE monitor on %d: %s" % (self.port, last))
 
+    # Every monitor response (and the connect banner) ends with the prompt
+    # "(C:$xxxx) ". Recognizing it lets _drain return in ~a millisecond
+    # instead of waiting a fixed quiet gap -- and _drain runs after EVERY
+    # monitor command, so this dominates the whole suite's wall time.
+    _PROMPT_RE = re.compile(rb"\(C:\$[0-9a-fA-F]{4}\) $")
+
     def _drain(self, settle=0.12):
-        """Read all monitor output until the socket is quiet for `settle`.
+        """Read monitor output until the trailing prompt (fast path) or, as
+        a safety net, until the socket is quiet for `settle`.
 
         Draining everything keeps request/response in lockstep (no leftover
-        bytes to desync the next read). Monitor responses arrive as a single
-        fast burst over the loopback, so a short quiet gap means "done".
+        bytes to desync the next read). The quiet-gap fallback only matters
+        if a response ever ends without a prompt (not observed; kept so a
+        surprise can only make a test slow, not wrong).
         """
-        self.sock.settimeout(settle)
-        chunks = []
+        buf = b""
+        last = time.time()
+        self.sock.settimeout(0.003)
         while True:
             try:
                 data = self.sock.recv(4096)
                 if not data:
                     break
-                chunks.append(data)
+                buf += data
+                last = time.time()
+                continue                    # keep reading while data flows
             except socket.timeout:
+                pass
+            # socket quiet for ~3ms: done if the prompt has arrived. (VICE
+            # occasionally emits a double prompt after a reconnect; the
+            # data-first loop above swallows a back-to-back second one, and
+            # _command's pre-send flush catches a straggler later than that.)
+            if self._PROMPT_RE.search(buf[-16:]):
                 break
-        return b"".join(chunks).decode("latin-1", "replace")
+            if time.time() - last >= settle:
+                break                       # fallback: quiet without a prompt
+        return buf.decode("latin-1", "replace")
 
     def _command(self, cmd):
+        # Flush any stragglers from the previous exchange (e.g. VICE's late
+        # extra prompt after a monitor reconnect) so the prompt-aware _drain
+        # can't mistake them for this command's response.
+        try:
+            self.sock.settimeout(0)
+            while True:
+                stale = self.sock.recv(4096)
+                if not stale:
+                    break
+                self._log("(flushed %d stale bytes)" % len(stale))
+        except (BlockingIOError, socket.timeout):
+            pass
         self._log(">>> %s" % cmd)
         self.sock.sendall((cmd + "\n").encode("ascii"))
         out = self._drain()
