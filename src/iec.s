@@ -212,6 +212,31 @@ wait_data_lo:
 @ok:    clc
         rts
 
+; iec_sendbyte's byte-ack wait. For DATA bytes (ATN released) it spins
+; unbounded on purpose: a present-but-busy drive (flushing a write to disk)
+; may legitimately stall an ack well past any reasonable timeout. UNDER ATN
+; it is bounded (~0.7s): once a listener releases DATA ("ready") it is
+; actively receiving and acks within about a millisecond, and an unbounded
+; wait here wedges the machine when the bus empties mid-byte -- seen on
+; hardware when a mid-transfer cable yank's contact bounce faked fload's
+; presence probe past its gate: the bits clocked into the floating bus (DATA
+; reads high, so the ready-wait sailed through), then the ack never came and
+; the C64 spun until the cable returned, whereupon the drive's ATN response
+; supplied the missing "ack" and the probe reported a phantom success.
+; NOTE the asymmetry: the READY wait (DATA release, @wready) must stay
+; unbounded even under ATN -- a drive that just took an OPEN is busy seeking
+; the directory for up to several seconds before it services the TALK bytes
+; (the stock KERNAL waits forever there too), and a floating bus passes that
+; wait instantly anyway, so it is not a yank wedge point.
+hs_ack:
+        lda DD00
+        and #B_ATN              ; are we asserting ATN? -> bounded wait
+        bne wait_data_lo
+@spin:  bit DD00
+        bmi @spin               ; wait for DATA low = the listener's byte ack
+        clc
+        rts
+
 ; -------------------------------------------------------------------------
 ; C-callable setters (one argument, in A / A:X per cc65 fastcall).
 ; -------------------------------------------------------------------------
@@ -313,9 +338,8 @@ iec_sendbyte:
         jsr data_hi             ; release DATA between bits
         dec COUNT
         bne @bit
-@ack:
-        bit DD00
-        bmi @ack                ; wait for DATA low = the listener's byte ack
+        jsr hs_ack              ; DATA low = the listener's byte ack
+        bcs @nodev              ; (bounded under ATN -- see hs_ack)
         rts
 @nodev:
         lda ST                  ; nobody acknowledged: device not present

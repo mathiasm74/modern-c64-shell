@@ -67,12 +67,16 @@ def run_module(modname):
     if not fns:
         return passed, failures, lines
     # A module may request a disk image (mounted on device 8, true drive)
-    # by setting VICE_DISK to a path relative to the test directory.
+    # by setting VICE_DISK to a path relative to the test directory, and/or
+    # extra x64sc arguments via VICE_ARGS (e.g. ["-drive8type", "0"] for a
+    # bus with no drive on it at all -- without it VICE's default drive 8
+    # still answers ATN even with no disk attached).
     disk = getattr(mod, "VICE_DISK", None)
     if disk is not None:
         disk = os.path.join(TEST_DIR, disk)
+    extra = getattr(mod, "VICE_ARGS", None)
     try:
-        with Vice(disk=disk) as v:
+        with Vice(disk=disk, extra_args=extra) as v:
             for name, fn in fns:
                 label = "%s::%s" % (modname, name)
                 try:

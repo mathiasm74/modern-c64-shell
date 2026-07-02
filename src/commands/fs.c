@@ -360,17 +360,23 @@ static unsigned int fload_program(const char *name)
        $00 as a block length IS the protocol's terminator, so a cable yanked
        mid-transfer produces an instant, clean-looking (truncated) EOF. Verify
        the drive is still on the bus before trusting the result: TALK its
-       command channel (milliseconds when present; chkin's ATN wait times out
-       fast and releases the bus itself when not, so skip clrchn then).       */
+       command channel. The probe runs ~30ms after the yank (one block
+       boundary), squarely inside the connector's contact bounce, so any
+       single line sample can lie -- every wait in the chkin path is bounded
+       (hs_ack under ATN, wait_clk_lo on the turnaround; the ready-wait passes instantly on a floating bus), and a lie
+       surfaces as NODEV or TIMEOUT rather than a wedge. clrchn always runs:
+       it releases ATN/CLK/DATA even on failure (its UNTALK send aborts
+       instantly when ST already carries NODEV), and it can only add error
+       bits to ST, never clear them, so checking after it is safe.           */
     iec_set_fa(default_device);
     iec_set_sa(15);
     iec_chkin();
-    if (iec_status() & ST_NODEV) {
+    iec_clrchn();
+    if (iec_status() & (ST_NODEV | ST_TIMEOUT)) {
         puts_raw("fast load failed");
         chrout(CR);
         return 0;
     }
-    iec_clrchn();
     return load_end - 1;
 }
 

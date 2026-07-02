@@ -78,7 +78,7 @@ def ascii_to_petscii(ch):
 class Vice:
     def __init__(self, kernal=DEFAULT_KERNAL, basic=DEFAULT_BASIC,
                  headless=None, verbose=None, disk=None, cart=None,
-                 stock_roms=False):
+                 stock_roms=False, extra_args=None):
         self.kernal = kernal
         self.basic = basic
         self.headless = HEADLESS if headless is None else headless
@@ -93,6 +93,10 @@ class Vice:
         # and lay out the cart's banks; our reset.s honors the CBM80 signature
         # at $8004 and JMPs through $8000 so autostart carts boot.
         self.cart = cart
+        # Extra x64sc command-line arguments (a list), e.g. ["-drive8type",
+        # "0"] to put NOTHING on the IEC bus -- VICE's default drive 8
+        # answers ATN even with no disk, so absent-device tests need this.
+        self.extra_args = extra_args
         # When True, launch with the stock C64 BASIC+KERNAL ROMs that VICE
         # ships with (we skip the -kernal/-basic args and let VICE pick its
         # defaults). Used by the Phase 9 corpus to establish "does this
@@ -146,6 +150,8 @@ class Vice:
             ]
         if self.cart is not None:
             cmd += ["-cartcrt", os.path.abspath(self.cart)]
+        if self.extra_args:
+            cmd += list(self.extra_args)
         self._log("launch: %s" % " ".join(cmd))
         out = None if self.verbose else subprocess.DEVNULL
         self.proc = subprocess.Popen(cmd, stdout=out, stderr=out)
