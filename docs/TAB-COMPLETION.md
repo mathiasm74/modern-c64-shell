@@ -17,9 +17,21 @@ Rejected alternatives, for the record:
 - *Read "$" on TAB*: always fresh, but stalls the prompt 1–3s per first TAB
   (standard IEC; the Epyx fast path can't be used mid-keystroke without the
   timed-transfer abort problems the pager already hit).
-- *Overlay-based completer fetched on TAB*: keeps ROM cost near zero but puts
-  an RBCP fetch (and its failure modes — "overlay load failed" mid-edit) and
-  the $8800 user-RAM clobber inside a keystroke.
+- *Overlay-based completer fetched on TAB*: originally rejected because the
+  RBCP transport glitched intermittently and a failed fetch would splatter
+  "overlay load failed" mid-line-edit. **Revised assessment (2026-07-02,
+  after the badline guard fixed the transport):** now a viable fallback if
+  the BASIC half ever needs the bytes back. The cache stays resident as-is;
+  only the ~600-byte matcher (src/complete.s) moves to a ~3-page overlay
+  (fits set B, 28/32 pages used), leaving a ~100-byte resident thunk --
+  net ~500 bytes reclaimed. The mailbox ABI ($02B1/$02B2 + a line-buffer
+  pointer) makes the conversion mechanical; print_prompt goes via a new
+  $FF80 svc entry, CHROUT via $FFD2, and a failed fetch must be silently
+  inert. The one real regression, and why the resident version stays while
+  ROM is plentiful: every TAB press would clobber $8800-$97FF (a loaded
+  program), which is acceptable for overlay *commands* but surprising for a
+  keystroke. (One ROM dependence is not a differentiator: ls/dir -- which
+  fill the cache -- are already RBCP overlays.)
 
 ## UX rules
 
