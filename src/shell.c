@@ -323,6 +323,59 @@ static unsigned char readline(void)
     }
 }
 
+#pragma code-name (push, "CODE2")
+#pragma rodata-name (push, "RODATA2")
+/* JiffyDOS-style wedge aliases: rewrite the line in place before parsing.
+ * "@" = status, "@$" = dir, "@#<n>" = device <n>, "/x" and "%x" = load x
+ * (load always honors the file's embedded address, so / and % coincide),
+ * "^x" = run x. Runs after history_add, so recall shows what was typed.
+ * Anything else after "@" (raw DOS commands, "<-file" save) has no matching
+ * command and is left alone -> "Command not found". */
+static void wedge_rewrite(void)
+{
+    const char *cmd;
+    unsigned char skip = 1;
+    unsigned char n, k, i;
+
+    switch (line[0]) {
+    case '/':
+    case '%':
+        cmd = "load ";
+        break;
+    case '^':
+        cmd = "run ";
+        break;
+    case '@':
+        if (line[1] == 0) {
+            cmd = "status";
+            skip = 1;
+        } else if (line[1] == '$' && line[2] == 0) {
+            cmd = "dir";
+            skip = 2;
+        } else if (line[1] == '#') {
+            cmd = "device ";
+            skip = 2;
+        } else {
+            return;
+        }
+        break;
+    default:
+        return;
+    }
+    for (n = 0; line[n]; ++n)
+        ;
+    for (k = 0; cmd[k]; ++k)
+        ;
+    if ((unsigned char)(n - skip + k) > LINEMAX)
+        return;                         /* rewritten line wouldn't fit */
+    for (i = n + 1; i > skip; --i)      /* shift the rest right (incl. NUL) */
+        line[i - 1 - skip + k] = line[i - 1];
+    for (i = 0; i < k; ++i)
+        line[i] = cmd[i];
+}
+#pragma rodata-name (pop)
+#pragma code-name (pop)
+
 /* Look up argv[0] in the command table and run its handler, or report that
    the command is unknown. An empty line (argc 0) just falls through. */
 static void dispatch(struct command_line *cl)
@@ -562,6 +615,7 @@ void main(void)
     for (;;) {
         print_prompt();
         n = readline();
+        wedge_rewrite();                 /* "@$" -> "dir", "/x" -> "load x", ... */
         parse_line(line, &cl);
         dispatch(&cl);
         if (n > 0)                       /* skip empty RETURNs */

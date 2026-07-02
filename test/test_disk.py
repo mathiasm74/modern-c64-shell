@@ -128,3 +128,25 @@ def test_ls_fills_tab_completion_cache(v):
         names.append("".join(chr(c) for c in data[off + 1:off + 1 + n]))
         off += 1 + n
     assert "PROG" in names, "PROG not in cache: %r" % names
+
+
+def test_wedge_aliases(v):
+    # JiffyDOS-style wedges are rewritten before parsing: "@$" = dir,
+    # "/x" (and "%x") = load x, "@" = status, "@#<n>" = device <n>.
+    # ("^x" = run x swaps to the stock ROMs -- hardware-only, not driven here.)
+    from lib.overlays import seed_dir, seed_files
+    seed_dir(v)
+    _type(v, "@$", clear=True)
+    assert _wait_for(v, "BLOCKS FREE"), \
+        "@$ did not run dir: %r" % v.screen_text()
+    _type(v, "/prog", clear=True)
+    assert _wait_for(v, "loaded $2000"), \
+        "/prog did not run load: %r" % v.screen_text()
+    seed_files(v)
+    _type(v, "@", clear=True)
+    assert _wait_for(v, " OK"), \
+        "@ did not run status: %r" % v.screen_text()
+    seed_files(v)
+    _type(v, "@#9", clear=True)
+    assert _wait_for(v, "device 9 not present"), \
+        "@#9 did not run device: %r" % v.screen_text()

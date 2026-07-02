@@ -412,7 +412,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.1.67", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.1.68", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:
