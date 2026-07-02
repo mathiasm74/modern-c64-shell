@@ -378,6 +378,13 @@ save_impl:
         ; Stash the end address (X/Y) before we touch any registers.
         stx EAL
         sty EAL+1
+        ; A SAVE changes the directory: invalidate the TAB-completion name
+        ; cache ($CE00 valid flag; docs/TAB-COMPLETION.md). A is still live
+        ; (the zp pointer arg), so go through X after the stash above... X is
+        ; not: it held the end lo byte, already stashed. Use it.
+        ldx #$00
+        stx $CE00
+        ldx EAL                 ; restore X (paranoia; nothing below needs it)
         ; A holds an 8-bit zero-page address; the two bytes there are the start
         ; of the save range. 6502 has no `lda zp,y`, so build an indirect.
         sta SAVPTR

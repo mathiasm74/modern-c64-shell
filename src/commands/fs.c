@@ -18,6 +18,12 @@
 #define TEXT_COLOR ((unsigned char *)0x0286)    /* KERNAL current text color */
 #define WHITE      0x01
 
+/* TAB-completion cache valid flag ($CE00; docs/TAB-COMPLETION.md). The dir
+   overlay fills the cache as ls/dir draw and re-validates it; everything that
+   changes the directory (or where we're looking) clears the flag here so
+   readline never completes from a stale listing. */
+#define TAB_CACHE_OK (*(unsigned char *)0xCE00)
+
 /* in c_io.s: jump to a loaded program; does not return. */
 void run_program(unsigned int addr);
 
@@ -266,6 +272,8 @@ void cmd_load(int argc, char *argv[])
     }
 
     load_end = (unsigned int)p;
+    if (load_start < 0xCF00 && load_end > 0xCE00)
+        TAB_CACHE_OK = 0;               /* the load overwrote the cache page */
 
     puts_raw("loaded $");
     print_hex16(load_start);
@@ -317,6 +325,8 @@ static unsigned int fast_receive_prg(void)
         return 0;
     load_start = *(unsigned int *)0x02AF;   /* LADRL/LADRH, set by the ASM */
     load_end = end;
+    if (load_start < 0xCF00 && load_end > 0xCE00)
+        TAB_CACHE_OK = 0;               /* the load overwrote the cache page */
     return end - 1;
 }
 
@@ -606,18 +616,21 @@ void cmd_less(int argc, char *argv[])
 
 void cmd_cp(int argc, char *argv[])
 {
+    TAB_CACHE_OK = 0;
     if (argc < 3) { usage("cp <src> <dst>"); return; }
     files_run(2, argv[1], argv[2]);
 }
 
 void cmd_mv(int argc, char *argv[])
 {
+    TAB_CACHE_OK = 0;
     if (argc < 3) { usage("mv <old> <new>"); return; }
     files_run(3, argv[1], argv[2]);     /* overlay builds r0:<new>=<old> */
 }
 
 void cmd_rm(int argc, char *argv[])
 {
+    TAB_CACHE_OK = 0;
     if (argc < 2) { usage("rm <name>"); return; }
     files_run(4, argv[1], 0);
 }
@@ -642,6 +655,7 @@ void cmd_cd(int argc, char *argv[])
     unsigned char i = 0, j;
 
     if (argc < 2) { usage("cd <path>"); return; }
+    TAB_CACHE_OK = 0;
     CD_CMD[i++] = 'c'; CD_CMD[i++] = 'd';
     if (argv[1][0] == '/' && argv[1][1] == '/' && argv[1][2] == '\0') {
         CD_CMD[i++] = 0x5E;             /* "cd //" -> "CD<up-arrow>" flash root */
@@ -676,6 +690,7 @@ void cmd_device(int argc, char *argv[])
     /* The parse/probe/report is in the files overlay (cmd 16). default_device
        and device_name stay resident (read everywhere), so pass their addresses
        in the mailbox for the overlay to update in place. */
+    TAB_CACHE_OK = 0;                   /* another unit = another directory */
     *(unsigned char **)0x02F4 = &default_device;
     *(char **)0x02F6 = &device_name[0][0];
     files_run(16, argc > 1 ? argv[1] : 0, argc >= 3 ? argv[2] : 0);

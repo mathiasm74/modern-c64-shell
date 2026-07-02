@@ -17,6 +17,7 @@ DEL = 0x14
 CR = 0x0D
 CLEAR = 0x93            # CLR: wipes the pending input (not the screen)
 HOME = 0x13             # HOME: to the start of the input (not the screen)
+TAB = 0x09              # filename completion (a bare CTRL tap emits this)
 
 
 def _send(v, codes):
@@ -158,3 +159,59 @@ def test_clr_wipes_input_not_screen(v):
     v.assert_screen_contains("Tardis DOS v")
     assert v.screen_text().count("8>") >= 2, \
         "CLR cleared the whole screen, not just the input line"
+
+
+# --- filename TAB completion (docs/TAB-COMPLETION.md) -----------------------
+# readline completes from the $CE00 name cache that ls/dir fill. Seeding the
+# cache directly makes every matching/insertion/listing rule testable with no
+# drive attached. (The CTRL-tap -> $09 emission itself is matrix-driven, so
+# it is GUI/hardware-verified like SHIFT; these tests inject $09.)
+
+def _seed_tab_cache(v, names):
+    data = [1, len(names)]
+    for nm in names:
+        data += [len(nm)] + [ord(c) for c in nm.upper()]
+    v.write_memory(0xCE00, data)
+
+
+def test_tab_completes_unique_match(v):
+    _seed_tab_cache(v, ["pirates", "doc"])
+    _send(v, _ch("zz pi") + [TAB])
+    v.assert_screen_contains("zz pirates")
+    _send(v, [CLEAR])                    # wipe the line for the next test
+
+
+def test_tab_completes_common_prefix_then_lists(v):
+    _seed_tab_cache(v, ["progone", "progtwo", "doc"])
+    _send(v, _ch("zz pr") + [TAB])       # extends to the common prefix
+    v.assert_screen_contains("zz prog")
+    _send(v, [TAB])                      # no progress -> list candidates
+    v.assert_screen_contains("progone")
+    v.assert_screen_contains("progtwo")
+    # the line is reprinted after the listing, cursor at its end
+    rows = [r for r in v.screen_rows() if "zz prog" in r]
+    assert len(rows) >= 2, "line was not reprinted after the candidate list"
+    _send(v, [CLEAR])
+
+
+def test_tab_inert_on_first_word(v):
+    _seed_tab_cache(v, ["pirates"])
+    _send(v, _ch("pi") + [TAB] + _ch("!") + [CR])
+    v.assert_screen_contains("Command not found: pi!")
+
+
+def test_tab_inert_when_cache_invalid(v):
+    _seed_tab_cache(v, ["pirates"])
+    v.write_byte(0xCE00, 0)              # invalidated
+    _send(v, _ch("zz pi") + [TAB] + [CR])
+    assert "zz pirates" not in v.screen_text(), \
+        "TAB completed from an invalidated cache"
+
+
+def test_tab_completes_mid_line(v):
+    # Completion uses the word up to the CURSOR; text right of it is pushed
+    # along: "zz pix" with the cursor before 'x' completes "pi" -> "pirates".
+    _seed_tab_cache(v, ["pirates"])
+    _send(v, _ch("zz pix") + [LEFT] + [TAB])
+    v.assert_screen_contains("zz piratesx")
+    _send(v, [CLEAR])

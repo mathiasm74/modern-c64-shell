@@ -27,6 +27,8 @@
 #define CRSR_DN  0x11            /* cursor down  (recall newer command)     */
 #define HOME     0x13            /* HOME: to the start of the input line    */
 #define CLR      0x93            /* CLR (shift-HOME): wipe the input line   */
+#define TAB      0x09            /* filename completion (a bare CTRL tap --
+                                    irq.s ctrl_tap -- or CTRL+I)            */
 #define PRINT_LO 0x20            /* printable PETSCII range we store/echo   */
 #define PRINT_HI 0x7E
 #define SWE_LO   0xDB            /* uppercase Swedish Ae/Oe/Aring ($DB-$DD), */
@@ -176,6 +178,152 @@ static void replace_line(const char *s, unsigned char *plen, unsigned char *ppos
     *ppos = n;
 }
 
+/* Print the prompt: "<dev>[ <name>]" then the prompt symbol and a space.
+   Shared by main() and the completion candidate lister (which must reprint
+   the prompt after dumping the matches). */
+static void print_prompt(void)
+{
+    print_device_prefix();
+    puts_raw(prompt_str);
+    chrout(' ');
+}
+
+/* --- Filename TAB completion (docs/TAB-COMPLETION.md) -----------------------
+ * Complete the word at the cursor from the $CE00 name cache that the dir
+ * overlay fills as ls/dir draw their listing ("the shell completes what it
+ * last saw"). Cache: [0] valid flag, [1] count, [2..] packed [len][chars]
+ * entries, uppercase PETSCII as the drive sent them. The fs.c thunks of
+ * anything that changes the directory clear the flag; a load overlapping the
+ * page clears it too, and the reader below is defensive about garbage anyway
+ * (a bad length byte just ends the scan). */
+#define TC_OK    (*(unsigned char *)0xCE00)
+#define TC_COUNT (*(unsigned char *)0xCE01)
+#define TC_BASE  ((unsigned char *)0xCE02)
+#define TC_MAX   253                    /* packed bytes that fit the page */
+
+/* The typed line is lowercase by convention; cache names are uppercase. */
+static unsigned char fold_up(unsigned char c)
+{
+    return (c >= 'a' && c <= 'z') ? (unsigned char)(c - 32) : c;
+}
+static unsigned char fold_down(unsigned char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (unsigned char)(c + 32) : c;
+}
+
+/* Does cache entry at `off` match the typed word (line[ws..ws+wl))? */
+static unsigned char tc_match(unsigned char off, unsigned char ws, unsigned char wl)
+{
+    unsigned char j;
+
+    if (TC_BASE[off] < wl)
+        return 0;
+    for (j = 0; j < wl; ++j)
+        if (TC_BASE[off + 1 + j] != fold_up(line[ws + j]))
+            return 0;
+    return 1;
+}
+
+static void complete_word(unsigned char *plen, unsigned char *ppos)
+{
+    unsigned char len = *plen, pos = *ppos;
+    unsigned char ws, wl, i, j, k, n, c, off;
+    unsigned char matches = 0, first = 0, cl = 0, col = 0;
+
+    if (!TC_OK || TC_COUNT == 0)
+        return;
+    ws = pos;                           /* word start: after the last space */
+    while (ws > 0 && line[ws - 1] != ' ')
+        --ws;
+    if (ws == 0)
+        return;                         /* first word = the command name */
+    wl = pos - ws;
+    if (wl > 16)
+        return;
+
+    /* scan: count matches, remember the first, shrink the common length */
+    off = 0;
+    for (i = 0; i < TC_COUNT; ++i) {
+        n = TC_BASE[off];
+        if (n == 0 || n > 16 || off + n >= TC_MAX)
+            break;                      /* corrupt cache: stop trusting it */
+        if (tc_match(off, ws, wl)) {
+            if (matches == 0) {
+                first = off;
+                cl = n;
+            } else {
+                if (n < cl)
+                    cl = n;
+                for (j = wl; j < cl; ++j)
+                    if (TC_BASE[first + 1 + j] != TC_BASE[off + 1 + j])
+                        break;
+                cl = j;
+            }
+            ++matches;
+        }
+        off += 1 + n;
+    }
+    if (matches == 0)
+        return;
+
+    if (cl > wl) {                      /* progress: insert the missing chars */
+        k = cl - wl;
+        if (len + k > LINEMAX)
+            k = LINEMAX - len;
+        if (k == 0)
+            return;
+        if (pos == len) {               /* at the end: append + echo */
+            for (j = 0; j < k; ++j) {
+                c = fold_down(TC_BASE[first + 1 + wl + j]);
+                line[len++] = c;
+                chrout(c);
+            }
+        } else {                        /* mid-line: push the tail right */
+            for (i = len; i != pos; --i)
+                line[i - 1 + k] = line[i - 1];
+            for (j = 0; j < k; ++j)
+                line[pos + j] = fold_down(TC_BASE[first + 1 + wl + j]);
+            len += k;
+            redraw_line(pos, len, pos + k);
+        }
+        *plen = len;
+        *ppos = pos + k;
+        return;
+    }
+
+    if (matches < 2)
+        return;
+    /* several candidates and no progress: list them (ls-style two columns),
+       then reprint the prompt and the line exactly as it was */
+    chrout(CR);
+    off = 0;
+    for (i = 0; i < TC_COUNT; ++i) {
+        n = TC_BASE[off];
+        if (n == 0 || n > 16 || off + n >= TC_MAX)
+            break;
+        if (tc_match(off, ws, wl)) {
+            for (j = 0; j < n; ++j)
+                chrout(fold_down(TC_BASE[off + 1 + j]));
+            if (col == 0) {
+                for (j = n; j < 20; ++j)
+                    chrout(' ');
+                col = 1;
+            } else {
+                chrout(CR);
+                col = 0;
+            }
+        }
+        off += 1 + n;
+    }
+    if (col)
+        chrout(CR);
+    print_prompt();
+    for (i = 0; i < len; ++i)
+        chrout(line[i]);
+    for (i = len; i != pos; --i)
+        chrout(CRSR_L);
+}
+
 /* Read one line into `line`, echoing as we go; return its length.
  *
  * RETURN submits. Cursor left/right move within the line; printable characters
@@ -214,6 +362,10 @@ static unsigned char readline(void)
                 --browse;
                 replace_line(history_get(browse), &len, &pos);
             }
+            continue;
+        }
+        if (c == TAB) {                 /* complete the word at the cursor */
+            complete_word(&len, &pos);
             continue;
         }
         if (c == HOME) {                /* to the start of the INPUT, not the
@@ -438,9 +590,7 @@ void main(void)
 
     settings_load();                     /* apply saved colors + replay history */
     for (;;) {
-        print_device_prefix();           /* "<dev>[ <name>]" left of the prompt */
-        puts_raw(prompt_str);
-        chrout(' ');
+        print_prompt();
         n = readline();
         parse_line(line, &cl);
         dispatch(&cl);

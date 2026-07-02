@@ -105,3 +105,26 @@ def test_load_into_memory(v):
     assert "$2000-$201e" in txt, "load reported the wrong range\n%s" % txt
     assert v.read_memory(0x2000, 8) == [0xA2, 0x00, 0xBD, 0x0E, 0x20, 0xF0, 0x06, 0x20], \
         "loaded program bytes wrong at $2000"
+
+
+def test_ls_fills_tab_completion_cache(v):
+    # docs/TAB-COMPLETION.md: ls fills the $CE00 name cache as it draws and
+    # validates it on a clean end; readline completes from it.
+    from lib.overlays import seed_dir
+    seed_dir(v)
+    v.write_memory(0xCE00, [0, 0])
+    _type(v, "ls")
+    _wait_for(v, "prog")
+    assert v.read_byte(0xCE00) == 1, "ls did not validate the cache"
+    count = v.read_byte(0xCE01)
+    assert count >= 3, "expected >= 3 cached names, got %d" % count
+    # walk the packed entries looking for PROG
+    data = v.read_memory(0xCE02, 253)
+    names, off = [], 0
+    while off < 250:
+        n = data[off]
+        if n == 0 or n > 16:
+            break
+        names.append("".join(chr(c) for c in data[off + 1:off + 1 + n]))
+        off += 1 + n
+    assert "PROG" in names, "PROG not in cache: %r" % names

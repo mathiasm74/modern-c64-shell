@@ -1,8 +1,9 @@
 # Filename TAB completion — design spec
 
-Status: **specced, not implemented**. Decisions below were settled with the
-user (2026-07-02); the previous *command-name* completion was removed in an
-earlier phase (rarely useful, resident-ROM cost) and stays out.
+Status: **implemented in v0.1.58**. Decisions were settled with the user
+(2026-07-02); the previous *command-name* completion was removed in an earlier
+phase (rarely useful, resident-ROM cost) and stays out. Implementation
+deviations from the original draft are folded in below and marked (as-built).
 
 ## Model
 
@@ -23,9 +24,12 @@ Rejected alternatives, for the record:
 ## UX rules
 
 - **Trigger**: TAB ($09) with the cursor in the second or later word of the
-  line. TAB in the first word: inert (command names don't complete). CTRL+I
-  emits $09 and therefore behaves identically at the prompt; the `edit`
-  overlay's own input loop is unaffected.
+  line. **(as-built) The C64 has no TAB key, so a bare CTRL tap emits $09**:
+  `ctrl_tap` in irq.s arms when CTRL goes down with nothing else pressed,
+  spoils if any key is seen while it is held (CTRL+letter combos are
+  unaffected), and emits on release. CTRL+I also still emits $09. TAB in the
+  first word: inert (command names don't complete). The `edit` overlay's own
+  input loop is unaffected (a stray $09 there was already producible).
 - **Word extraction**: from the character after the previous space up to the
   cursor. Text right of the cursor is ignored for matching and untouched by
   the insertion.
@@ -35,10 +39,11 @@ Rejected alternatives, for the record:
   Meatloaf's DIR/URL — completing into a `cd` target is half the point).
 - **One match**: insert the remaining characters at the cursor (the existing
   insert/redraw machinery; mid-line insertion pushes the tail right).
-- **Several matches**: complete to the longest common prefix. A second TAB
-  that makes no progress prints the candidates below the line in the `ls`
-  two-column style, then reprints the prompt (print_device_prefix +
-  prompt_str) and the line, cursor restored.
+- **Several matches**: complete to the longest common prefix. (as-built) A
+  TAB that makes **no progress** prints the candidates below the line in the
+  `ls` two-column style, then reprints the prompt (print_prompt in shell.c)
+  and the line, cursor restored -- usually that is the second TAB, but a TAB
+  whose word is already the full common prefix lists immediately.
 - **No matches / empty cache / first word**: nothing happens. No beep, no
   message.
 - **Names with spaces** complete literally; the parser splits on spaces, so
@@ -46,35 +51,40 @@ Rejected alternatives, for the record:
 
 ## Cache
 
-- Resident BSS array in the RAM segment ($C000–$C7FF): `CACHE_N = 48` entries
-  x 17 bytes (len + 16 name chars) = 816 bytes, plus a count byte and a
-  valid flag. **The RAM segment is 2KB shared with the cc65 C stack** — after
-  implementing, check the map that BSS end leaves comfortable stack headroom;
-  shrink `CACHE_N` if not. Listings longer than the cap cache the first
-  `CACHE_N` names (the rest simply don't complete — no error).
-- **Fill**: the `dir` overlay's `dir_line` already parses each entry to draw
-  it; it also copies the quoted name into the cache. The cache base address
-  and cap are passed in the dir mailbox (the `device`-thunk pattern: resident
-  pointer handed to the overlay, e.g. $02D6/7 + a cap byte) so the overlay
-  doesn't hardcode a BSS address that moves between builds. Both `ls` and
-  `dir` fill it; `pwd` (header only) does not touch it.
-- **Invalidation** (valid flag cleared): `cd`, `device`, `rm`, `mv`, `cp`,
-  a SAVE via the KERNAL shim, and any dir read that ends in a drive error.
-  A completed `ls`/`dir` re-validates. `load`/`run` do NOT invalidate (they
-  don't change the directory).
+- **(as-built) Fixed page $CE00** -- free since the single-page overlay loader
+  was removed -- NOT the BSS array the draft proposed: BSS ends at ~$C618 and
+  the 2KB RAM segment is shared with the cc65 C stack, so an 800+ byte array
+  did not fit. Layout: `$CE00` valid flag, `$CE01` count, `$CE02..` packed
+  `[len][chars]` entries (uppercase PETSCII, as the drive sent them), capped
+  at 253 packed bytes (~25 typical names). A fixed page also removes the
+  mailbox pointer the draft needed.
+- **Fill**: `cache_name()` in the dir overlay parses each drawn line's quoted
+  name (skipping the header/disk title, the BLOCKS FREE trailer, and Meatloaf
+  NFO pseudo-entries) and appends it; `cache_done()` sets the valid flag only
+  on a clean end (no TIMEOUT/NODEV in ST). Both `ls` and `dir` fill; `pwd`
+  does not touch the cache. A `q` quit mid-pagination validates the partial
+  cache (same acceptable truncation as the size cap).
+- **Invalidation** (valid flag cleared): the fs.c thunks of `cd`, `device`,
+  `rm`, `mv`, `cp`; the SAVE KERNAL shim (kernal_stubs.s); a `load`/`fload`
+  whose range overlaps the $CE00 page (it just overwrote the cache); a dir
+  read that ends in a drive error (cache_done never validates); and boot
+  (reset.s clears the flag -- the page is power-on garbage). The reader is
+  defensive regardless: a length byte of 0 or >16 ends the scan.
 
 ## Code placement & budget
 
-- **Resident** (shell.c readline, BASIC half): TAB case in the key loop —
+- **Resident** (shell.c readline, BASIC half): `complete_word` + helpers —
   word extraction, cache scan, common-prefix computation, insertion, and the
-  candidate listing + prompt/line reprint. Budget ~250–350 bytes against the
-  ~1.7KB currently free; the two-column lister can share `ls`'s column logic
-  only if that is resident (it isn't — it's in the dir overlay), so it gets a
-  minimal local loop (name + pad to 20 cols, CR every second name).
-- **Overlay** (dir.c): the cache-fill hook in `dir_line` + mailbox plumbing.
-  Free ROM-wise (overlays live outside the 16KB).
-- **Thunks** (fs.c): pass cache base/cap in the dir mailbox; clear the valid
-  flag in the invalidating commands' thunks (one store each).
+  candidate listing + prompt/line reprint. (as-built) cc65 made this ~1.3KB,
+  not the draft's 250-350 bytes; BASIC free fell 1768 -> 446. If the BASIC
+  half gets tight, this is the first candidate to restructure (or partially
+  overlay).
+- **Overlay** (dir.c): cache_reset/cache_name/cache_done around the ls/dir
+  draw loops. Free ROM-wise (overlays live outside the 16KB); no mailbox
+  needed since the cache page is fixed.
+- **Thunks** (fs.c): clear the valid flag in the invalidating commands'
+  thunks (one store each); irq.s carries the CTRL-tap emitter (~35 bytes,
+  KERNAL half).
 
 ## Out of scope (v1)
 
@@ -87,8 +97,8 @@ Rejected alternatives, for the record:
 
 ## Test plan
 
-- Seed the cache directly (write count + entries into the BSS address from
-  labels.txt) and drive readline with injected keys — no drive needed for the
+- Seed the cache directly (write the flag/count/entries at $CE00) and drive
+  readline with injected keys — no drive needed for the
   matching/insertion/listing tests: unique match completes; common prefix
   stops at ambiguity; second TAB lists candidates and the line survives
   intact (screen rows + $D3/$D6 checks, like test_lineedit); TAB in the first

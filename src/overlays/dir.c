@@ -33,6 +33,66 @@ unsigned char k_getin(void);            /* crt0_dir.s: GETIN ($FFE4) */
 #define MB_NAME ((const char *)0x02D3)
 
 static char dir_buf[42];
+
+/* --- TAB-completion name cache ($CE00; docs/TAB-COMPLETION.md) --------------
+ * Filled as a side effect of drawing ls/dir ("the shell completes what it
+ * last saw"); readline completes from it. Fixed page, free since the
+ * single-page overlay loader was removed: [0] valid flag, [1] count, [2..]
+ * packed [len][chars] entries, uppercase PETSCII as the drive sent them.
+ * The fs.c thunks of directory-changing commands clear the flag. */
+#define TC_OK    (*(unsigned char *)0xCE00)
+#define TC_COUNT (*(unsigned char *)0xCE01)
+#define TC_BASE  ((unsigned char *)0xCE02)
+#define TC_MAX   253
+
+static unsigned char tc_w;              /* write offset into TC_BASE */
+
+static char up(char c);                 /* defined below (type-token folding) */
+
+static void cache_reset(void)
+{
+    TC_OK = 0;
+    TC_COUNT = 0;
+    tc_w = 0;
+}
+
+/* Append dir_buf's quoted entry name to the cache. Ignores lines without a
+ * quoted name (the BLOCKS FREE trailer), Meatloaf NFO pseudo-entries, and
+ * anything that doesn't fit the remaining page (silent cap). */
+static void cache_name(void)
+{
+    unsigned char i, q2, t, n;
+
+    for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
+        ;
+    if (dir_buf[i] != '"')
+        return;
+    ++i;
+    for (q2 = i; dir_buf[q2] && dir_buf[q2] != '"'; ++q2)
+        ;
+    if (dir_buf[q2] != '"')
+        return;
+    for (t = q2 + 1; dir_buf[t] == ' '; ++t)
+        ;
+    if (dir_buf[t] == '*')
+        ++t;
+    if (up(dir_buf[t]) == 'N' && up(dir_buf[t + 1]) == 'F')
+        return;                         /* NFO info line, not a file */
+    n = q2 - i;
+    if (n == 0 || n > 16 || (unsigned char)(tc_w + n) >= TC_MAX)
+        return;
+    TC_BASE[tc_w++] = n;
+    while (i < q2)
+        TC_BASE[tc_w++] = dir_buf[i++];
+    ++TC_COUNT;
+}
+
+/* A clean end of listing validates the cache (a read error leaves it off). */
+static void cache_done(void)
+{
+    if (!(svc_iec_status() & (ST_TIMEOUT | 0x80)))
+        TC_OK = 1;
+}
 static unsigned char dir_fast, fdir_left, fdir_eof;
 
 /* The Epyx fast path is a TIMED transfer the drive aborts if we stall (the
@@ -287,11 +347,16 @@ static unsigned char type_color(const char *type)
 static void do_dir(void)
 {
     unsigned int blocks;
-    unsigned char lines = 0, paged = 0;
+    unsigned char lines = 0, paged = 0, first = 1;
 
     if (!dir_open())                    /* fast->slurp to RAM, else standard IEC */
         return;
+    cache_reset();
     while (dir_line(&blocks)) {
+        if (first)
+            first = 0;                  /* header: don't cache the disk title */
+        else
+            cache_name();
         put_uint(blocks);
         k_chrout(' ');
         puts_raw(dir_buf);
@@ -300,6 +365,7 @@ static void do_dir(void)
             break;
     }
     dir_close();
+    cache_done();
 }
 
 static void do_ls(void)
@@ -312,11 +378,13 @@ static void do_ls(void)
         return;
     saved = TEXT_COLOR;
     first = 1;
+    cache_reset();
     while (dir_line(&blocks)) {
         if (first) {
             first = 0;
             continue;
         }
+        cache_name();
         for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
             ;
         if (dir_buf[i] != '"')
@@ -357,6 +425,7 @@ static void do_ls(void)
         k_chrout(CR);
     TEXT_COLOR = saved;
     dir_close();
+    cache_done();
 }
 
 static void do_pwd(void)

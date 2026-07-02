@@ -23,6 +23,8 @@ COLMASK   = $F7         ; scan scratch (not used by the main thread / CHROUT)
 ROWBITS   = $F8
 found_key = $F9         ; matrix code found this scan ($FF = none)
 SHFLAG    = $028D       ; nonzero while a SHIFT key is held this scan
+CTRLTAP   = $028E       ; CTRL-tap state: 0 idle, 1 armed (CTRL down, nothing
+                        ; else pressed yet), 2 spoiled (CTRL used as modifier)
 RPTCNT    = $028C       ; key-repeat countdown: initial delay, then rate
 KBD_LAYOUT = $02CB      ; 0 = default/US tables, 1 = Swedish (keytab_se). Set by
                         ; the `font` command in tandem with the charset; cleared
@@ -135,6 +137,8 @@ scan_keyboard:
         cpx #64
         bcc @col
 
+        jsr ctrl_tap            ; a bare CTRL tap emits TAB (completion)
+
         ldx found_key
         cpx #$FF
         beq @none               ; nothing pressed this scan
@@ -193,6 +197,46 @@ scan_keyboard:
         lda #$FF
         sta LSTX                ; released -> next press will register
 @ret:
+        rts
+
+; -------------------------------------------------------------------------
+; ctrl_tap - emit TAB ($09) when CTRL is pressed and released on its own.
+; The C64 keyboard has no TAB key, so a bare CTRL tap triggers the shell's
+; filename completion (docs/TAB-COMPLETION.md); CTRL+key combos still act
+; as modifiers only -- any key seen while CTRL is down spoils the tap, and
+; stays spoiled until CTRL is released (so releasing the letter first can't
+; re-arm). Runs once per scan right after the matrix pass, when found_key
+; and SHFLAG are current. Clobbers A, X (caller reloads found_key after).
+; -------------------------------------------------------------------------
+ctrl_tap:
+        lda SHFLAG
+        and #$04                ; CTRL held this scan?
+        beq @up
+        lda CTRLTAP
+        bne @known              ; already armed or spoiled this hold
+        lda #$01
+        sta CTRLTAP             ; newly down -> armed
+@known:
+        lda found_key
+        cmp #$FF
+        beq @done               ; nothing else pressed: stays armed
+        lda #$02
+        sta CTRLTAP             ; used as a modifier -> spoiled
+@done:
+        rts
+@up:
+        lda CTRLTAP
+        cmp #$01
+        bne @clear              ; wasn't a clean tap (idle or spoiled)
+        ldx NDX
+        cpx #KEYBUF_MAX
+        bcs @clear              ; keyboard buffer full: drop the tap
+        lda #$09                ; TAB
+        sta KEYBUF,x
+        inc NDX
+@clear:
+        lda #$00
+        sta CTRLTAP
         rts
 
 ; -------------------------------------------------------------------------

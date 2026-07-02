@@ -237,6 +237,11 @@ reset:
         ; --- Keyboard state: empty buffer, no key held -------------------
         lda #$00
         sta NDX
+        sta $028E               ; CTRL-tap state (irq.s CTRLTAP): page-2 RAM is
+                                ; garbage at power-on; 1 would fire a phantom TAB
+        sta $CE00               ; TAB-completion cache valid flag: the $CE00
+                                ; page is power-on garbage; a nonzero flag would
+                                ; let the first TAB complete from noise
         sta KBD_LAYOUT          ; default to the US/symbolic key tables
         lda #$FF
         sta LSTX
@@ -404,7 +409,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.1.57", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.1.58", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:
