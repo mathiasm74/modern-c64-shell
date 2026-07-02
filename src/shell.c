@@ -25,6 +25,8 @@
 #define CRSR_R   0x1D            /* cursor right                            */
 #define CRSR_UP  0x91            /* cursor up    (recall older command)     */
 #define CRSR_DN  0x11            /* cursor down  (recall newer command)     */
+#define HOME     0x13            /* HOME: to the start of the input line    */
+#define CLR      0x93            /* CLR (shift-HOME): wipe the input line   */
 #define PRINT_LO 0x20            /* printable PETSCII range we store/echo   */
 #define PRINT_HI 0x7E
 #define SWE_LO   0xDB            /* uppercase Swedish Ae/Oe/Aring ($DB-$DD), */
@@ -178,8 +180,10 @@ static void replace_line(const char *s, unsigned char *plen, unsigned char *ppos
  *
  * RETURN submits. Cursor left/right move within the line; printable characters
  * insert at the cursor; DELETE removes the character to its left, closing the
- * gap. Any other control code is passed straight to CHROUT (so e.g. a
- * clear-screen still works as you type) but is not added to the line. */
+ * gap; HOME moves to the start of the input and CLR wipes the input (line-
+ * editor semantics -- the screen-level HOME/CLR remain available to programs
+ * via CHROUT, just not as prompt keystrokes). Any other control code is passed
+ * straight to CHROUT but is not added to the line. */
 static unsigned char readline(void)
 {
     unsigned char len = 0;              /* characters in the line          */
@@ -210,6 +214,21 @@ static unsigned char readline(void)
                 --browse;
                 replace_line(history_get(browse), &len, &pos);
             }
+            continue;
+        }
+        if (c == HOME) {                /* to the start of the INPUT, not the
+                                           screen home CHROUT would do */
+            while (pos > 0) {
+                chrout(CRSR_L);         /* CRSR_L wraps rows, so a wrapped
+                                           line walks back correctly */
+                --pos;
+            }
+            continue;
+        }
+        if (c == CLR) {                 /* wipe the typed line, not the whole
+                                           screen (the `clear` command and a
+                                           programmatic $93 still do that) */
+            replace_line("", &len, &pos);
             continue;
         }
         if (c == CRSR_L) {

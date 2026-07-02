@@ -15,7 +15,8 @@ LEFT = 0x9D
 RIGHT = 0x1D
 DEL = 0x14
 CR = 0x0D
-CLEAR = 0x93
+CLEAR = 0x93            # CLR: wipes the pending input (not the screen)
+HOME = 0x13             # HOME: to the start of the input (not the screen)
 
 
 def _send(v, codes):
@@ -26,6 +27,14 @@ def _send(v, codes):
 
 def _ch(s):
     return [ord(c) for c in s]
+
+
+def _fresh_line(v):
+    """Reset the screen with the `clear` COMMAND (since v0.1.57 the CLR key
+    only wipes the input line) and return the fresh prompt's cursor column,
+    so position-sensitive tests can work relative to the prompt width."""
+    _send(v, _ch("clear") + [CR])
+    return v.read_byte(0xD3)
 
 
 def _type_n(v, ch, n):
@@ -74,8 +83,8 @@ def test_cursor_right_stops_at_end(v):
 def test_cursor_left_wraps_past_line_start(v):
     # Fill row 0 so the cursor wraps to row 1, column 0. LEFT must then step
     # back to row 0, column 39 -- the reported bug was it sticking at col 0.
-    _send(v, [CLEAR])
-    _type_n(v, "x", 40)
+    col = _fresh_line(v)
+    _type_n(v, "x", 40 - col)
     assert v.read_byte(0xD6) == 1 and v.read_byte(0xD3) == 0, \
         "40 chars did not wrap to row 1 (TBLX=%d PNTR=%d)" % (
             v.read_byte(0xD6), v.read_byte(0xD3))
@@ -91,8 +100,8 @@ def test_backspace_wraps_past_line_start(v):
     # cell. (Bug: backspace stuck at col 0 -- it dropped the char from the line
     # buffer but left the screen untouched until you arrowed back, after which
     # further deletes acted on characters that looked already gone.)
-    _send(v, [CLEAR])
-    _type_n(v, "x", 40)
+    col = _fresh_line(v)
+    _type_n(v, "x", 40 - col)
     assert v.read_byte(0xD6) == 1 and v.read_byte(0xD3) == 0, \
         "40 chars did not wrap to row 1 (TBLX=%d PNTR=%d)" % (
             v.read_byte(0xD6), v.read_byte(0xD3))
@@ -108,8 +117,8 @@ def test_backspace_wraps_past_line_start(v):
 
 def test_cursor_right_wraps_to_next_line(v):
     # The mirror of the above: from row 0 col 39, RIGHT wraps to row 1 col 0.
-    _send(v, [CLEAR])
-    _type_n(v, "x", 40)
+    col = _fresh_line(v)
+    _type_n(v, "x", 40 - col)
     _send(v, [LEFT])               # row 0, col 39
     _send(v, [RIGHT])              # back to row 1, col 0
     assert v.read_byte(0xD6) == 1 and v.read_byte(0xD3) == 0, \
@@ -119,9 +128,33 @@ def test_cursor_right_wraps_to_next_line(v):
 
 
 def test_cursor_column_tracks_edits(v):
-    # After a clear the input starts at column 0, so the cursor column ($D3)
-    # equals the logical position. "abc" then one left -> column 2.
-    _send(v, [CLEAR] + _ch("abc") + [LEFT])
+    # The cursor column ($D3) tracks the logical position relative to the
+    # prompt: "abc" then one left -> prompt column + 2.
+    col0 = _fresh_line(v)
+    _send(v, _ch("abc") + [LEFT])
     col = v.read_byte(0xD3)
     _send(v, [CR])              # submit, leaving readline clean for later tests
-    assert col == 2, "cursor column wrong after left (got %d)" % col
+    assert col == col0 + 2, \
+        "cursor column wrong after left (got %d, prompt at %d)" % (col, col0)
+
+
+def test_home_returns_to_input_start(v):
+    # HOME ($13) moves to the start of the INPUT (not the screen home): with
+    # "bc" typed, HOME then "a" inserts at the front -> "abc". A screen-home
+    # would have echoed the 'a' at 0,0 and submitted "bca" instead.
+    _send(v, _ch("bc") + [HOME] + _ch("a") + [CR])
+    v.assert_screen_contains("Command not found: abc")
+    assert "Command not found: bca" not in v.screen_text(), \
+        "HOME went to the screen home, not the input start"
+
+
+def test_clr_wipes_input_not_screen(v):
+    # CLR ($93) at the prompt wipes the pending input only: "zap" vanishes,
+    # the retyped "ver" runs clean (proving the line buffer really emptied),
+    # and earlier prompt rows survive (a full screen clear would leave only
+    # the fresh prompt's "8>" on screen).
+    _send(v, _ch("zap") + [CLEAR])
+    _send(v, _ch("ver") + [CR])
+    v.assert_screen_contains("Tardis DOS v")
+    assert v.screen_text().count("8>") >= 2, \
+        "CLR cleared the whole screen, not just the input line"

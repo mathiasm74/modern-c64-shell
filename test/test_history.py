@@ -25,14 +25,14 @@ def _ch(s):
 
 
 def test_up_recalls_previous_command(v):
-    _send(v, [CLEAR] + _ch("aa") + [CR])
+    _send(v, _ch("clear") + [CR] + _ch("aa") + [CR])
     _send(v, _ch("bb") + [CR])
     _send(v, [UP] + _ch("z") + [CR])            # UP -> "bb"; append -> "bbz"
     v.assert_screen_contains("Command not found: bbz")
 
 
 def test_up_twice_recalls_older_command(v):
-    _send(v, [CLEAR] + _ch("aa") + [CR])
+    _send(v, _ch("clear") + [CR] + _ch("aa") + [CR])
     _send(v, _ch("bb") + [CR])
     _send(v, [UP, UP] + _ch("z") + [CR])        # UP UP -> "aa"; append -> "aaz"
     v.assert_screen_contains("Command not found: aaz")
@@ -41,7 +41,7 @@ def test_up_twice_recalls_older_command(v):
 
 
 def test_down_walks_back_to_newer(v):
-    _send(v, [CLEAR] + _ch("aa") + [CR])
+    _send(v, _ch("clear") + [CR] + _ch("aa") + [CR])
     _send(v, _ch("bb") + [CR])
     _send(v, [UP, UP, DOWN] + _ch("z") + [CR])  # UP UP -> aa, DOWN -> "bb" -> "bbz"
     v.assert_screen_contains("Command not found: bbz")

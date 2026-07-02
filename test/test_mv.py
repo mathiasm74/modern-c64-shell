@@ -26,8 +26,12 @@ def _type(v, text):
 def _ls(v):
     seed_dir(v)              # dir is an overlay
     """Clear the screen, run dir, wait for it to finish."""
-    v.write_memory(0x0277, [0x93] + [ord(c) for c in "dir"] + [0x0D])
-    v.write_byte(0x00C6, 5)
+    # `clear` as a COMMAND: since v0.1.57 the CLR keystroke only wipes the
+    # input line, and this test needs the previous listing gone ("PROG not
+    # in screen" must mean the file is gone, not that it scrolled up).
+    v.write_memory(0x0277, [ord(c) for c in "clear"] + [0x0D]
+                   + [ord(c) for c in "dir"] + [0x0D])
+    v.write_byte(0x00C6, 10)
     for _ in range(20):
         v.run_for(0.6)
         if "BLOCKS FREE" in v.screen_text():

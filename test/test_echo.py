@@ -40,11 +40,23 @@ def test_echo_backspace_erases(v):
     # "ab" then DEL ($14): b is erased, leaving 'a' then a space. 'a' is
     # ASCII $61 -> screen code $01 in the lowercase charset. The cursor now
     # sits on the cleared cell as a reverse-video block, so mask bit 7.
-    _send(v, [CLEAR, 0x61, 0x62, 0x14])
-    cells = [b & 0x7F for b in v.read_memory(0x0400, 2)]
+    # Reset via the `clear` COMMAND (the CLR keystroke only wipes the input
+    # line since v0.1.57): the fresh prompt "8> " lands at row 0, so the
+    # typed text starts at column 3.
+    _send(v, [ord(c) for c in "clear"] + [0x0D, 0x61, 0x62, 0x14])
+    for _ in range(20):                 # ride out warp starvation in parallel runs
+        if v.read_byte(0x00C6) == 0:
+            break
+        v.run_for(0.2)
+    v.run_for(0.2)                      # let the last echo land
+    cells = [b & 0x7F for b in v.read_memory(0x0400 + 3, 2)]
     assert cells == [0x01, 0x20], "backspace did not erase 'b'"
 
 
-def test_clear_wipes_screen(v):
+def test_clr_wipes_input_line_not_screen(v):
+    # Since v0.1.57 CLR at the prompt wipes only the pending input: "junk"
+    # vanishes from the line, but the boot banner survives (the old behavior
+    # -- a full screen clear -- would have taken it too).
     _send(v, [ord(c) for c in "junk"] + [CLEAR])
-    assert "junk" not in v.screen_text(), "clear ($93) did not wipe the screen"
+    assert "junk" not in v.screen_text(), "CLR did not wipe the typed input"
+    assert "Tardis DOS" in v.screen_text(), "CLR cleared the whole screen"
