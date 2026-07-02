@@ -87,3 +87,14 @@ def test_reset_reboots(v):
     # the rebooted shell still takes commands
     _send(v, [CLEAR] + _ch("zq") + [CR])
     v.assert_screen_contains("Command not found: zq")
+
+
+def test_nv_reports_unavailable_in_vice(v):
+    # The NV persistence diagnostics command; VICE has no One ROM, so the
+    # capability probe fails and `nv` must say so rather than print garbage.
+    _send(v, _ch("nv") + [CR])
+    for _ in range(20):
+        if "nv: not available" in v.screen_text():
+            return
+        v.run_for(0.3)
+    raise AssertionError("nv did not report unavailability: %r" % v.screen_text())

@@ -62,7 +62,7 @@ static const char *current_device_name(void)
     return "";
 }
 
-static void print_uint(unsigned int n);
+void print_uint(unsigned int n);        /* non-static: shell.c's nv diag uses it */
 
 /* Print "<dev>[ <name>]" -- the device prefix the shell draws left of the
    prompt character (main() in shell.c calls this before the prompt). chrout
@@ -116,7 +116,7 @@ static void progress_end(void)
    the resident C, so avoiding it drops them entirely. */
 static const unsigned int print_uint_pow10[4] = { 10000, 1000, 100, 10 };
 
-static void print_uint(unsigned int n)
+void print_uint(unsigned int n)
 {
     unsigned char i, d, started = 0;
     unsigned int p;

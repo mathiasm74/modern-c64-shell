@@ -27,6 +27,7 @@ unsigned char getin(void);
 
 /* Print a NUL-terminated string through CHROUT. */
 void puts_raw(const char *s);
+void print_uint(unsigned int n);        /* fs.c */
 
 /* Persist colors + history to the One ROM NV flash (shell.c). No-op when NV
    isn't available. cmd_exit calls this to snapshot before swapping ROMs. */
