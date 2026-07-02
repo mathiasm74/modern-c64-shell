@@ -53,7 +53,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("Tardis DOS v0.1.66")
+    v.assert_screen_contains("Tardis DOS v0.1.67")
 
 
 # `basic` (formerly `exit`, before that `runstock`) swaps the One ROM to the
@@ -84,8 +84,9 @@ def test_about_paginates_before_the_title_scrolls(v):
     # The about pager pauses on the cursor ROW (TBLX), not a CR count: the
     # reflowed text fills 40-col lines that auto-wrap with no CR, and the old
     # CR counter missed those rows -- the "-- more --" came a row late and the
-    # title scrolled off the top. At the first pause, row 0 must still hold
-    # the first text line and "-- more --" must sit on row 22.
+    # title scrolled off the top. A page uses the whole screen: at the first
+    # pause the TITLE must still be on row 0 and "-- more --" must sit on the
+    # very last row (24).
     from lib.overlays import seed_about
     seed_about(v)
     # inject directly: the module's _type helpers re-seed the FILES overlay,
@@ -97,8 +98,9 @@ def test_about_paginates_before_the_title_scrolls(v):
             break
         v.run_for(0.3)
     rows = v.screen_rows()
-    assert "-- more --" in rows[22], \
-        "more-prompt not on row 22: %r" % v.screen_text()
-    assert rows[0].strip(), "the first text line scrolled off the top"
+    assert "-- more --" in rows[24], \
+        "more-prompt not on the last row: %r" % v.screen_text()
+    assert "TARDIS DOS" in rows[0], \
+        "the title is not on row 0: %r" % rows[0]
     v.inject_keys("q")          # any key continues; leave the pager running out
     v.run_for(1.0)

@@ -15,7 +15,10 @@ CHROUT = $FFD2
 GETIN  = $FFE4
 CLEAR  = $93
 CR     = $0D
-PAGE_LINES = 22                 ; screen row where "-- more --" lands
+PAGE_LINES = 24                 ; screen row where "-- more --" lands: the
+                                ; bottom row, so a page uses the full screen
+                                ; (rows 0-23 text; the 10-char prompt can't
+                                ; wrap, so printing on row 24 never scrolls)
 TBLX   = $D6                    ; KERNAL cursor row -- the page position. The
                                 ; pager reads it instead of counting CRs: the
                                 ; reflowed text fills 40-col lines that auto-

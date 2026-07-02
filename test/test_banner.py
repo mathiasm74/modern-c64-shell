@@ -19,6 +19,13 @@ def test_rom_free_line(v):
 
 
 def test_display_enabled(v):
+    # Poll for boot first: under a heavily parallel run this module can get
+    # its VICE before reset.s has reached the display-enable, and this test
+    # runs first (alphabetically) -- so the wait covers the whole module.
+    for _ in range(30):
+        if "Ready." in v.screen_text():
+            break
+        v.run_for(0.3)
     v.assert_display_enabled()
 
 
