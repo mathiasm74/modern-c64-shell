@@ -24,7 +24,10 @@ ROWBITS   = $F8
 found_key = $F9         ; matrix code found this scan ($FF = none)
 SHFLAG    = $028D       ; nonzero while a SHIFT key is held this scan
 CTRLTAP   = $028E       ; CTRL-tap state: 0 idle, 1 armed (CTRL down, nothing
-                        ; else pressed yet), 2 spoiled (CTRL used as modifier)
+                        ; else pressed yet), 2 spoiled (CTRL used as modifier).
+                        ; Also spoiled by consumers of a held CTRL (the dir
+                        ; overlay's pager arms paging on it) so the release
+                        ; doesn't emit a TAB into their key-wait.
 RPTCNT    = $028C       ; key-repeat countdown: initial delay, then rate
 KBD_LAYOUT = $02CB      ; 0 = default/US tables, 1 = Swedish (keytab_se). Set by
                         ; the `font` command in tandem with the charset; cleared

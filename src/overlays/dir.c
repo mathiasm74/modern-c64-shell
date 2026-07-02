@@ -301,8 +301,14 @@ static unsigned char paginate(unsigned char *lines, unsigned char *paged)
 {
     unsigned char c;
 
-    if (SHFLAG & 0x04)                  /* CTRL pressed at any time arms paging */
+    if (SHFLAG & 0x04) {                /* CTRL pressed at any time arms paging */
         *paged = 1;
+        /* The pager just consumed CTRL as a modifier: spoil the CTRL-tap
+           (irq.s ctrl_tap, $028E: 2 = spoiled) so releasing the key doesn't
+           emit TAB -- which the "-- more --" key-wait would otherwise read
+           as press-any-key and flip the page immediately. */
+        *(volatile unsigned char *)0x028E = 2;
+    }
     if (++(*lines) < PAGE_LINES)
         return 0;
     *lines = 0;
