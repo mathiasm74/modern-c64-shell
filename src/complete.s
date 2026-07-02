@@ -13,6 +13,12 @@
 ; the candidates ls-style and reprints the prompt + line. First word, no
 ; match, or invalid cache: return silently.
 ;
+; Names with spaces (v0.1.70): the parser groups "quoted" tokens, so the word
+; under the cursor is quote-aware -- inside an open quote it may contain
+; spaces. Completing a spaced name from an unquoted word auto-inserts the
+; opening quote; a unique completion of a quoted word appends the closing
+; quote (an unclosed quote parses fine, so it's cosmetic-but-nice).
+;
 ; ABI with readline (shell.c): the caller stores the line length and cursor
 ; position at CW_LEN/CW_POS, JSRs _tab_complete, and reads them back. The
 ; line buffer itself is shell.c's `line` (imported). CHROUT ($FFD2)
@@ -48,6 +54,10 @@ kins    = $02B8                 ; characters to insert
 colf    = $02B9                 ; lister column toggle
 idx     = $02BA                 ; entries left to walk
 jtmp    = $02BB                 ; scratch counter
+quoted  = $02BD                 ; cursor is inside an open "quote"
+needq   = $02BE                 ; insertion must open a quote (spaced name)
+extraq  = $02BF                 ; insertion appends a closing quote
+                                ; ($02BC is iec.s's PROBEF)
 
 .segment "CODE"
 
@@ -161,17 +171,32 @@ _tab_complete:
         bne @on
 @out0:  rts
 @on:
-        ; word start: scan back from the cursor to the previous space
-        lda CW_POS
+        ; word start: forward scan tracking quotes -- inside an open quote
+        ; the word starts after the quote and may CONTAIN spaces; otherwise
+        ; it starts after the last space
+        lda #0
         sta ws
-@back:  ldx ws
-        beq @havews             ; hit the line start (ws = 0)
-        lda _line-1,x
-        cmp #' '
-        beq @havews
-        dec ws
-        bne @back
-@havews:
+        sta quoted
+        ldx #0
+@scan:  cpx CW_POS
+        beq @scanned
+        lda _line,x
+        cmp #'"'
+        bne @notq
+        lda quoted
+        eor #1
+        sta quoted
+        beq @mark               ; toggled either way; word starts after it
+        bne @mark
+@notq:  cmp #' '
+        bne @step
+        lda quoted
+        bne @step               ; a quoted space belongs to the word
+@mark:  stx ws
+        inc ws                  ; ws = delimiter index + 1
+@step:  inx
+        bne @scan               ; CW_POS <= LINEMAX, X can't wrap
+@scanned:
         lda ws
         beq @out1               ; first word = the command name: inert
         lda CW_POS
@@ -242,60 +267,97 @@ _tab_complete:
 @extend:
         sta kins
 
-        ; clip the insertion to LINEMAX
+        ; does the insertion need quoting? unquoted word + a space anywhere
+        ; in the known part of the name (the first cl chars of the match)
+        lda #0
+        sta needq
+        sta extraq
+        lda quoted
+        bne @qdone
+        lda cl
+        sta jtmp
+        ldy #1
+@qscan: lda (firstm),y
+        cmp #' '
+        beq @setq
+        iny
+        dec jtmp
+        bne @qscan
+        beq @qdone
+@setq:  lda #1
+        sta needq
+@qdone:
+        ; a unique completion of a (now-)quoted word gets the closing quote
+        lda match_n
+        cmp #1
+        bne @room
+        lda quoted
+        ora needq
+        beq @room
+        lda #1
+        sta extraq
+@room:  ; everything must fit: len + kins + needq + extraq <= LINEMAX
         lda CW_LEN
         clc
         adc kins
+        adc needq
+        adc extraq
         cmp #LINEMAX+1
-        bcc @fits
-        lda #LINEMAX
-        sec
-        sbc CW_LEN
-        sta kins
-        bne @fits
-        rts                     ; line already full
-@fits:
+        bcc @fit2
+        rts                     ; no room: leave the line untouched
+@fit2:
+        ; ws now becomes the INSERTION POINT (the word start is done with):
+        ; the cursor position, +1 if we open a quote first
         lda CW_POS
-        cmp CW_LEN
-        bne @mid
-
-        ; append at the end: store + echo (CHROUT wraps rows, so a wrapped
-        ; line keeps working -- same as typing)
-        ldy wl
-        iny                     ; Y = cache offset of the first missing char
+        sta ws
+        lda needq
+        beq @noopen
+        ; open the quote: shift line[CW_POS..len) right one and drop '"' in
+        ; at the word start... no -- at the WORD start, which shifts the
+        ; typed word too: shift line[wordstart..len) right one. The word
+        ; start is CW_POS - wl.
+        lda CW_POS
+        sec
+        sbc wl
+        sta jtmp                ; word start index
         ldx CW_LEN
-@app:   lda (firstm),y
-        jsr fold_down
+@qshift:
+        cpx jtmp
+        beq @qput
+        lda _line-1,x
         sta _line,x
-        jsr CHROUT
-        inx
-        iny
-        dec kins
-        bne @app
-        stx CW_LEN
-        stx CW_POS
-        rts
-
-@mid:   ; shift the tail right by kins (from the end, downward)
+        dex
+        bne @qshift             ; word start >= 1 (ws >= 1), X can't wrap
+@qput:  lda #'"'
+        ldx jtmp
+        sta _line,x
+        inc CW_LEN
+        inc ws                  ; insertion point moved right with the shift
+@noopen:
+        ; shift the tail right by kins+extraq (from the end, downward)
+        lda kins
+        clc
+        adc extraq
+        sta jtmp                ; K = total chars going in at the cursor
         ldx CW_LEN
-@shift: cpx CW_POS
+@shift: cpx ws
         beq @insert
         lda _line-1,x
         pha
         txa
         clc
-        adc kins
+        adc jtmp
         tay
         pla
         sta _line-1,y
         dex
-        bne @shift              ; CW_POS >= 1 here (ws >= 1), so X can't wrap
+        bne @shift              ; ws >= 1, so X can't wrap
 @insert:
         lda kins
         sta jtmp
         ldy wl
         iny
-        ldx CW_POS
+        ldx ws
 @ins:   lda (firstm),y
         jsr fold_down
         sta _line,x
@@ -303,21 +365,29 @@ _tab_complete:
         iny
         dec jtmp
         bne @ins
-        lda CW_LEN
+        lda extraq
+        beq @grown
+        lda #'"'
+        sta _line,x
+@grown: lda CW_LEN
         clc
         adc kins
+        adc extraq
         sta CW_LEN
-        ; redraw, the same sequence as shell.c's redraw_line: back to the
-        ; line start, reprint, trailing wipe cell, park after the insertion
+        ; repaint: back to the line start from the ORIGINAL cursor, reprint,
+        ; wipe cell, park after the insertion (shell.c redraw_line sequence);
+        ; the plain append fast path isn't worth its bytes now that quoting
+        ; can touch cells left of the cursor
         lda CW_POS
         jsr put_lefts
         jsr put_line
         lda #' '
         jsr CHROUT
-        lda CW_POS
+        lda ws                  ; insertion point ...
         clc
         adc kins
-        sta CW_POS              ; the cursor's new logical position
+        adc extraq
+        sta CW_POS              ; ... plus what went in = the new cursor
         lda CW_LEN
         clc
         adc #1                  ; we're at len+1 (after the wipe cell)

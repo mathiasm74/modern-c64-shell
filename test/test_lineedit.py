@@ -227,3 +227,33 @@ def test_tab_completes_past_first_cache_page(v):
     _send(v, _ch("zz ze") + [TAB])
     v.assert_screen_contains("zz zebrafile")
     _send(v, [CLEAR])
+
+
+def test_tab_autoquotes_spaced_names(v):
+    # Completing a spaced name from an unquoted word inserts the opening
+    # quote at the word start (the parser needs it) and, on a unique match,
+    # the closing quote too: 'zz my' -> 'zz "my game"'.
+    _seed_tab_cache(v, ["my game", "doc"])
+    _send(v, _ch("zz my") + [TAB])
+    v.assert_screen_contains('zz "my game"')
+    _send(v, [CLEAR])
+
+
+def test_tab_completes_inside_quotes(v):
+    # A word begun with a quote may contain spaces and completes in place:
+    # 'zz "my ga' -> 'zz "my game"' (closing quote added on the unique match).
+    _seed_tab_cache(v, ["my game", "my demo"])
+    _send(v, _ch('zz "my ga') + [TAB])
+    v.assert_screen_contains('zz "my game"')
+    _send(v, [CLEAR])
+
+
+def test_tab_quoted_common_prefix(v):
+    # Several spaced matches: extends to the common prefix (quote opened,
+    # no closing quote yet since the match is still ambiguous).
+    _seed_tab_cache(v, ["my game", "my demo"])
+    _send(v, _ch("zz m") + [TAB])
+    v.assert_screen_contains('zz "my ')
+    assert 'zz "my game"' not in v.screen_text(), \
+        "ambiguous match should stop at the common prefix"
+    _send(v, [CLEAR])

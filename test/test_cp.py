@@ -61,3 +61,45 @@ def test_cp_copies_file(v):
             break
     assert v.read_memory(0x2000, 3) == [0x43, 0x36, 0x34], \
         "copied payload is not 'C64...' (cp corrupted the data)"
+
+
+def _typeln(v, text):
+    """Type a whole line through the 10-byte buffer, chunked, then RETURN."""
+    codes = _ch(text) + [CR]
+    while codes:
+        chunk, codes = codes[:8], codes[8:]
+        v.write_memory(0x0277, chunk)
+        v.write_byte(0x00C6, len(chunk))
+        v.run_for(0.4)
+
+
+def _await(v, needle, tries=20):
+    for _ in range(tries):
+        if needle in v.screen_text():
+            return True
+        v.run_for(0.6)
+    return False
+
+
+def test_spaced_filenames_end_to_end(v):
+    # Quoted names survive the parser and the IEC layer end to end: copy prog
+    # to a spaced name, load it back quoted AND via the /wedge (which quotes
+    # the whole rest of the line itself), then scratch it.
+    v.run_for(0.3)
+    seed_files(v)
+    _typeln(v, 'cp prog "my prog"')
+    assert _await(v, "copied"), "cp to a spaced name failed: %r" % v.screen_text()
+    _typeln(v, 'clear')
+    _typeln(v, 'load "my prog"')
+    assert _await(v, "loaded $2000"), \
+        "quoted load of the spaced file failed: %r" % v.screen_text()
+    _typeln(v, 'clear')
+    _typeln(v, '/my prog')
+    assert _await(v, "loaded $2000"), \
+        "/wedge load of the spaced file failed: %r" % v.screen_text()
+    seed_files(v)
+    _typeln(v, 'rm "my prog"')
+    _typeln(v, 'clear')
+    _typeln(v, 'load "my prog"')
+    assert _await(v, "not found"), \
+        "spaced file was not scratched: %r" % v.screen_text()

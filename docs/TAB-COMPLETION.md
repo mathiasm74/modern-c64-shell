@@ -58,8 +58,12 @@ Rejected alternatives, for the record:
   whose word is already the full common prefix lists immediately.
 - **No matches / empty cache / first word**: nothing happens. No beep, no
   message.
-- **Names with spaces** complete literally; the parser splits on spaces, so
-  such names were already unusable as single args. Documented limitation.
+- **Names with spaces** (since v0.1.70): the word under the cursor is
+  quote-aware -- inside an open `"` it may contain spaces. Completing a
+  spaced name from an unquoted word auto-inserts the opening quote at the
+  word start (the parser groups quoted tokens; an unclosed quote parses to
+  end of line), and a unique completion appends the closing quote. The
+  ambiguous case extends to the common prefix inside the opened quote.
 
 ## Cache
 
@@ -112,7 +116,7 @@ Rejected alternatives, for the record:
 
 - Path-segment completion (`games/pi<TAB>` — needs reading a non-CWD
   directory).
-- Quoting/escaping names with spaces.
+- Escaping embedded quotes in names (a name containing `"` itself).
 - Command-name completion (deliberately removed earlier; unchanged).
 - Per-command argument awareness: TAB completes filenames for any argument of
   any command (`poke 53<TAB>` just finds no match — harmless).

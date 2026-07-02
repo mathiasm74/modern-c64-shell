@@ -325,7 +325,10 @@ static unsigned char readline(void)
 /* JiffyDOS-style wedge aliases: rewrite the line in place before parsing.
  * "@" = status, "@$" = dir, "@#<n>" = device <n>, "/x" and "%x" = load x
  * (load always honors the file's embedded address, so / and % coincide),
- * "^x" = run x. Runs after history_add, so recall shows what was typed.
+ * "^x" = run x. The load/run forms quote the whole rest of the line, so
+ * "/my game" loads MY GAME (JiffyDOS whole-rest semantics; the parser
+ * accepts an unclosed quote). Runs after history_add, so recall shows what
+ * was typed.
  * Anything else after "@" (raw DOS commands, "<-file" save) has no matching
  * command and is left alone -> "Command not found". */
 static void wedge_rewrite(void)
@@ -337,10 +340,13 @@ static void wedge_rewrite(void)
     switch (line[0]) {
     case '/':
     case '%':
-        cmd = "load ";
+        /* the whole rest of the line is the filename (JiffyDOS semantics);
+           quote it so names with spaces survive the tokenizer -- the parser
+           accepts an unclosed quote, so no trailing quote is needed */
+        cmd = line[1] ? "load \"" : "load ";
         break;
     case '^':
-        cmd = "run ";
+        cmd = line[1] ? "run \"" : "run ";
         break;
     case '@':
         if (line[1] == 0) {
