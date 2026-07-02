@@ -215,3 +215,15 @@ def test_tab_completes_mid_line(v):
     _send(v, _ch("zz pix") + [LEFT] + [TAB])
     v.assert_screen_contains("zz piratesx")
     _send(v, [CLEAR])
+
+
+def test_tab_completes_past_first_cache_page(v):
+    # A networked (Meatloaf) folder can list 40+ names -- more than one page
+    # of packed entries. The cache spans $CE00-$CFFF and the walk offsets are
+    # 16-bit; completing the LAST of 30 long names exercises entries past
+    # offset 256, which the original one-page cache silently dropped.
+    names = ["entry%02dxxxxx" % i for i in range(29)] + ["zebrafile"]
+    _seed_tab_cache(v, names)
+    _send(v, _ch("zz ze") + [TAB])
+    v.assert_screen_contains("zz zebrafile")
+    _send(v, [CLEAR])

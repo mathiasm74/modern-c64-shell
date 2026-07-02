@@ -434,6 +434,7 @@ static void launch_stock_program(unsigned char mode)
     unsigned char *cart = (unsigned char *)0x8000;
     unsigned int i, n;
 
+    TAB_CACHE_OK = 0;               /* the stub lands on the cache's 2nd page */
     *(unsigned char *)0xCFF8 = (unsigned char)(load_start & 0xff);
     *(unsigned char *)0xCFF9 = (unsigned char)(load_start >> 8);
     *(unsigned char *)0xCFFA = (unsigned char)(load_end & 0xff);

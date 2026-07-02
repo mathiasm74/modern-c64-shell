@@ -199,7 +199,7 @@ static void print_prompt(void)
 #define TC_OK    (*(unsigned char *)0xCE00)
 #define TC_COUNT (*(unsigned char *)0xCE01)
 #define TC_BASE  ((unsigned char *)0xCE02)
-#define TC_MAX   253                    /* packed bytes that fit the page */
+#define TC_MAX   509                    /* two pages, $CE02-$CFFF */
 
 /* The typed line is lowercase by convention; cache names are uppercase. */
 static unsigned char fold_up(unsigned char c)
@@ -212,7 +212,7 @@ static unsigned char fold_down(unsigned char c)
 }
 
 /* Does cache entry at `off` match the typed word (line[ws..ws+wl))? */
-static unsigned char tc_match(unsigned char off, unsigned char ws, unsigned char wl)
+static unsigned char tc_match(unsigned int off, unsigned char ws, unsigned char wl)
 {
     unsigned char j;
 
@@ -227,8 +227,9 @@ static unsigned char tc_match(unsigned char off, unsigned char ws, unsigned char
 static void complete_word(unsigned char *plen, unsigned char *ppos)
 {
     unsigned char len = *plen, pos = *ppos;
-    unsigned char ws, wl, i, j, k, n, c, off;
-    unsigned char matches = 0, first = 0, cl = 0, col = 0;
+    unsigned char ws, wl, i, j, k, n, c;
+    unsigned int off, first = 0;
+    unsigned char matches = 0, cl = 0, col = 0;
 
     if (!TC_OK || TC_COUNT == 0)
         return;

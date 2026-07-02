@@ -51,13 +51,21 @@ Rejected alternatives, for the record:
 
 ## Cache
 
-- **(as-built) Fixed page $CE00** -- free since the single-page overlay loader
-  was removed -- NOT the BSS array the draft proposed: BSS ends at ~$C618 and
-  the 2KB RAM segment is shared with the cc65 C stack, so an 800+ byte array
-  did not fit. Layout: `$CE00` valid flag, `$CE01` count, `$CE02..` packed
-  `[len][chars]` entries (uppercase PETSCII, as the drive sent them), capped
-  at 253 packed bytes (~25 typical names). A fixed page also removes the
-  mailbox pointer the draft needed.
+- **(as-built) Fixed pages $CE00-$CFFF** -- free since the single-page
+  overlay loader was removed -- NOT the BSS array the draft proposed: BSS
+  ends at ~$C618 and the 2KB RAM segment is shared with the cc65 C stack, so
+  an 800+ byte array did not fit. Layout: `$CE00` valid flag, `$CE01` count,
+  `$CE02..` packed `[len][chars]` entries, capped at 509 packed bytes (~40
+  names -- one page proved too small the first time a networked Meatloaf
+  folder listed 40 files). Walk offsets are 16-bit on both sides. $CF00
+  doubles as the run stub's home: launch_stock_program invalidates the cache
+  before planting it (the machine is leaving the shell anyway).
+- **Names are stored case-folded to uppercase** (the dir overlay runs each
+  byte through its `up()`, which also folds lowercase PETSCII $C1-$DA):
+  networked Meatloaf folders list lowercase-PETSCII names that the matcher's
+  typed-input fold alone would never hit. Completion inserts the lowercase
+  ASCII form -- the same thing the user would type by hand; truly
+  case-sensitive URL segments remain the IEC layer's known limitation.
 - **Fill**: `cache_name()` in the dir overlay parses each drawn line's quoted
   name (skipping the header/disk title, the BLOCKS FREE trailer, and Meatloaf
   NFO pseudo-entries) and appends it; `cache_done()` sets the valid flag only

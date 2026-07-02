@@ -43,9 +43,12 @@ static char dir_buf[42];
 #define TC_OK    (*(unsigned char *)0xCE00)
 #define TC_COUNT (*(unsigned char *)0xCE01)
 #define TC_BASE  ((unsigned char *)0xCE02)
-#define TC_MAX   253
+#define TC_MAX   509                    /* two pages, $CE02-$CFFF: ~40 names.
+                                           $CF00 doubles as the run stub's
+                                           home; launch_stock_program clears
+                                           the valid flag before planting. */
 
-static unsigned char tc_w;              /* write offset into TC_BASE */
+static unsigned int tc_w;               /* write offset into TC_BASE */
 
 static char up(char c);                 /* defined below (type-token folding) */
 
@@ -79,11 +82,15 @@ static void cache_name(void)
     if (up(dir_buf[t]) == 'N' && up(dir_buf[t + 1]) == 'F')
         return;                         /* NFO info line, not a file */
     n = q2 - i;
-    if (n == 0 || n > 16 || (unsigned char)(tc_w + n) >= TC_MAX)
+    if (n == 0 || n > 16 || tc_w + n >= TC_MAX || TC_COUNT == 255)
         return;
     TC_BASE[tc_w++] = n;
     while (i < q2)
-        TC_BASE[tc_w++] = dir_buf[i++];
+        TC_BASE[tc_w++] = (unsigned char)up(dir_buf[i++]);
+                                        /* fold to uppercase: network folders
+                                           (Meatloaf) list lowercase-PETSCII
+                                           ($C1-$DA) names that the matcher's
+                                           typed-input fold would never hit */
     ++TC_COUNT;
 }
 
