@@ -60,6 +60,24 @@ copy_src = $AB
 copy_dst = $AD
 copy_len = $AF
 
+; --- Boot-trace stamps (debug): build with `make TRACE=1` -----------------
+; Border-color stamps around each swap stage; $D020 shows even while the
+; display is blanked, so on hardware the lingering color names the stage
+; eating the boot time:
+;   red       = trampoline entered (device reset pending)
+;   orange    = device reset done, entering command-respond mode
+;   yellow    = command-respond mode entered, LOAD_SLOT pending
+;   green     = stock set loaded into the RAM slot, switching + handoff
+;   blue      = switch sent, stock KERNAL booting (lingers through its init,
+;               until stock CINT repaints the border light blue)
+;   light red = LOAD_SLOT failed -> booting back into the shell
+.macro TRACE_BORDER color
+.ifdef RBCP_BOOT_TRACE
+        lda #color
+        sta $D020
+.endif
+.endmacro
+
 ; =========================================================================
 ; ROM-side stub. Runs from KERNAL ROM ($Exxx); copies the RBCP code into RAM
 ; and hands off. Never returns.
@@ -173,12 +191,30 @@ rbcp_trampoline:
                                         ; is our command page in CR mode -- a
                                         ; spurious read there sends a stray
                                         ; command. Stay masked from now on.
+        TRACE_BORDER $02                ; red: entered, device reset pending
         jsr rbcp_reset                  ; reset the device's protocol state
+        TRACE_BORDER $08                ; orange: reset done
         jsr rbcp_cmd_enter_cmd_resp     ; enter command-respond mode (the
                                         ; "knock" + handshake)
+        TRACE_BORDER $07                ; yellow: in CR mode, loading
+        lda #3
+        sta copy_len                    ; LOAD_SLOT attempts (zp scratch, free
+                                        ; once the ROM->RAM copy has run)
+@load:
         lda #RBCP_STOCK_RAM_SLOT
         ldx #RBCP_STOCK_FLASH_SLOT
-        jsr rbcp_cmd_load_slot          ; flash slot -> RAM slot
+        jsr rbcp_cmd_load_slot          ; flash slot -> RAM slot (long poll)
+        bcc @loaded
+        dec copy_len
+        bne @load
+        ; LOAD_SLOT persistently failed: do NOT switch to a half-copied slot
+        ; (that serves garbage -> black screen). Skip the swap instead --
+        ; (FFFC) still points into the shell ROM, so this boots back to the
+        ; shell prompt; landing there instead of BASIC IS the failure signal.
+        TRACE_BORDER $0A                ; light red: load failed, no swap
+        jmp ($FFFC)
+@loaded:
+        TRACE_BORDER $05                ; green: slot loaded, switching
 
         ; --- Swedish keyboard under stock ROMs --------------------------------
         ; If font B (Swedish) is active, patch the stock KERNAL's keyboard decode
@@ -223,6 +259,8 @@ rbcp_trampoline:
         jsr rbcp_cmd_switch_and_exit    ; activate it; the device begins
                                         ; serving the new slot immediately
                                         ; (no polling per the protocol spec)
+        TRACE_BORDER $06                ; blue: handoff -- lingers through the
+                                        ; whole stock KERNAL/BASIC cold start
 
         ; Hand off through the stock-KERNAL reset vector. For a cart this lands
         ; in the CBM80 cold-start (stock reset's JMP ($8000)); with no cart it

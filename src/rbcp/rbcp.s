@@ -423,7 +423,10 @@ rbcp_cmd_get_flash_slot_info_all:
     lda #0
     jmp rbcp_issue_cmd
 
-; rbcp_cmd_load_slot: A = RAM slot, X = flash slot.
+; rbcp_cmd_load_slot: A = RAM slot, X = flash slot. Uses the LONG progress
+; poll: the device is copying a whole multi-ROM set from flash to RAM, which
+; can outlive the short (~26ms) budget; the long poll (~0.7s) exits as soon
+; as the device reports COMPLETE, so a fast device pays nothing.
 .export rbcp_cmd_load_slot
 rbcp_cmd_load_slot:
     sta rbcp_arg0
@@ -433,7 +436,7 @@ rbcp_cmd_load_slot:
     lda #RBCP_CMD_LOAD_SLOT
     sta rbcp_zp_1
     lda #2
-    jmp rbcp_issue_cmd
+    jmp rbcp_issue_cmd_long_poll
 
 ; rbcp_cmd_slot_poke: write ONE byte into a RAM slot at a 24-bit offset. Caller
 ; sets rbcp_arg0 = byte, rbcp_arg1/2/3 = offset lo/mid/hi, rbcp_arg4 = RAM slot.

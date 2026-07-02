@@ -172,6 +172,12 @@ reset:
         lda CIA1_PRB            ; read rows; C= is bit 5
         and #$20
         bne @boot_shell         ; C= not held -> boot the shell
+        ; Page-2 RAM is uninitialized this early (the normal boot path clears
+        ; KBD_LAYOUT much later): a random $01 here would make the swap
+        ; trampoline Swedish-patch the stock keyboard tables on ~1/256 cold
+        ; boots. Force US before handing off.
+        lda #$00
+        sta KBD_LAYOUT
         jmp _rbcp_launch_stock  ; C= held -> stock ROMs (never returns)
 @boot_shell:
 
@@ -398,7 +404,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.1.54", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.1.55", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:

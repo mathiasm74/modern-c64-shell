@@ -31,6 +31,13 @@ VERSION := $(shell grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' src/reset.s | head -1)
 ONEROM_STOCK_OUT := $(BUILD)/c64-tardis-dos-$(VERSION)-for-onerom-$(ONEROM_BOARD).bin
 
 ASFLAGS   := --cpu 6502
+# `make TRACE=1` builds the RBCP swap with border-color stage stamps
+# (RBCP_BOOT_TRACE, src/rbcp/launch.s) for timing the stock-ROM handoff on
+# hardware -- $D020 shows even while the display is blanked. Debug builds
+# only; make does not track the flag, so `make clean` when toggling it.
+ifeq ($(TRACE),1)
+ASFLAGS += -D RBCP_BOOT_TRACE
+endif
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
 CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
