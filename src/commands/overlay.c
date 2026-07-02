@@ -31,7 +31,10 @@ unsigned char overlay_fetch_multi(void);
    (stage 5 = wrong magic). These are transient, so retry the whole fetch a few
    times -- each attempt restarts with rbcp_reset, which flushes device state.
    The protocol's own retries only cover the command-token poll, not these. */
-#define OVL_RETRIES 5
+#define OVL_RETRIES 2   /* was 5, papering over badline-corrupted RBCP frames;
+                           the vic guard root-caused that (v0.1.56) and hardware
+                           confirms fetches no longer fail, so 2 is a safety net
+                           and a genuine failure reports ~2.5x sooner */
 
 /* This module lives in the default CODE/RODATA (the BASIC ROM half), NOT in
    CODE2: the retry loops pushed CODE2 into the reserved $FE00 RBCP back-channel

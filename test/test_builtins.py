@@ -53,7 +53,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("Tardis DOS v0.1.65")
+    v.assert_screen_contains("Tardis DOS v0.1.66")
 
 
 # `basic` (formerly `exit`, before that `runstock`) swaps the One ROM to the
@@ -78,3 +78,27 @@ def test_leading_whitespace_still_dispatches(v):
     v.assert_screen_contains("Tardis DOS v")
     assert "Command not found" not in v.screen_text(), \
         "leading space should not turn a known command into an unknown one"
+
+
+def test_about_paginates_before_the_title_scrolls(v):
+    # The about pager pauses on the cursor ROW (TBLX), not a CR count: the
+    # reflowed text fills 40-col lines that auto-wrap with no CR, and the old
+    # CR counter missed those rows -- the "-- more --" came a row late and the
+    # title scrolled off the top. At the first pause, row 0 must still hold
+    # the first text line and "-- more --" must sit on row 22.
+    from lib.overlays import seed_about
+    seed_about(v)
+    # inject directly: the module's _type helpers re-seed the FILES overlay,
+    # which would clobber the about seed at $8800
+    v.write_memory(0x0277, [ord(c) for c in "about"] + [0x0D])
+    v.write_byte(0x00C6, 6)
+    for _ in range(30):
+        if "-- more --" in v.screen_text():
+            break
+        v.run_for(0.3)
+    rows = v.screen_rows()
+    assert "-- more --" in rows[22], \
+        "more-prompt not on row 22: %r" % v.screen_text()
+    assert rows[0].strip(), "the first text line scrolled off the top"
+    v.inject_keys("q")          # any key continues; leave the pager running out
+    v.run_for(1.0)

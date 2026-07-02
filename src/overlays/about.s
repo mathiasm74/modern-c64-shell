@@ -15,9 +15,14 @@ CHROUT = $FFD2
 GETIN  = $FFE4
 CLEAR  = $93
 CR     = $0D
-PAGE_LINES = 22                 ; lines per screen before "-- more --"
+PAGE_LINES = 22                 ; screen row where "-- more --" lands
+TBLX   = $D6                    ; KERNAL cursor row -- the page position. The
+                                ; pager reads it instead of counting CRs: the
+                                ; reflowed text fills 40-col lines that auto-
+                                ; wrap with NO CR (the v0.1.50 trick), and a
+                                ; CR count missed those rows, pausing late and
+                                ; scrolling the title off the top.
 PTR     = $FB                   ; free scratch zp (reset's string ptrs, idle now)
-LINECNT = $FD
 
 .import __OVL_START__, __OVL_LAST__
 
@@ -29,8 +34,6 @@ LINECNT = $FD
 start:
         lda #CLEAR              ; fresh screen so the text starts at the top
         jsr CHROUT
-        lda #0
-        sta LINECNT
         lda #<msg
         sta PTR
         lda #>msg
@@ -40,13 +43,11 @@ start:
         lda (PTR),y
         beq @done
         jsr CHROUT
-        cmp #CR
-        bne @adv               ; only line ends (CR) advance the page counter
-        inc LINECNT
-        lda LINECNT
-        cmp #PAGE_LINES
-        bcc @adv               ; still room on this screen
-        jsr advance_ptr        ; step past this CR, then peek what follows
+        lda TBLX               ; cursor row: advances on a CR *or* a 40-col
+        cmp #PAGE_LINES        ; auto-wrap, so full-width lines count too --
+        bcc @adv               ; and it only moves at a line boundary, so the
+                               ; pause never lands mid-line
+        jsr advance_ptr        ; step past this char, then peek what follows
         ldy #0
         lda (PTR),y
         beq @done              ; text ends here -> no pointless "-- more --"
@@ -79,10 +80,8 @@ more:
         cmp #0
         beq @wait              ; no key yet
         lda #CLEAR
-        jsr CHROUT
-        lda #0
-        sta LINECNT
-        rts
+        jsr CHROUT             ; clear homes the cursor: TBLX = 0, so the
+        rts                    ; page position resets itself
 moremsg:
         .byte "-- more --", 0
 

@@ -30,6 +30,11 @@ def seed_dir(v):
     _seed(v, "dir.bin", 0x8800)
 
 
+def seed_about(v):
+    """about overlay (self-contained asm pager) -> $8800."""
+    _seed(v, "about.bin", 0x8800)
+
+
 def seed_edit(v):
     """edit overlay -> $8800."""
     _seed(v, "edit.bin", 0x8800)
