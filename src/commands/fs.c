@@ -355,6 +355,22 @@ static unsigned int fload_program(const char *name)
         chrout(CR);
         return 0;
     }
+    /* The Epyx stream can't tell a dead bus from EOF: the C64's pull-ups
+       float CLK ("ready") and DATA high, every sampled byte reads $00 -- and
+       $00 as a block length IS the protocol's terminator, so a cable yanked
+       mid-transfer produces an instant, clean-looking (truncated) EOF. Verify
+       the drive is still on the bus before trusting the result: TALK its
+       command channel (milliseconds when present; chkin's ATN wait times out
+       fast and releases the bus itself when not, so skip clrchn then).       */
+    iec_set_fa(default_device);
+    iec_set_sa(15);
+    iec_chkin();
+    if (iec_status() & ST_NODEV) {
+        puts_raw("fast load failed");
+        chrout(CR);
+        return 0;
+    }
+    iec_clrchn();
     return load_end - 1;
 }
 

@@ -75,7 +75,12 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 @settle:
         dey
         bne @settle                     ; ~80 us
-        lda #$0A                        ; ~10 * 1.4s, covers a slow file lookup
+        lda #$04                        ; ~4 * 1.4s: rides out a slow (network)
+                                        ; file lookup without stalling ~14s on a
+                                        ; drive wedged holding CLK low. A yanked
+                                        ; cable never gets here (pull-ups fake a
+                                        ; clean EOF; fload_program's presence
+                                        ; probe catches that case instead).
         sta RETRY                       ; count in memory, NOT X: wait_clk_hi
 @hi:                                    ; exits its timeout with X=0, so an X
         jsr wait_clk_hi                 ; ladder wrapped to $FF on every retry
