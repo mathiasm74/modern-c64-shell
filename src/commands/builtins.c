@@ -41,7 +41,7 @@ void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Brand + version; kept in step with the boot banner's version (reset.s). */
-    puts_raw("Tardis DOS v0.1.64");
+    puts_raw("Tardis DOS v0.1.65");
     chrout(CR);
 }
 #pragma rodata-name (pop)
@@ -50,5 +50,6 @@ void cmd_ver(int argc, char *argv[])
 void cmd_reset(int argc, char *argv[])
 {
     (void)argc; (void)argv;
+    settings_save();            /* checkpoint history first (no-op w/o NV) */
     soft_reset();               /* reboot the shell; does not return */
 }

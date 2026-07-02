@@ -202,6 +202,10 @@ void tab_complete(void);
 #define CW_LEN (*(unsigned char *)0x02B1)
 #define CW_POS (*(unsigned char *)0x02B2)
 
+/* Defined below with the NV machinery; readline's idle poll drives it. */
+static void settings_idle(void);
+static unsigned char idle_armed;
+
 /* Read one line into `line`, echoing as we go; return its length.
  *
  * RETURN submits. Cursor left/right move within the line; printable characters
@@ -219,8 +223,11 @@ static unsigned char readline(void)
 
     for (;;) {
         c = getin();
-        if (c == 0)
-            continue;                   /* nothing waiting */
+        if (c == 0) {
+            settings_idle();            /* ~5s quiet + unsaved -> checkpoint */
+            continue;
+        }
+        idle_armed = 0;                 /* typing re-arms the idle timer */
         if (c == CR) {
             chrout(CR);
             line[len] = 0;
@@ -499,6 +506,36 @@ void cmd_nv(int argc, char *argv[])
     puts_raw(", due in ");
     chrout('0' + (unsigned char)(SAVE_EVERY - cmds_since_save));
     chrout(CR);
+}
+
+/* Idle checkpoint: the every-8-commands cadence loses short sessions (the
+   user rarely types 8 commands before powering off), so once the prompt has
+   sat idle ~5s with unsaved commands, save. One write per typing pause keeps
+   flash wear far below save-per-command; typing re-arms the timer, so the
+   RBCP session (~100ms) never lands mid-keystroke -- and the IRQ keyboard
+   scan buffers anything typed during it regardless. Jiffies from the 24-bit
+   IRQ clock at $A0 (TIME+1/TIME+2 = high/low of the 16-bit tail; the
+   non-atomic two-byte read is at worst one tick off, which is harmless). */
+#define JIFFY16() ((unsigned int)(*(volatile unsigned char *)0xA1) << 8 \
+                   | *(volatile unsigned char *)0xA2)
+#define IDLE_SAVE_TICKS 300     /* ~5s at 60 ticks/s */
+static unsigned int idle_start;     /* idle_armed lives above readline */
+
+static void settings_idle(void)
+{
+    if (!nv_ok || cmds_since_save == 0) {
+        idle_armed = 0;
+        return;
+    }
+    if (!idle_armed) {
+        idle_start = JIFFY16();
+        idle_armed = 1;
+        return;
+    }
+    if ((unsigned int)(JIFFY16() - idle_start) >= IDLE_SAVE_TICKS) {
+        idle_armed = 0;
+        settings_save();        /* resets cmds_since_save -> won't refire */
+    }
 }
 
 /* After a non-empty command: save now if a color changed, else once per
