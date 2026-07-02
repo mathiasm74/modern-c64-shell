@@ -73,3 +73,22 @@ def test_device_names_present_device(v):
     _type(v, "device 8", clear=True)        # no name given -> recalls "fd"
     assert _wait_for(v, "device 8 fd"), \
         "device 8 did not recall the remembered name\n%s" % v.screen_text()
+
+
+def test_device_fetches_identity_for_prompt(v):
+    # `device 8` with no name and nothing remembered asks the drive who it is
+    # ("UI" + read channel 15) and shows that in the prompt INSTEAD of the
+    # unit number: VICE's 1541 answers "73,CBM DOS V2.6 1541,00,00", which
+    # maps to the short name "1541". (Named or remembered units skip the
+    # fetch; this test runs -- alphabetically -- before the naming tests, so
+    # unit 8's slot is still empty.)
+    seed_files(v)                           # device is a files-overlay command
+    _type(v, "device 8", clear=True)
+    assert _wait_for(v, "device 8 1541"), \
+        "device did not fetch/print the drive identity: %r" % v.screen_text()
+    prompt = None
+    for r in v.screen_rows():
+        if r.strip().endswith(">"):
+            prompt = r.strip()
+    assert prompt == "1541>", \
+        "prompt should show the identity instead of the number, got %r" % prompt

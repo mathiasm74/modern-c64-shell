@@ -24,10 +24,10 @@ ovl = os.path.join(build, "overlays")
 # consecutively from page 0; each set is one 8KB chip = 32 pages.
 LAYOUT = [
     ("files.bin", "FILES", "FIRST_PAGE", 2),
-    ("dir.bin",   "DIR",   "FIRST_PAGE", 2),
+    ("about.bin", "ABOUT", "FIRST_PAGE", 2),
+    ("picker.bin", "PICKER", "FIRST_PAGE", 2),
     ("edit.bin",  "EDIT",  "FIRST_PAGE", 3),
-    ("about.bin", "ABOUT", "FIRST_PAGE", 3),
-    ("picker.bin", "PICKER", "FIRST_PAGE", 3),
+    ("dir.bin",   "DIR",   "FIRST_PAGE", 3),
 ]
 
 

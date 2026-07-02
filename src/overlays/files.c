@@ -510,6 +510,47 @@ static void do_help(void)
 #define DNADDR         (*(char **)0x02F6)            /* &device_name[0][0] */
 #define DEVNAME_STRIDE 11                            /* DEVNAME_MAX(10) + 1 */
 
+/* Fetch the drive's identity and derive a short prompt name into slot[].
+   "UI" (warm reset, the quick one) re-arms the DOS power-on status whose
+   73-message text names the drive: "CBM DOS V2.6 1541", "MEATLOAF CBM
+   20260629.19", "SD2IEC V1.x", ... A known model number wins ("1541" etc.),
+   else the first word, lowercased, capped at DEVNAME_MAX. slot[] is left
+   empty on any failure -- the prompt then falls back to the unit number. */
+static void fetch_identity(unsigned char unit, char *slot)
+{
+    char buf[64];
+    char *f[4];
+    char *t;
+    unsigned char i;
+
+    slot[0] = 0;
+    k_setnam("ui", 2);                  /* OPEN of ch15 executes the command */
+    k_setlfs(unit, 15);
+    k_open();
+    if (!(STREG & ST_NODEV) && read_status(buf, f) >= 0) {
+        t = f[1];
+        for (i = 0; t[i]; ++i) {        /* a model number anywhere in the text */
+            if (t[i] == '1' && t[i + 1] == '5' && t[i + 3] == '1'
+                && (t[i + 2] == '4' || t[i + 2] == '7' || t[i + 2] == '8')) {
+                slot[0] = '1';
+                slot[1] = '5';
+                slot[2] = t[i + 2];
+                slot[3] = '1';
+                slot[4] = 0;
+                break;
+            }
+        }
+        if (!slot[0] && t[0]) {         /* else: first word, lowercased */
+            for (i = 0; i < 10 && t[i] && t[i] != ' '; ++i)
+                slot[i] = (t[i] >= 'A' && t[i] <= 'Z')
+                        ? (char)(t[i] + 32) : t[i];
+            slot[i] = 0;
+        }
+    }
+    k_close();
+    k_clrchn();
+}
+
 static unsigned char device_present_ov(unsigned char dev)
 {
     unsigned char absent;
@@ -547,6 +588,11 @@ static void do_device(void)
         for (i = 0; i < A2L && i < 10; ++i)
             slot[i] = A2[i];
         slot[i] = 0;
+    } else if (dev >= 8 && dev <= 15) {
+        slot = DNADDR + (dev - 8) * DEVNAME_STRIDE;
+        if (!slot[0])                   /* nothing given or remembered: ask the
+                                           drive who it is (shown in the prompt) */
+            fetch_identity(dev, slot);
     }
     puts_raw("device ");
     put_uint(dev);

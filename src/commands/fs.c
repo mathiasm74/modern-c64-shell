@@ -72,11 +72,13 @@ void print_device_prefix(void)
 {
     const char *name = current_device_name();
 
-    print_uint(default_device);
-    if (name[0]) {
-        chrout(' ');
+    if (name[0]) {                      /* a user-given or fetched identity name
+                                           replaces the unit number (pwd still
+                                           shows the number for orientation) */
         puts_raw(name);
+        return;
     }
+    print_uint(default_device);
 }
 
 /* --- load progress: a row of dots ------------------------------------------
