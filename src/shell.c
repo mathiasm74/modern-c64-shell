@@ -41,8 +41,6 @@
    over three columns) reads naturally down each column. Lives in ROM and
    spends its bytes in the KERNAL ROM (RODATA2) to leave room in the smaller
    BASIC ROM, where the rest of the cc65 output sits. */
-void cmd_nv(int argc, char *argv[]);    /* defined below (NV diagnostics) */
-
 #pragma rodata-name (push, "RODATA2")
 const struct command shell_commands[] = {
     { "about",  cmd_about  },
@@ -65,7 +63,6 @@ const struct command shell_commands[] = {
     { "load",   cmd_load   },
     { "ls",     cmd_ls     },
     { "mv",     cmd_mv     },
-    { "nv",     cmd_nv     },
     { "peek",   cmd_peek   },
     { "poke",   cmd_poke   },
     { "pwd",    cmd_pwd    },
@@ -430,13 +427,6 @@ static unsigned char nv_ok;             /* NV present + writable (cached at boot
 static unsigned char col_shadow[3];     /* last-saved border/bg/text */
 static unsigned char cmds_since_save;
 
-/* Diagnostics for the `nv` command (persistence is hardware-only, so these
-   are how a failing save/restore gets pinpointed on the real machine). */
-static unsigned char nv_boot_rc = 0xFF; /* nv_read result at boot ($FF = no NV) */
-static unsigned char nv_boot_blob;      /* 1 = magic+version matched at boot */
-static unsigned char nv_boot_hist;      /* history entries replayed at boot */
-static unsigned char nv_save_rc = 0xFF; /* last nv_write result ($FF = never) */
-static unsigned char nv_save_len;       /* last blob length written */
 
 void settings_load(void)
 {
@@ -449,11 +439,9 @@ void settings_load(void)
     NV_MB_LEN = NV_BLOB_MAX;
     NV_MB_LO = (unsigned char)(unsigned int)&nv_blob[0];
     NV_MB_HI = (unsigned char)((unsigned int)&nv_blob[0] >> 8);
-    nv_boot_rc = nv_read();
-    if (nv_boot_rc == 0 &&
+    if (nv_read() == 0 &&
         nv_blob[0] == NV_MAGIC0 && nv_blob[1] == NV_MAGIC1 &&
         nv_blob[2] == NV_VERSION) {
-        nv_boot_blob = 1;
         VIC_BORDER = nv_blob[3] & 0x0F;
         VIC_BG     = nv_blob[4] & 0x0F;
         COLOR_REG  = nv_blob[5] & 0x0F;
@@ -469,10 +457,8 @@ void settings_load(void)
             while (j < k && i < NV_BLOB_MAX && j < LINEMAX)
                 tmp[j++] = nv_blob[i++];
             tmp[j] = 0;
-            if (j > 0) {
+            if (j > 0)
                 history_add(tmp);
-                ++nv_boot_hist;
-            }
         }
     }
     /* shadow = the live colors, so the first command can't false-trigger a save */
@@ -516,49 +502,12 @@ void settings_save(void)
     NV_MB_LEN = i;                       /* used length only */
     NV_MB_LO = (unsigned char)(unsigned int)&nv_blob[0];
     NV_MB_HI = (unsigned char)((unsigned int)&nv_blob[0] >> 8);
-    nv_save_rc = nv_write();             /* best effort, but recorded: `nv`
-                                            reports rc/len so a silently
-                                            failing save is diagnosable */
-    nv_save_len = i;
+    nv_write();                          /* best effort; a failed write just
+                                            means this checkpoint is lost */
     col_shadow[0] = nv_blob[3];
     col_shadow[1] = nv_blob[4];
     col_shadow[2] = nv_blob[5];
     cmds_since_save = 0;
-}
-
-/* nv - NV persistence diagnostics (settings/history survive reboots via the
-   One ROM's NV flash; all of it is invisible in VICE, so this command is how
-   a failing save or restore gets pinpointed on hardware). `nv save` forces a
-   save right now and reports the result. */
-void cmd_nv(int argc, char *argv[])
-{
-    if (!nv_ok) {
-        puts_raw("nv: not available");
-        chrout(CR);
-        return;
-    }
-    if (argc > 1 && argv[1][0] == 's') {
-        settings_save();
-        puts_raw("save rc ");
-        chrout('0' + nv_save_rc);
-        chrout(CR);
-        return;
-    }
-    puts_raw("boot: read rc ");
-    chrout('0' + nv_boot_rc);
-    puts_raw(nv_boot_blob ? ", blob ok, hist " : ", blob bad, hist ");
-    chrout('0' + nv_boot_hist);
-    chrout(CR);
-    puts_raw("save: rc ");
-    if (nv_save_rc == 0xFF)
-        puts_raw("- (never)");
-    else
-        chrout('0' + nv_save_rc);
-    puts_raw(", len ");
-    print_uint(nv_save_len);
-    puts_raw(", due in ");
-    chrout('0' + (unsigned char)(SAVE_EVERY - cmds_since_save));
-    chrout(CR);
 }
 
 /* Idle checkpoint: the every-8-commands cadence loses short sessions (the
