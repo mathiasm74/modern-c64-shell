@@ -59,6 +59,24 @@ make onerom-flash ONEROM_BOARD=fire-28-a   # for a different board
 
 This builds the *stock-fallback* firmware: Tardis DOS plus genuine C64 ROMs as a second bank (so `run`/`basic`/cartridges can hand off to the real ROMs). The stock ROMs are user-supplied and live in a gitignored `stock-roms/` directory.
 
+### Installing the OneROM in the C64
+
+Remove all three original ROMs — KERNAL, BASIC, and the character ROM. The
+OneROM goes in the **KERNAL socket**, and serves the other two chips as well:
+run a wire from each of the OneROM's **x-pins** to the chip-select pin of the
+BASIC and character ROM positions — **pin 20** on each, i.e. the 5th pin down
+from the top on the right-hand side.
+
+<p align="center">
+  <img src="media/onerom-install.jpg" alt="OneROM Fire 24 installed in the KERNAL socket, chip-select wires running to the BASIC and character ROM positions" width="420">
+</p>
+
+Dupont pins pushed into the empty sockets' pin-20 holes work fine. For a more
+robust install, remove the BASIC and char-ROM sockets and solder the
+chip-select wires in directly — that's what's pictured above: the wires are
+soldered at the ROM end and connect to the OneROM's x-pins with Dupont
+connectors, so the board itself stays removable.
+
 ## Building from source
 
 **Toolchain** (all must be on `PATH` — verify with `make check-tools`):
