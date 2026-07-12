@@ -48,7 +48,7 @@ There's **no BASIC interpreter** — that's a deliberate trade to reclaim 8 KB o
 
 ## Getting it onto your C64
 
-**Download a build:** grab the firmware image from the [Releases](../../releases) page (e.g. `c64-tardis-dos-vX.Y.ZZ-for-onerom-fire-24-e.bin`) and flash it to your OneROM with the `onerom` CLI.
+**Download a build:** grab the firmware image from the [Releases](../../releases) page (e.g. `c64-tardis-dos-vX.Y.ZZ-for-onerom-fire-24-e.bin`) and flash it to your OneROM with the `onerom` CLI. If you use the OneROM **web tool** instead, upload the `.bin` through the **"Local Image" tab** — not "Custom Image" (the release file is a complete, ready-built firmware image, not a ROM to wrap).
 
 **Or build & flash from source** (with the OneROM connected over USB):
 
