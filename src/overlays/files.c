@@ -564,6 +564,13 @@ static void fetch_identity(unsigned char unit, char *slot)
         derive_short_name(f[1], slot);
 }
 
+/* IEC probe mode (iec.s PROBEF): bounds the bus waits so a unit in an
+   unknown state (absent, still powering up, sick: acks the LISTEN but stalls
+   the EOI ack) times out instead of hanging the shell. Only for the
+   probe/identify paths -- never normal transfers (a busy drive would be
+   falsely dropped). */
+#define PROBE (*(unsigned char *)0x02BC)
+
 static unsigned char device_present_ov(unsigned char dev)
 {
     unsigned char absent;
@@ -579,7 +586,7 @@ static unsigned char device_present_ov(unsigned char dev)
 
 static void do_device(void)
 {
-    unsigned char dev, i;
+    unsigned char dev, i, present;
     char *slot;
 
     if (A1L == 0) {
@@ -588,7 +595,10 @@ static void do_device(void)
         return;
     }
     dev = (unsigned char)parse_num16(A1, A1L);
-    if (!device_present_ov(dev)) {      /* don't switch to a unit that isn't there */
+    PROBE = 1;                          /* bounded: a sick drive can't hang us */
+    present = device_present_ov(dev);
+    PROBE = 0;
+    if (!present) {                     /* don't switch to a unit that isn't there */
         puts_raw("device ");
         put_uint(dev);
         puts_raw(" not present");
@@ -603,9 +613,13 @@ static void do_device(void)
         slot[i] = 0;
     } else if (dev >= 8 && dev <= 15) {
         slot = DNADDR + (dev - 8) * DEVNAME_STRIDE;
-        if (!slot[0])                   /* nothing given or remembered: ask the
+        if (!slot[0]) {                 /* nothing given or remembered: ask the
                                            drive who it is (shown in the prompt) */
+            PROBE = 1;                  /* bounded; a timeout just leaves the
+                                           slot empty (prompt shows the number) */
             fetch_identity(dev, slot);
+            PROBE = 0;
+        }
     }
     puts_raw("device ");
     put_uint(dev);
@@ -618,11 +632,6 @@ static void do_device(void)
     }
     crlf();
 }
-
-/* IEC probe mode (iec.s PROBEF): bounds the ready-wait so a unit in an
-   unknown state (absent, still powering up, wedged) times out instead of
-   hanging the scan. Only for the scan paths below. */
-#define PROBE (*(unsigned char *)0x02BC)
 
 /* devices (cmd 18): scan units 8-15, print each present unit's identity
    ("UI" + channel-15 73-message), and fill any empty name slot on the way
