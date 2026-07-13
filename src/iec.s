@@ -268,8 +268,33 @@ hs_ack:
         lda DD00
         and #B_ATN              ; are we asserting ATN? -> bounded wait
         bne wait_data_lo
+        lda PROBEF
+        bne wait_data_lo        ; probe mode: bounded (unknown-state unit)
 @spin:  bit DD00
         bmi @spin               ; wait for DATA low = the listener's byte ack
+        clc
+        rts
+
+; iec_sendbyte's EOI-handshake waits. Unbounded normally (same reasoning as
+; hs_ack's data path: a confirmed listener may stall mid-transfer without
+; being gone) -- but bounded in probe mode. These two loops were the
+; probe-mode hole that let a half-booted Meatloaf wedge the boot-time
+; identity fetch: it ack'd the LISTEN (DATA low at @wlisten), released DATA
+; at hs_ready, then never serviced the EOI ack of the command's final byte,
+; and the boot spun here forever with the banner up.
+hs_eoiack:                      ; wait for DATA low = listener's EOI ack
+        lda PROBEF
+        bne wait_data_lo        ; probe mode: bounded
+@spin:  bit DD00
+        bmi @spin
+        clc
+        rts
+
+hs_eoirel:                      ; wait for DATA high = listener releases
+        lda PROBEF
+        bne wait_data_hi        ; probe mode: bounded
+@spin:  bit DD00
+        bpl @spin
         clc
         rts
 
@@ -348,12 +373,10 @@ iec_sendbyte:
 
         bit EOIBUF
         bpl @noeoi              ; EOI flag clear -> no EOI handshake
-@eoiack:
-        bit DD00
-        bmi @eoiack             ; wait for DATA low (listener's EOI acknowledge)
-@eoirel:
-        bit DD00
-        bpl @eoirel             ; wait for DATA high (listener releases)
+        jsr hs_eoiack           ; DATA low: the listener's EOI acknowledge
+        bcs @nodev              ; (bounded in probe mode)
+        jsr hs_eoirel           ; DATA high: the listener releases
+        bcs @nodev
 @noeoi:
         jsr clk_lo              ; pull CLK low to start clocking bits
         lda #$08
