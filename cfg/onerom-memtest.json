@@ -4,16 +4,6 @@
   "description": "Standalone diagnostic ROM. KERNAL bank holds the test code (boots, prints test results to screen); BASIC bank holds known sentinel bytes at fixed addresses. No shell, no plugins beyond system/usb. Use to bisect BASIC vs KERNAL bus problems on real hardware -- expected vs actual values are shown for bank, walking-1, walking-0, KERNAL sanity, and a 1000-read transient scan.",
   "chip_sets": [
     {
-      "type": "single",
-      "chips": [
-        {
-          "file": "https://images.onerom.org/plugins/system/usb/v0.1.2/plugin.bin",
-          "type": "system_plugin",
-          "size_handling": "pad"
-        }
-      ]
-    },
-    {
       "type": "multi",
       "chips": [
         { "file": "build/memtest-kernal.bin", "type": "Chip2364", "cs1": "active_low" },

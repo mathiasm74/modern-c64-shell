@@ -4,20 +4,10 @@
   "description": "Stock C64 BASIC and KERNAL only. None of our shell, no host-control plugin -- just the system/usb plugin so the device is manageable. Used as a hardware baseline: if this boots cleanly to the C64 READY prompt but our shell builds show artifacts, the issue is in our ROM image. If even this shows artifacts, the issue is on the OneROM side (wiring, signal integrity, etc.).",
   "chip_sets": [
     {
-      "type": "single",
-      "chips": [
-        {
-          "file": "https://images.onerom.org/plugins/system/usb/v0.1.2/plugin.bin",
-          "type": "system_plugin",
-          "size_handling": "pad"
-        }
-      ]
-    },
-    {
       "type": "multi",
       "chips": [
-        { "file": "stock-roms/kernal.901227-03.bin", "type": "Chip2364", "cs1": "active_low" },
-        { "file": "stock-roms/basic.901226-01.bin",  "type": "Chip2364", "cs1": "active_low" }
+        { "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/kernal.901227-03.bin", "type": "Chip2364", "cs1": "active_low" },
+        { "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",  "type": "Chip2364", "cs1": "active_low" }
       ]
     }
   ]

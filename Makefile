@@ -22,6 +22,27 @@ ONEROM       := tools/onerom
 ONEROM_BOARD ?= fire-24-e
 ONEROM_CFG   := cfg/onerom.json
 
+# PINNED firmware version. Firmware 0.7.x + host-control plugin 0.1.2 changed
+# the RBCP RAM-slot model (a RAM slot is now exactly one ROM region, and
+# LOAD_SLOT refuses a flash image whose size doesn't match the slot), which
+# breaks our overlay fetches: every LOAD_SLOT of a single-8KB overlay set
+# fails (stage 2) while the 3-ROM shell set is being served. Bisected
+# 2026-09-03 (0.6.14 works, 0.7.1 fails). Unpin once the shell's RBCP side
+# is migrated to the 0.7.x slot semantics.
+ONEROM_FW_VERSION ?= 0.6.14
+
+# Plugins are supplied on the CLI (not pinned in the config JSONs), so every
+# build picks the latest plugin versions compatible with the firmware the CLI
+# targets -- required from firmware v0.7.0 on, which needs newer plugins than
+# the old pinned URLs (per Piers, the One ROM author). The CLI places the
+# system plugin in slot 0 and the user plugin in slot 1, shifting the config's
+# ROM sets up to slots 2+ -- byte-identical to the old plugins-in-config layout,
+# so RBCP's absolute slot numbers (stock=3, font B=6) are preserved. host-control
+# (a user plugin) is only on the stock-fallback firmware that drives the RBCP
+# bank swap; the plain/pure-stock/memtest images take just usb.
+ONEROM_PLUGINS       := --plugin usb --plugin host-control
+ONEROM_PLUGINS_USB   := --plugin usb
+
 # Version string, taken from the single source of truth (the boot banner in
 # reset.s, e.g. "v0.1.48") so the flashable artifact name can't go stale.
 VERSION := $(shell grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' src/reset.s | head -1)
@@ -290,25 +311,23 @@ test: all $(OVERLAY_SETS)
 # selects on a shared address bus, matching the C64's KERNAL and BASIC /CS).
 # Output: build/onerom-<board>.bin. Flash with `make onerom-flash`.
 onerom: $(BASIC) $(KERNAL)
-	$(ONEROM) firmware build --board $(ONEROM_BOARD) --config-file $(ONEROM_CFG) \
+	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
+		--config-file $(ONEROM_CFG) $(ONEROM_PLUGINS_USB) \
 		--out $(BUILD)/onerom-$(ONEROM_BOARD).bin
 	@echo "  onerom fw : $$(wc -c < $(BUILD)/onerom-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
 
 # Build a One ROM firmware that pairs our shell with stock C64 BASIC+KERNAL
 # as a second bank, plus the user/host-control plugin so the shell can drive a
-# runtime bank-switch via the RBCP protocol (see src/rbcp/). Requires stock
-# C64 ROMs at stock-roms/ -- they're freely distributable from Commodore's
-# released sources, drop them in yourself (gitignored).
-ONEROM_STOCK_BASIC  := stock-roms/basic.901226-01.bin
-ONEROM_STOCK_KERNAL := stock-roms/kernal.901227-03.bin
-# Character ROMs served on a 3rd chip-select (the char socket /CS); the `font`
-# command live-switches between them. User-supplied (gitignored).
-ONEROM_CHARSET_A    := stock-roms/c64-charset.bin
-ONEROM_CHARSET_B    := stock-roms/c64-swedish4.bin
-ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL) $(ONEROM_CHARSET_A) $(ONEROM_CHARSET_B) $(OVERLAY_SETS)
+# runtime bank-switch via the RBCP protocol (see src/rbcp/). All stock ROMs --
+# the C64 BASIC/KERNAL and both character ROMs (US charset 901225-01 for font A,
+# Swedish/German charset 325018-02 for font B) -- are fetched from Zimmers by
+# URL (see the `file` entries in cfg/onerom-stock.json), so no local ROM copies
+# are needed; the onerom CLI downloads and caches them. Only our own build
+# outputs remain local prerequisites.
+ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS)
 onerom-stock: $(ONEROM_STOCK_DEPS)
-	$(ONEROM) firmware build --board $(ONEROM_BOARD) \
-		--config-file cfg/onerom-stock.json \
+	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
+		--config-file cfg/onerom-stock.json $(ONEROM_PLUGINS) \
 		--out $(ONEROM_STOCK_OUT)
 	@echo "  onerom fw : $$(wc -c < $(ONEROM_STOCK_OUT)) bytes -> $(ONEROM_STOCK_OUT)"
 
@@ -321,7 +340,8 @@ onerom-stock: $(ONEROM_STOCK_DEPS)
 # the connected device; pass ONEROM_SERIAL='5*' (wildcard) to pick one of many.
 onerom-flash: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
-		--board $(ONEROM_BOARD) --config-file cfg/onerom-stock.json \
+		--board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
+		--config-file cfg/onerom-stock.json $(ONEROM_PLUGINS) \
 		--out $(ONEROM_STOCK_OUT)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 
@@ -331,9 +351,10 @@ onerom-flash: $(ONEROM_STOCK_DEPS)
 # fine?" -- if this boots cleanly to the stock C64 READY prompt but our
 # shell flashes show artifacts, the issue is in our ROM image; if even
 # this shows artifacts, the issue is OneROM-side.
-onerom-pure-stock-flash: $(ONEROM_STOCK_BASIC) $(ONEROM_STOCK_KERNAL)
+onerom-pure-stock-flash:
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
-		--board $(ONEROM_BOARD) --config-file cfg/onerom-pure-stock.json \
+		--board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
+		--config-file cfg/onerom-pure-stock.json $(ONEROM_PLUGINS_USB) \
 		--out $(BUILD)/onerom-pure-stock-$(ONEROM_BOARD).bin
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 
@@ -358,14 +379,15 @@ $(MEMTEST_KERNAL): $(MEMTEST_OBJ) cfg/memtest.cfg | $(BUILD)
 $(MEMTEST_BASIC): $(MEMTEST_KERNAL) ;
 
 memtest: $(MEMTEST_KERNAL) $(MEMTEST_BASIC)
-	$(ONEROM) firmware build --board $(ONEROM_BOARD) \
-		--config-file cfg/onerom-memtest.json \
+	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
+		--config-file cfg/onerom-memtest.json $(ONEROM_PLUGINS_USB) \
 		--out $(BUILD)/onerom-memtest-$(ONEROM_BOARD).bin
 	@echo "  onerom-memtest fw : $$(wc -c < $(BUILD)/onerom-memtest-$(ONEROM_BOARD).bin) bytes ($(ONEROM_BOARD))"
 
 memtest-flash: $(MEMTEST_KERNAL) $(MEMTEST_BASIC)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
-		--board $(ONEROM_BOARD) --config-file cfg/onerom-memtest.json \
+		--board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
+		--config-file cfg/onerom-memtest.json $(ONEROM_PLUGINS_USB) \
 		--out $(BUILD)/onerom-memtest-$(ONEROM_BOARD).bin
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 

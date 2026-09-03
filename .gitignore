@@ -14,7 +14,9 @@ files.zip
 .claude/scheduled_tasks.lock
 
 # onerom CLI: a ~10MB Mach-O universal binary, kept untracked (see CLAUDE.md).
+# (.bak copies = previous-version rollbacks, e.g. tools/onerom.v0.1.11.bak)
 tools/onerom
+tools/onerom.*.bak
 
 # Throwaway disk copies the mutating disk tests (rm/cp) work on
 test/data/_scratch*.d64
