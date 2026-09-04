@@ -48,6 +48,8 @@ VIC_CTRL2  = $D016              ; CSEL, XSCROLL, MCM
 VIC_MEMPTR = $D018              ; screen / charset base
 VIC_BORDER = $D020
 VIC_BGCOL  = $D021
+VIC_IRQ    = $D019              ; interrupt latch (write 1s to acknowledge)
+VIC_IRQ_ENA = $D01A             ; interrupt enable (0 = all VIC IRQs off)
 
 ; --- CIA #1 ($DC00) and CIA #2 ($DD00) -----------------------------------
 CIA1_PRA   = $DC00              ; keyboard column select (output)
@@ -152,6 +154,19 @@ reset:
         sta CIA2_CRA            ; stop CIA #2 timers A/B
         sta CIA2_CRB
 
+        ; --- VIC: disable and clear its interrupt sources ----------------
+        ; Our IRQ handler only acks CIA #1 ($DC0D). On a bare C64 the VIC IRQ
+        ; is off at power-on, so this was never needed -- but the C128 uses
+        ; VIC-IIe raster IRQs in 128 mode, and after GO64 that raster IRQ
+        ; carries into C64 mode still enabled. Unacknowledged, it re-fires the
+        ; instant the handler returns and livelocks the machine (banner draws,
+        ; but main() is starved -> no prompt). Disable all VIC IRQ sources and
+        ; clear any pending latch. Harmless on a real C64.
+        lda #$00
+        sta VIC_IRQ_ENA         ; $D01A: no VIC interrupt sources
+        lda #$0F
+        sta VIC_IRQ             ; $D019: write 1s to clear any pending latch
+
         ; --- Normalize the served RAM slot (C= boot-menu bootloader) -----
         ; With r107sl's c64-bootloader as flash set 0, boot goes: bootloader
         ; LOAD_SLOTs the chosen set into RAM slot 1 and serves THAT -- so we
@@ -165,6 +180,12 @@ reset:
         ; Must run BEFORE anything that stages into RAM slot 1 -- both the
         ; C= stock-swap just below and the cartridge check's
         ; _rbcp_launch_stock stage there, which must not be the served slot.
+        ; TARGET_C128 (defined for the C128 C64-mode build): skip ALL boot-time
+        ; RBCP. That firmware has no host-control plugin, and the RBCP command
+        ; page ($E000) is the served KERNAL in C64 mode, so a handshake here
+        ; hangs before the display is even enabled (white screen + border). The
+        ; boot-menu/font/NV features it drives are meaningless there anyway.
+.ifndef TARGET_C128
         lda #1
         sta FONT_MB_LOAD                ; LOAD_SLOT first, then SWITCH_SLOT
         sta FONT_MB_FLASH               ; flash set 1 = shell + font A charset
@@ -172,6 +193,7 @@ reset:
         sta FONT_MB_RAM                 ; into (and switch to) RAM slot 0
         jsr _font_apply
         sei                             ; the trampoline CLIs; stay masked
+.endif
 
         ; --- Boot ROM selector: hold C= for the boot menu ---------------
         ; Read the Commodore (C=) key directly (keyboard column PA7, row PB5)
@@ -206,7 +228,10 @@ reset:
         ; boots. Force US before handing off.
         lda #$00
         sta KBD_LAYOUT
+.ifndef TARGET_C128
         jmp _rbcp_launch_bootmenu ; C= held -> boot menu (never returns)
+.endif
+        ; TARGET_C128: C= just falls through to the shell (no RBCP menu swap)
 @boot_shell:
 
         ; --- VIC-II memory layout, bank, and colors ----------------------
@@ -312,7 +337,9 @@ reset:
         ; flash the default blue first. Read just the 6-byte header (magic +
         ; version + 3 colors) from NV here and apply it pre-display. No-op (the
         ; RBCP probe fails fast) on VICE / a non-One-ROM build.
-        jsr restore_colors
+.ifndef TARGET_C128
+        jsr restore_colors      ; (skipped for TARGET_C128 -- see above)
+.endif
 
         ; --- Enable the display now that the screen is ready -------------
         lda #CTRL1_ON
@@ -356,7 +383,9 @@ reset:
         lda $8008
         cmp #$30
         bne @no_cart
+.ifndef TARGET_C128
         jmp _rbcp_launch_stock  ; cartridge present -> stock ROMs (never returns)
+.endif
 @no_cart:
 
         ; --- Hand control to the C shell ---------------------------------

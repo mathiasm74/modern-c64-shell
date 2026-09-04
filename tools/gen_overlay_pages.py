@@ -23,13 +23,29 @@ ovl = os.path.join(build, "overlays")
 
 # (bin, MACRO, "PAGE"|"FIRST_PAGE", flash_set). Overlays sharing a set pack
 # consecutively from page 0; each set is one 8KB chip = 32 pages.
-LAYOUT = [
-    ("files.bin", "FILES", "FIRST_PAGE", 4),
-    ("edit.bin",  "EDIT",  "FIRST_PAGE", 5),
-    ("dir.bin",   "DIR",   "FIRST_PAGE", 5),
-    ("about.bin", "ABOUT", "FIRST_PAGE", 7),
-    ("picker.bin", "PICKER", "FIRST_PAGE", 7),
-]
+#
+# The flash_set numbers are the loadable-ROM-set indices in the firmware config
+# (plugins excluded). They differ per target because the firmware layout does:
+#  - C64 (onerom-stock.json): 0 bootloader, 1 shell, 2 stock, 3 JiffyDOS,
+#    4 overlays_a, 5 overlays_b, 6 shell-fontB, 7 overlays_c.
+#  - C128 (OVL_C128=1): the U32 firmware is just the served 16KB image (set 0)
+#    plus the three overlay sets, so overlays_a/b/c = sets 1/2/3.
+if os.environ.get("OVL_C128"):
+    LAYOUT = [
+        ("files.bin", "FILES", "FIRST_PAGE", 1),
+        ("edit.bin",  "EDIT",  "FIRST_PAGE", 2),
+        ("dir.bin",   "DIR",   "FIRST_PAGE", 2),
+        ("about.bin", "ABOUT", "FIRST_PAGE", 3),
+        ("picker.bin", "PICKER", "FIRST_PAGE", 3),
+    ]
+else:
+    LAYOUT = [
+        ("files.bin", "FILES", "FIRST_PAGE", 4),
+        ("edit.bin",  "EDIT",  "FIRST_PAGE", 5),
+        ("dir.bin",   "DIR",   "FIRST_PAGE", 5),
+        ("about.bin", "ABOUT", "FIRST_PAGE", 7),
+        ("picker.bin", "PICKER", "FIRST_PAGE", 7),
+    ]
 
 
 def pages(name):

@@ -61,9 +61,21 @@ ASFLAGS   := --cpu 6502
 ifeq ($(TRACE),1)
 ASFLAGS += -D RBCP_BOOT_TRACE
 endif
+# Optional extra ca65/cc65 defines. `make EXTRA_DEFS='-D NO_RBCP'` builds the
+# C128 C64-mode variant, which strips ALL boot/idle One ROM RBCP (reset.s +
+# shell.c) -- that firmware has no host-control plugin, so a handshake hangs the
+# boot before the display comes up. make doesn't track the flag, so `make clean`
+# when toggling it.
+EXTRA_DEFS ?=
+ASFLAGS += $(EXTRA_DEFS)
+# The C128 build's overlay flash sets have different loadable-set indices than
+# the C64 firmware (see tools/gen_overlay_pages.py), so tell the generator.
+ifneq (,$(findstring TARGET_C128,$(EXTRA_DEFS)))
+export OVL_C128 := 1
+endif
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
-CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD)
+CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD) $(EXTRA_DEFS)
 
 # cc65 data dir (asminc, include, cfg, target libs). The tools normally find this
 # relative to their own binary, but a cc65 built from source and installed to a
@@ -111,7 +123,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash memtest memtest-flash sizes
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash onerom-c128 onerom-c128-flash memtest memtest-flash sizes
 
 all: $(ROM16K)
 
@@ -372,6 +384,26 @@ onerom-pure-stock-flash:
 		--config-file cfg/onerom-pure-stock.json $(ONEROM_PLUGINS_USB) \
 		--out $(BUILD)/onerom-pure-stock-$(ONEROM_BOARD).bin
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
+
+# Commodore 128 firmware: Tardis DOS as the C64-mode ROM in socket U32, so GO64
+# gives the shell while C128 mode stays stock. Built by tools/build_c128.sh
+# (compiles the shell with -D TARGET_C128 and packs the 16KB U32 image + the
+# overlay flash sets for the One ROM). See the "C128 / C64-mode port" section in
+# CLAUDE.md. Shares the build/ tree with the C64 build, so the script cleans
+# first -- and you must `make clean` before a subsequent plain C64 build.
+C128_BOARD ?= fire-28-c
+onerom-c128:
+	ONEROM_BOARD=$(C128_BOARD) tools/build_c128.sh
+
+# Flash it. NO `onerom reboot` here on purpose: on the C128 the One ROM needs a
+# true power-off cold boot to serve cleanly (a reboot-into-running left it dark),
+# so the flash just programs and tells you to power-cycle by hand.
+onerom-c128-flash: onerom-c128
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
+		--firmware $(BUILD)/tardis-c128-$(C128_BOARD).bin
+	@echo ""
+	@echo "Flashed. COLD-BOOT the One ROM: power the C128 fully off AND briefly"
+	@echo "unplug the One ROM's USB, then reconnect and power on. Then type GO64."
 
 # ----------------------------------------------------------------------------
 # Hardware bus diagnostic ROM (`make memtest` / `make memtest-flash`).

@@ -45,7 +45,14 @@
 ; 7 overlays_c (cfg/onerom-stock.json). We load stock into a RAM slot the
 ; device isn't serving and switch to it. (Serving is RAM slot 0 for font A
 ; after the boot normalize in reset.s, or slot 2 for font B -- never 1.)
+.ifdef TARGET_C128
+; C128 firmware layout: 0 Tardis (served), 1/2/3 overlays_a/b/c, 4 stock C64.
+; `basic`/`run` swap to that stock C64 set (the 325182-style [BASIC][KERNAL]
+; 16KB image) so C64 mode becomes real stock C64 BASIC.
+RBCP_STOCK_FLASH_SLOT = 4
+.else
 RBCP_STOCK_FLASH_SLOT = 2
+.endif
 RBCP_STOCK_RAM_SLOT   = 1
 
 ; The C= boot-menu bootloader is loadable ROM set 0 (r107sl's c64-bootloader,

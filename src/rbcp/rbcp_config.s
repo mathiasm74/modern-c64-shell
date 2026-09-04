@@ -8,8 +8,22 @@
 ; ROM device. In VICE (no plugin model), these reads are inert.
 
 ; --- Where the ROM lives ---------------------------------------------------
+; TARGET_C128: on the Commodore 128, Tardis is the C64-mode ROM in socket U32 --
+; a single 16KB image [BASIC $A000 | KERNAL $E000], the two 8KB halves served to
+; two NON-contiguous CPU windows. The One ROM plugin serves the whole 16KB and
+; watches image offset 0 (= $A000, the BASIC half) for the command-page knock by
+; default. So on the C128 the command page must be $A0 (image offset 0), NOT $E0
+; (which is image offset $2000 -- the plugin would never hear the knock there).
+; The back-channel can still sit at $FE00 (KERNAL half), but its ROM-relative
+; offset is $3E00 (KERNAL is the 2nd 8KB of the image), which the linear formula
+; below (built for a contiguous ROM) can't derive -- so it's set explicitly.
+.ifdef TARGET_C128
+CONFIG_ROM_BASE_HI = $A0                ; image offset 0 = $A000 (BASIC half)
+CONFIG_ROM_SIZE    = $4000              ; 16KB (the whole U32 image)
+.else
 CONFIG_ROM_BASE_HI = $E0                ; KERNAL ROM at $E000
 CONFIG_ROM_SIZE    = $2000              ; 8KB
+.endif
 
 ; --- Command page ----------------------------------------------------------
 ; Must be the page the plugin watches at power-on, or the very first knock is
@@ -24,7 +38,11 @@ CONFIG_ROM_SIZE    = $2000              ; 8KB
 ; sequence appears, so our normal boot (which fetches instructions through
 ; $E000) is unaffected -- and is in fact already running with the plugin
 ; watching rel-0 by default.
+.ifdef TARGET_C128
+CONFIG_RBCP_CMD_PAGE     = $A0          ; knock at $A000 (image offset 0 = rel-0)
+.else
 CONFIG_RBCP_CMD_PAGE     = $E0
+.endif
 CONFIG_RBCP_CMD_PAGE_REL = CONFIG_RBCP_CMD_PAGE - CONFIG_ROM_BASE_HI
 
 ; --- Back-channel region ($FE00..$FF0F) ------------------------------------
@@ -48,7 +66,13 @@ CONFIG_RBCP_CMD_PAGE_REL = CONFIG_RBCP_CMD_PAGE - CONFIG_ROM_BASE_HI
 ; window. The $FF fill is also safe for the progress/status header bytes
 ; (offsets +$04/+$05), which must not equal $BB/$CC or their inverses $44/$33.
 CONFIG_RBCP_BCH_BASE  = $FE00
+.ifdef TARGET_C128
+; $FE00 is image offset $3E00 (KERNAL is the 2nd 8KB of the 16KB image), not the
+; $5E00 the contiguous-ROM formula would give from base $A000.
+CONFIG_RBCP_BCH_START = $3E00
+.else
 CONFIG_RBCP_BCH_START = (CONFIG_RBCP_BCH_BASE - (CONFIG_ROM_BASE_HI * $100))
+.endif
 CONFIG_RBCP_BCH_SIZE  = 272
 
 ; --- Sentinel values for progress / status -------------------------------

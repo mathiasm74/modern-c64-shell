@@ -565,8 +565,14 @@ void main(void)
     struct command_line cl;
     unsigned char n;
 
+#ifndef TARGET_C128
+    /* TARGET_C128 (C128 C64-mode build): both of these do One ROM RBCP -- settings_load
+       probes NV, identify_boot_device fetches the files overlay -- which hang on a
+       firmware with no host-control plugin. Skipped there; the prompt then shows the
+       bare device number and colors stay at the reset.s defaults. */
     settings_load();                     /* apply saved colors + replay history */
     identify_boot_device();              /* "8: meatloaf>" from the first prompt */
+#endif
     for (;;) {
         print_prompt();
         n = readline();

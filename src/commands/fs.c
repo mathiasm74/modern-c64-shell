@@ -459,7 +459,9 @@ static void launch_stock_program(unsigned char mode)
 void cmd_run(int argc, char *argv[])
 {
     /* `run <name>` fast-loads the named PRG (the Epyx path, like `fload`) and
-       then runs it. Bare `run` re-runs whatever was loaded last. */
+       then runs it. Bare `run` re-runs whatever was loaded last. On the C128
+       the stock swap targets flash set 4 (the stock C64 set the firmware
+       carries), so this works the same as on the C64. */
     if (argc > 1) {
         if (fload_program(argv[1]) == 0)
             return;                     /* load failed: already reported */
