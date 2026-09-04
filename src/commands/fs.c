@@ -517,9 +517,10 @@ void settings_save(void);               /* shell.c; persists the font choice */
 #define FONT_MB_LOAD    (*(unsigned char *)0x02C8)
 #define FONT_MB_FLASH   (*(unsigned char *)0x02C9)
 #define FONT_MB_RAM     (*(unsigned char *)0x02CA)
-#define FONTB_FLASH_SET 4               /* loadable ROM set: shell + swedish */
+#define FONTA_FLASH_SET 1               /* loadable ROM set: shell + US charset */
+#define FONTB_FLASH_SET 6               /* loadable ROM set: shell + swedish */
 #define FONTB_RAM_SLOT  2               /* free RAM slot to stage font B into */
-#define FONTA_RAM_SLOT  0               /* the boot-served slot (font A) */
+#define FONTA_RAM_SLOT  0               /* RAM slot font A is staged into */
 #define KBD_LAYOUT      (*(unsigned char *)0x02CB) /* irq.s key-table selector */
 static unsigned char font_current;      /* BSS: 0 = font A at boot */
 
@@ -537,7 +538,12 @@ unsigned char font_select(unsigned char target)
         FONT_MB_FLASH = FONTB_FLASH_SET;
         FONT_MB_RAM = FONTB_RAM_SLOT;
     } else {
-        FONT_MB_LOAD = 0;
+        /* LOAD + SWITCH (not switch-only): under the boot-menu firmware the
+           bootloader leaves the machine serving RAM slot 1 and slot 0 holds
+           the bootloader set, so "slot 0 still has font A" no longer holds.
+           Loading the shell set fresh makes font A correct from any state. */
+        FONT_MB_LOAD = 1;
+        FONT_MB_FLASH = FONTA_FLASH_SET;
         FONT_MB_RAM = FONTA_RAM_SLOT;
     }
     if (font_apply() != 0)
@@ -551,7 +557,14 @@ unsigned char font_get(void)
 {
     return font_current;
 }
+#pragma code-name (pop)
 
+/* cmd_font lives in the default CODE (BASIC ROM half), not CODE2: the C=
+   boot-menu launcher (src/rbcp/launch.s) added enough KERNAL-half asm to push
+   CODE2 into the reserved $FE00 RBCP back-channel window
+   (test_rbcp::test_back_channel_window_is_free_fill). It's a cold command and
+   the BASIC half has room; the cross-bank call to font_select (CODE2) is fine
+   since both ROM halves are always mapped. */
 void cmd_font(int argc, char *argv[])
 {
     unsigned char target, prev;
@@ -569,7 +582,6 @@ void cmd_font(int argc, char *argv[])
     chrout('0' + font_current);
     chrout(CR);
 }
-#pragma code-name (pop)
 
 /* cat / less / cp / mv / rm / save / status / cd - one multi-page "files"
    tardis overlay

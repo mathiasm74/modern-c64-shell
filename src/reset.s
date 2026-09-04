@@ -12,7 +12,9 @@
 .import pet2scr                 ; ASCII -> screen code (shared with CHROUT)
 .import iec_init                ; serial bus port setup
 .import _rbcp_launch_stock      ; RBCP: swap the One ROM to the stock ROMs
+.import _rbcp_launch_bootmenu   ; RBCP: re-serve the C= boot-menu bootloader
 .import _nv_read                ; RBCP: read saved settings from NV flash
+.import _font_apply             ; RBCP: LOAD_SLOT + SWITCH_SLOT (boot normalize)
 .importzp DFLTN, DFLTO, LDTND   ; default I/O channels (kernal_stubs.s)
 
 ; --- cc65 C runtime: entry point, startup helpers, and the data-stack ptr --
@@ -80,9 +82,11 @@ KBD_LAYOUT = $02CB              ; 0 = US/symbolic tables, 1 = Swedish (irq.s)
 ; --- Constants -----------------------------------------------------------
 COLOR_BLACK  = $00
 COLOR_WHITE  = $01              ; text and cursor color
+COLOR_RED    = $02              ; default background (dark red)
 COLOR_BLUE   = $06
-COLOR_ORANGE = $08              ; default background
-COLOR_BROWN  = $09              ; default border
+COLOR_ORANGE = $08
+COLOR_BROWN  = $09
+COLOR_LTRED  = $0A              ; default border (light red)
 COLOR_LTBLUE = $0E              ; classic C64 default text color
 SPACE        = $20              ; screen code for a blank cell
 
@@ -148,14 +152,38 @@ reset:
         sta CIA2_CRA            ; stop CIA #2 timers A/B
         sta CIA2_CRB
 
-        ; --- Boot ROM selector: hold C= for the stock ROMs --------------
+        ; --- Normalize the served RAM slot (C= boot-menu bootloader) -----
+        ; With r107sl's c64-bootloader as flash set 0, boot goes: bootloader
+        ; LOAD_SLOTs the chosen set into RAM slot 1 and serves THAT -- so we
+        ; arrive here serving slot 1, with slot 0 still holding the
+        ; bootloader image. The shell's slot assumptions (overlay/stock/NV
+        ; staging in RAM slot 1, font-A return and escape-to-shell switching
+        ; to slot 0) predate the bootloader, so reload our own set into slot
+        ; 0 and switch to it. The switch is invisible: slot 0 then carries
+        ; the exact bytes the CPU is already fetching (the `font` trick).
+        ; On VICE / no One ROM the RBCP handshake fails and this is a no-op.
+        ; Must run BEFORE anything that stages into RAM slot 1 -- both the
+        ; C= stock-swap just below and the cartridge check's
+        ; _rbcp_launch_stock stage there, which must not be the served slot.
+        lda #1
+        sta FONT_MB_LOAD                ; LOAD_SLOT first, then SWITCH_SLOT
+        sta FONT_MB_FLASH               ; flash set 1 = shell + font A charset
+        lda #0
+        sta FONT_MB_RAM                 ; into (and switch to) RAM slot 0
+        jsr _font_apply
+        sei                             ; the trampoline CLIs; stay masked
+
+        ; --- Boot ROM selector: hold C= for the boot menu ---------------
         ; Read the Commodore (C=) key directly (keyboard column PA7, row PB5)
-        ; before anything is drawn. Held at power-on -> switch the One ROM to the
-        ; stock C64 ROMs (via RBCP) instead of booting the shell. (A cartridge is
-        ; the other stock-swap trigger, but that check is deferred until after the
-        ; screen/IEC init -- see "Cartridge auto-detect" below -- to give a Kung
-        ; Fu Flash time to present its cart and to ride out the One ROM/cart boot
-        ; race that otherwise left the screen black when we swapped too early.)
+        ; before anything is drawn. Held -> re-serve the boot-menu bootloader
+        ; (flash set 0) and reset into it, so the GRUB-style menu comes back
+        ; without a One ROM power cycle. (The One ROM keeps serving the picked
+        ; set across a bare C64 reset while it stays powered, so set 0 -- which
+        ; normally only runs at One ROM cold boot -- would otherwise be
+        ; unreachable; this makes C= = menu from a running shell.) Stock C64 and
+        ; JiffyDOS are menu entries, so this replaces the old direct C=->stock
+        ; shortcut. (A cartridge still swaps straight to stock -- that check is
+        ; deferred until after screen/IEC init, see "Cartridge auto-detect".)
         ; Boot-time keyboard scan after Holger Gryska's MIT-licensed
         ; c64-bootloader (derived from EasyFlash's crt0). On a shell-only build
         ; the RBCP call is inert and the launcher falls through (FFFC) to the shell.
@@ -178,7 +206,7 @@ reset:
         ; boots. Force US before handing off.
         lda #$00
         sta KBD_LAYOUT
-        jmp _rbcp_launch_stock  ; C= held -> stock ROMs (never returns)
+        jmp _rbcp_launch_bootmenu ; C= held -> boot menu (never returns)
 @boot_shell:
 
         ; --- VIC-II memory layout, bank, and colors ----------------------
@@ -192,9 +220,9 @@ reset:
         lda CIA2_PRA
         ora #$03                ; %......11 -> VIC bank 0 ($0000-$3FFF)
         sta CIA2_PRA
-        lda #COLOR_BROWN        ; default border (overridden by NV if saved)
+        lda #COLOR_LTRED        ; default border (overridden by NV if saved)
         sta VIC_BORDER
-        lda #COLOR_ORANGE       ; default background
+        lda #COLOR_RED          ; default background (dark red)
         sta VIC_BGCOL
 
         ; --- Clear screen to spaces, color RAM to white ------------------
@@ -374,6 +402,9 @@ COLORBUF  = $0340               ; 6-byte scratch in the unused tape buffer
 NV_MB_LEN = $02C4               ; NV read mailbox (src/rbcp/launch.s)
 NV_MB_LO  = $02C5
 NV_MB_HI  = $02C6
+FONT_MB_LOAD  = $02C8           ; font/normalize mailbox (src/rbcp/launch.s)
+FONT_MB_FLASH = $02C9
+FONT_MB_RAM   = $02CA
 restore_colors:
         ; One RBCP session only: just read the 6-byte header. No separate
         ; capability probe -- it only matters for *writing*, and a failed read
@@ -412,7 +443,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.1.74", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.1.75", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:

@@ -9,8 +9,9 @@ chip (the proven case). For each overlay this emits its first page WITHIN its
 set and the loadable set index, so the resident thunks never hardcode either.
 
 To rebalance, edit LAYOUT below (and the matching concatenation in the
-Makefile's overlays_a/b.bin rules). Loadable set indices: shell=0, stock=1,
-overlays-A=2, overlays-B=3 (cfg/onerom-stock.json order; plugins don't count).
+Makefile's overlays_a/b.bin rules). Loadable set indices: bootloader=0,
+shell=1, stock=2, JiffyDOS=3, overlays-A=4, overlays-B=5, shell-fontB=6,
+overlays-C=7 (cfg/onerom-stock.json order; plugins don't count).
 
 Usage: gen_overlay_pages.py <build-dir>   (writes the header to stdout)
 """
@@ -23,11 +24,11 @@ ovl = os.path.join(build, "overlays")
 # (bin, MACRO, "PAGE"|"FIRST_PAGE", flash_set). Overlays sharing a set pack
 # consecutively from page 0; each set is one 8KB chip = 32 pages.
 LAYOUT = [
-    ("files.bin", "FILES", "FIRST_PAGE", 2),
-    ("edit.bin",  "EDIT",  "FIRST_PAGE", 3),
-    ("dir.bin",   "DIR",   "FIRST_PAGE", 3),
-    ("about.bin", "ABOUT", "FIRST_PAGE", 5),
-    ("picker.bin", "PICKER", "FIRST_PAGE", 5),
+    ("files.bin", "FILES", "FIRST_PAGE", 4),
+    ("edit.bin",  "EDIT",  "FIRST_PAGE", 5),
+    ("dir.bin",   "DIR",   "FIRST_PAGE", 5),
+    ("about.bin", "ABOUT", "FIRST_PAGE", 7),
+    ("picker.bin", "PICKER", "FIRST_PAGE", 7),
 ]
 
 

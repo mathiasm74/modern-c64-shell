@@ -39,14 +39,22 @@
 .import __RBCP_CODE_RUN__
 .import __RBCP_CODE_SIZE__
 
-; Stock ROMs are the 4th chip_set in cfg/onerom-stock.json (system/usb,
-; host-control, shell, stock) -- but RBCP indexes by loadable ROM SET, not
-; raw slot: `onerom inspect info` reports rom_set_count = 2 (shell=0,
-; stock=1), so the plugin slots don't count. The stock ROM set is flash
-; slot 1, NOT 3 (3 is out of range -> loads garbage -> black screen). We
-; load it into a RAM slot the device isn't serving and switch to it.
-RBCP_STOCK_FLASH_SLOT = 1
+; RBCP indexes by loadable ROM SET (plugin slots don't count). With the
+; C= boot-menu bootloader as loadable set 0, the order is: 0 bootloader,
+; 1 shell (font A), 2 stock, 3 JiffyDOS, 4/5 overlays_a/b, 6 shell font B,
+; 7 overlays_c (cfg/onerom-stock.json). We load stock into a RAM slot the
+; device isn't serving and switch to it. (Serving is RAM slot 0 for font A
+; after the boot normalize in reset.s, or slot 2 for font B -- never 1.)
+RBCP_STOCK_FLASH_SLOT = 2
 RBCP_STOCK_RAM_SLOT   = 1
+
+; The C= boot-menu bootloader is loadable ROM set 0 (r107sl's c64-bootloader,
+; served at One ROM cold boot). _rbcp_launch_bootmenu re-serves it so holding C=
+; from a running shell returns to the menu -- without a One ROM power cycle,
+; which is otherwise the only thing that re-runs set 0 (the device keeps serving
+; the last-picked set across a bare C64 reset while it stays powered).
+RBCP_BOOTMENU_FLASH_SLOT = 0
+RBCP_BOOTMENU_RAM_SLOT   = 1
 
 ; Keyboard layout flag the shell maintains (irq.s / cmd_font): 0 = US, 1 =
 ; Swedish. Page-2 RAM, so it survives into the swap trampoline. When 1, the
@@ -121,6 +129,25 @@ _rbcp_launch_stock:
         ; Jump into the in-RAM trampoline. From here on we never come back
         ; to ROM-side code (rbcp_trampoline ends in a JMP through (FFFC)).
         jmp rbcp_trampoline
+
+; =========================================================================
+; _rbcp_launch_bootmenu - re-serve the boot-menu bootloader (flash set 0) and
+; reset into it, so C= from a running shell brings up the menu. Same copy-to-RAM
+; + in-RAM trampoline discipline as the stock launcher; never returns. Inert on
+; a non-One-ROM build (the RBCP handshake fails and the JMP (FFFC) falls back to
+; the shell's own reset -- i.e. a plain reboot).
+; =========================================================================
+.segment "KCODE"
+
+.export _rbcp_launch_bootmenu
+_rbcp_launch_bootmenu:
+        ; Reached only from reset.s's early C= check, where both CIAs' timers
+        ; are already stopped and IRQs masked -- and the bootloader re-inits the
+        ; CIAs itself -- so no CIA-quiet block is needed here (unlike the stock
+        ; launcher, which can be entered from the running shell).
+        sei
+        jsr rbcp_copy_to_ram
+        jmp rbcp_bootmenu_tramp
 
 ; -------------------------------------------------------------------------
 ; rbcp_copy_to_ram - copy __RBCP_CODE_SIZE__ bytes from __RBCP_CODE_LOAD__
@@ -335,6 +362,29 @@ se_kbd_byte:
         .byte $2D,$3D,$5C,$5B,$3A,$40,$5D,$3B   ; -  =  oe ae :  @  aring ;
         .byte $2D,$3D,$DC,$DB,$2A,$40,$DD,$2B   ; -  =  Oe Ae *  @  Aring +
 
+; -------------------------------------------------------------------------
+; rbcp_bootmenu_tramp - RAM-side trampoline for _rbcp_launch_bootmenu. Loads
+; the bootloader (flash set 0) into a RAM slot the device isn't serving, switches
+; to it, and resets through (FFFC) so the bootloader cold-boots and shows the
+; menu. On any RBCP failure it does NOT switch (serving a half-copied slot =
+; garbage) and just resets into the still-served shell -- so a non-One-ROM build
+; simply reboots the shell, never wedges.
+; -------------------------------------------------------------------------
+rbcp_bootmenu_tramp:
+        sei
+        jsr rbcp_reset
+        jsr rbcp_cmd_enter_cmd_resp
+        bcs @bm_fail
+        lda #RBCP_BOOTMENU_RAM_SLOT
+        ldx #RBCP_BOOTMENU_FLASH_SLOT
+        jsr rbcp_cmd_load_slot          ; flash set 0 -> RAM slot (long poll)
+        bcs @bm_fail
+        lda #RBCP_BOOTMENU_RAM_SLOT
+        jsr rbcp_cmd_switch_and_exit    ; serve the bootloader now
+@bm_fail:
+        jmp ($FFFC)                     ; reset: bootloader cold-boots -> menu
+                                        ; (or, on failure/no-One-ROM, the shell)
+
 ; The overlay library spans two 8KB flash sets (each holds whole overlays --
 ; no overlay straddles a set, so SLOT_PEEK only ever reads within one 8KB
 ; chip, which is the proven case). The C side puts the target set in the
@@ -429,6 +479,12 @@ NV_MB_LO  = $02C5
 NV_MB_HI  = $02C6
 NV_MB_IDX = $02C7
 
+; The settings blob lives at NV offset 16, not 0: the C= boot-menu bootloader
+; (r107sl's c64-bootloader, flash set 0) stores its last-booted-slot byte at
+; NV offset 1, which would land inside our "TD" magic. NV bytes 0-15 are the
+; bootloader's; ours start here.
+NV_BLOB_BASE = 16
+
 ; The C-callable entry points run in place from KERNAL ROM (like the overlay
 ; fetchers): each copies the library to RAM, then jumps into its RAM-side
 ; trampoline below. (The trampolines themselves must run from RAM.)
@@ -489,8 +545,9 @@ rbcp_nv_read_tramp:
         bcs @rd_enter_fail
         lda NV_MB_LEN
         sta rbcp_arg0                   ; count
+        lda #NV_BLOB_BASE
+        sta rbcp_arg1                   ; loc lo = blob base
         lda #0
-        sta rbcp_arg1                   ; loc lo = 0
         sta rbcp_arg2                   ; loc hi = 0
         jsr rbcp_cmd_nv_peek
         bcs @rd_peek_fail
@@ -553,9 +610,11 @@ rbcp_nv_write_tramp:
         lda (copy_dst),y                ; blob[idx]
         sta rbcp_arg0                   ; byte value
         lda NV_MB_IDX
-        sta rbcp_arg1                   ; loc lo = idx
+        clc
+        adc #NV_BLOB_BASE
+        sta rbcp_arg1                   ; loc lo = blob base + idx
         lda #0
-        sta rbcp_arg2                   ; loc hi = 0
+        sta rbcp_arg2                   ; loc hi = 0 (base+len stays < 256)
         jsr rbcp_cmd_nv_poke
         bcs @wr_poke_fail
         inc NV_MB_IDX

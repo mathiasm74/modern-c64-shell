@@ -326,7 +326,20 @@ onerom: $(BASIC) $(KERNAL)
 # URL (see the `file` entries in cfg/onerom-stock.json), so no local ROM copies
 # are needed; the onerom CLI downloads and caches them. Only our own build
 # outputs remain local prerequisites.
-ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS)
+# The C= boot menu (loadable ROM set 0) is r107sl's c64-bootloader, built from
+# vendored source (third-party/c64-bootloader/) into build/c64_bootloader.bin --
+# NOT the pre-built binary Piers hosts, whose v0.1.0 predates firmware 0.7.x and
+# fails GET_FLASH_SLOT_INFO_ALL (see the third-party README).
+BOOTLOADER   := $(BUILD)/c64_bootloader.bin
+BOOTLOADER_SRC := $(wildcard third-party/c64-bootloader/*.s third-party/c64-bootloader/*.c \
+	third-party/c64-bootloader/*.inc third-party/c64-bootloader/*.h third-party/c64-bootloader/rom.cfg)
+$(BOOTLOADER): $(BOOTLOADER_SRC) tools/build_bootloader.sh | $(BUILD)
+	tools/build_bootloader.sh $@
+
+# JiffyDOS is commercial, so unlike the stock ROMs (Zimmers URLs) it stays a
+# local user-supplied file; the C= boot menu (cfg/onerom-stock.json set 3)
+# offers it as a bootable KERNAL.
+ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) stock-roms/JiffyDOS_C64.bin
 onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
 		--config-file cfg/onerom-stock.json $(ONEROM_PLUGINS) \

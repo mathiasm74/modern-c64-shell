@@ -1,8 +1,31 @@
 {
  "version": 1,
  "name": "C64 Shell ROM + Stock Fallback",
- "description": "Shell ROM + stock C64 BASIC/KERNAL fallback + a character ROM served on a 3rd chip-select (the char socket /CS), switchable between two fonts. Loadable ROM sets: 0 = shell KERNAL+BASIC+charset (boot), 1 = stock+charset, 2/3 = overlays_a/b, 4 = shell KERNAL+BASIC+swedish (font B), 5 = overlays_c (appended so font B's set index stays 4). The `font` command live-switches the char ROM via RBCP SWITCH_SLOT (sets 0<->4 carry identical KERNAL/BASIC, so only the font changes). Overlay sets carry the same 8KB image on all three chips: firmware 0.7.x sizes RAM slots to the served (multi-ROM) type and LOAD_SLOT refuses a size mismatch, so single-ROM sets no longer load while a multi-ROM set is served -- tripling them makes every set the same multi-ROM size (Piers' workaround, hardware-validated on 0.7.1; a proper single-into-multi primitive may come in 0.7.2).",
+ "description": "C= boot-menu firmware: r107sl's c64-bootloader (set 0) shows a GRUB-style menu when C=/RUN-STOP/Q is held at power-on and otherwise auto-boots the last choice (it remembers it at NV offset 1, which is why the shell's settings blob lives at NV offset 16). Loadable ROM sets: 0 = bootloader, 1 = Tardis DOS shell + US charset (boot default), 2 = stock BASIC/KERNAL, 3 = JiffyDOS, 4/5 = overlays_a/b, 6 = shell + Swedish charset (font B), 7 = overlays_c. The bootloader leaves the chosen set serving from RAM slot 1; the shell re-normalizes to slot 0 at boot (reset.s) so its staging-slot assumptions hold. Overlay sets carry the same 8KB image on all three chips: firmware 0.7.x sizes RAM slots to the served (multi-ROM) type and LOAD_SLOT refuses a size mismatch (Piers' workaround, hardware-validated on 0.7.1).",
  "chip_sets": [
+  {
+   "type": "multi",
+   "serve_alg": "two_cs_one_addr",
+   "chips": [
+    {
+     "file": "build/c64_bootloader.bin",
+     "type": "Chip2364",
+     "cs1": "active_low",
+     "label": "Boot Menu"
+    },
+    {
+     "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+     "type": "Chip2364",
+     "cs1": "active_low",
+     "size_handling": "duplicate"
+    },
+    {
+     "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+     "type": "Chip2364",
+     "cs1": "active_low"
+    }
+   ]
+  },
   {
    "type": "multi",
    "serve_alg": "two_cs_one_addr",
@@ -10,7 +33,8 @@
     {
      "file": "build/kernal.bin",
      "type": "Chip2364",
-     "cs1": "active_low"
+     "cs1": "active_low",
+     "label": "Tardis DOS"
     },
     {
      "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
@@ -32,7 +56,31 @@
     {
      "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/kernal.901227-03.bin",
      "type": "Chip2364",
+     "cs1": "active_low",
+     "label": "Stock C64"
+    },
+    {
+     "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+     "type": "Chip2364",
+     "cs1": "active_low",
+     "size_handling": "duplicate"
+    },
+    {
+     "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+     "type": "Chip2364",
      "cs1": "active_low"
+    }
+   ]
+  },
+  {
+   "type": "multi",
+   "serve_alg": "two_cs_one_addr",
+   "chips": [
+    {
+     "file": "stock-roms/JiffyDOS_C64.bin",
+     "type": "Chip2364",
+     "cs1": "active_low",
+     "label": "JiffyDOS"
     },
     {
      "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
@@ -53,7 +101,8 @@
     {
      "file": "build/overlays_a.bin",
      "type": "Chip2364",
-     "cs1": "active_low"
+     "cs1": "active_low",
+     "label": "~overlay a"
     },
     {
      "file": "build/overlays_a.bin",
@@ -74,7 +123,8 @@
     {
      "file": "build/overlays_b.bin",
      "type": "Chip2364",
-     "cs1": "active_low"
+     "cs1": "active_low",
+     "label": "~overlay b"
     },
     {
      "file": "build/overlays_b.bin",
@@ -96,7 +146,8 @@
     {
      "file": "build/kernal.bin",
      "type": "Chip2364",
-     "cs1": "active_low"
+     "cs1": "active_low",
+     "label": "~Tardis Swedish"
     },
     {
      "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.325018-02.bin",
@@ -117,7 +168,8 @@
     {
      "file": "build/overlays_c.bin",
      "type": "Chip2364",
-     "cs1": "active_low"
+     "cs1": "active_low",
+     "label": "~overlay c"
     },
     {
      "file": "build/overlays_c.bin",
