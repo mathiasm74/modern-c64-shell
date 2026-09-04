@@ -22,14 +22,16 @@ ONEROM       := tools/onerom
 ONEROM_BOARD ?= fire-24-e
 ONEROM_CFG   := cfg/onerom.json
 
-# PINNED firmware version. Firmware 0.7.x + host-control plugin 0.1.2 changed
-# the RBCP RAM-slot model (a RAM slot is now exactly one ROM region, and
-# LOAD_SLOT refuses a flash image whose size doesn't match the slot), which
-# breaks our overlay fetches: every LOAD_SLOT of a single-8KB overlay set
-# fails (stage 2) while the 3-ROM shell set is being served. Bisected
-# 2026-09-03 (0.6.14 works, 0.7.1 fails). Unpin once the shell's RBCP side
-# is migrated to the 0.7.x slot semantics.
-ONEROM_FW_VERSION ?= 0.6.14
+# PINNED firmware version. Firmware 0.7.x sizes RAM slots by ROM type (a
+# single 2364 = 8KB, a multi-ROM set = 64KB; pre-0.7.0 everything was 64KB,
+# which is the only reason loading a single-ROM overlay set into the
+# multi-ROM-served slot ever worked -- per Piers, an accident). LOAD_SLOT
+# now refuses the size mismatch, so cfg/onerom-stock.json carries each
+# overlay image tripled into a 3-chip multi set to match (hardware-validated
+# on 0.7.1, 2026-09-04). Revisit when 0.7.2 lands -- Piers may add a proper
+# "copy single ROM into multi-ROM slot" primitive, which would also enable
+# the ROM-bank-swap command architecture.
+ONEROM_FW_VERSION ?= 0.7.1
 
 # Plugins are supplied on the CLI (not pinned in the config JSONs), so every
 # build picks the latest plugin versions compatible with the firmware the CLI
