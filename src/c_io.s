@@ -14,7 +14,7 @@
 .export _soft_reset
 
 .import rbcp_nmi_escape         ; RAM NMI handler for the RUN/STOP+RESTORE escape
-.import rbcp_escape_tramp       ; RAM swap-back: also hooked on BASIC's IMAIN ($0302)
+.import rbcp_escape_tramp       ; RAM swap-back: hooked on BASIC's IMAIN ($0302)
 
 CHROUT = $FFD2
 GETIN  = $FFE4
@@ -77,9 +77,15 @@ _soft_reset:
 ; it a loaded program runs on whatever stale links the PRG carried, so RUN
 ; hits ?SYNTAX ERROR and LIST shows garbage -- which is why a `load` here then
 ; a bare swap couldn't RUN/LIST. After LINKPRG the mode byte at $CFFC decides:
-; 0 = JMP $A7AE (RUN the program), nonzero = JMP $A474 (drop to stock BASIC's
-; READY. so the program can be LISTed / RUN by hand). Anything not loading at
-; $0801 is machine code: JMP through its load address (mode is ignored).
+; nonzero = JMP $A474 (drop to stock BASIC's READY. so the program can be LISTed
+; / RUN by hand -- `basic`); 0 = auto-run (`run`): stuff "RUN"+CR into the
+; keyboard buffer and JMP $A474 too, letting stock BASIC's READY/MAIN read and
+; execute "RUN" through its own machinery -- more robust across the bank swap
+; than hand-rolling JMP $A7AE, which came up blank. A one-shot IMAIN hook at
+; $0302 (rbcp_imain_hook) skips the pre-RUN READY and swaps back to the shell
+; when the program later returns to READY. Anything not loading at $0801 is
+; machine code: JMP through its load address (mode ignored; the ML path keeps
+; the direct rbcp_escape_tramp IMAIN hook for programs that exit via READY).
 ;
 ; The stub runs at $CF00 and reads its params from $CFF8-$CFFB (above the
 ; RBCP/overlay RAM and the BASIC-ROM ceiling, so RAMTAS -- which the stub
@@ -95,9 +101,14 @@ _soft_reset:
 RUN_PARAMS = $CFF8              ; load lo/hi, end lo/hi (4 bytes)
 RUN_MODE   = $CFFC              ; 0 = RUN, nonzero = drop to BASIC READY.
 RUN_DEV    = $CFFD              ; current device (FA) to restore -- see below
+RUN_FIRST  = $CFFE              ; mode-0 run: 1 = skip the pre-RUN READY (IMAIN)
+RUN_STUB_BASE = $CF00           ; where launch_stock_program copies the stub, so
+                                ; an in-stub label's RUN address is BASE+offset
+                                ; (the stub is assembled in ROM but runs here)
 
 .export _run_stub
 .export _run_stub_end
+.export run_imain_hook          ; in-stub $0302 hook (test computes its RUN addr)
 
 _run_stub:
         sei
@@ -142,17 +153,36 @@ _run_stub:
                                 ;   exactly as stock BASIC's LOAD tail ($A52A)
         lda RUN_MODE
         bne @ready
-        ; mode 0 (run): hook BASIC's main-loop vector ($0302/IMAIN) so when the
-        ; program returns to READY (END/STOP/quit) BASIC's JMP ($0302) lands in
-        ; our swap-back instead -- returning to the shell. $E453 above reset
-        ; $0302 to the BASIC default ($A483), so install it now. (mode 1 / READY
-        ; deliberately skips this so `basic` stays in BASIC.)
-        lda #<rbcp_escape_tramp
+        ; mode 0 (run): auto-type "RUN" + CR into the keyboard buffer and drop
+        ; into the SAME READY entry mode 1 uses, so stock BASIC runs the program
+        ; through its own proven machinery (READY -> MAIN's line input -> the RUN
+        ; token handler's own CLR + interpreter loop). Hand-rolling it with
+        ; JMP $A7AE across the bank swap gave a blank screen; "type RUN at READY"
+        ; is what actually works (mode 1 lands there and a manual RUN succeeds),
+        ; so we automate exactly that. An IMAIN hook ($0302) ignores the first
+        ; READY -- letting MAIN read the buffered "RUN" -- and swaps back to the
+        ; shell on the second (the program returned to READY). RUN_FIRST at
+        ; $CFFE arms the skip. (mode 1 / READY installs no hook so `basic` stays.)
+        lda #$52                ; "R" (uppercase PETSCII)
+        sta $0277
+        lda #$55                ; "U"
+        sta $0278
+        lda #$4E                ; "N"
+        sta $0279
+        lda #$0D                ; CR
+        sta $027A
+        lda #4
+        sta $C6                 ; NDX = 4 chars pending in the keyboard buffer
+        lda #1
+        sta RUN_FIRST           ; skip the pre-RUN READY (see run_imain_hook)
+        ; $0302 -> run_imain_hook at its RUN address ($CF00 + its offset in the
+        ; stub); the stub is assembled in ROM but always copied to $CF00.
+        lda #<(RUN_STUB_BASE + (run_imain_hook - _run_stub))
         sta $0302
-        lda #>rbcp_escape_tramp
+        lda #>(RUN_STUB_BASE + (run_imain_hook - _run_stub))
         sta $0303
         cli
-        jmp $A7AE               ; RUN
+        jmp $A474               ; READY. -> MAIN reads "RUN" -> runs the program
 @ready: cli
         jmp $A474               ; READY. - stock BASIC immediate mode (LIST/RUN)
 @ml:    ; --- machine-code program: jump through its load address --------
@@ -166,4 +196,21 @@ _run_stub:
         sta $0303
 @ml_go: cli
         jmp (RUN_PARAMS)
+
+; --- mode-0 IMAIN ($0302) hook -- runs at $CF00 + (here - _run_stub) ---------
+; Reached only via BASIC's JMP ($0302) at each READY, never fallen into. First
+; READY (RUN_FIRST=1, set above) is the one $A474 does BEFORE MAIN reads the
+; buffered "RUN": clear the flag and chain to the real MAIN ($A483) so it runs
+; the program. The next READY -- the program has ended and returned -- swaps
+; back to the shell. (rbcp_escape_tramp lives in the RBCP RAM block at $C800,
+; only reached on this second pass, so it is fine that a bare stock/VICE test
+; without that block never executes it: a looping test program never returns.)
+run_imain_hook:
+        lda RUN_FIRST
+        beq @escape             ; second READY: program done -> back to the shell
+        lda #0
+        sta RUN_FIRST           ; consume the pre-RUN READY
+        jmp $A483               ; stock BASIC MAIN: read + execute the buffered "RUN"
+@escape:
+        jmp rbcp_escape_tramp
 _run_stub_end:

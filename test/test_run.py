@@ -75,7 +75,9 @@ def _find(seq, sub):
 def test_run_stub_assembled_correctly(v):
     # Can't run the swap in VICE; read the stub out of KERNAL ROM and check
     # the key structure: takes the machine (SEI), inits via the KERNAL
-    # vectors, has the BASIC init-without-NEW ($E3BF) + RUN ($A7AE), and the
+    # vectors, has the BASIC init-without-NEW ($E3BF), auto-runs by typing "RUN"
+    # into the keyboard buffer and dropping to READY ($A474) rather than
+    # JMP $A7AE (which was blank across the real bank swap), and keeps the
     # machine-code fallback JMP ($CFF8).
     L = _labels()
     start = L["_run_stub"]
@@ -88,5 +90,10 @@ def test_run_stub_assembled_correctly(v):
     assert _find(b, [0x20, 0x8A, 0xFF]) >= 0, "no JSR $FF8A (RESTOR)"
     assert _find(b, [0x20, 0x81, 0xFF]) >= 0, "no JSR $FF81 (CINT)"
     assert _find(b, [0x20, 0xBF, 0xE3]) >= 0, "no JSR $E3BF (BASIC init)"
-    assert _find(b, [0x4C, 0xAE, 0xA7]) >= 0, "no JMP $A7AE (RUN)"
+    # auto-run: stuff "R" ($52) into the keyboard buffer ($0277) and JMP $A474.
+    assert _find(b, [0xA9, 0x52, 0x8D, 0x77, 0x02]) >= 0, \
+        "no LDA #\"R\" / STA $0277 (auto-typed RUN)"
+    assert _find(b, [0x4C, 0x74, 0xA4]) >= 0, "no JMP $A474 (READY/auto-run)"
+    assert _find(b, [0x4C, 0xAE, 0xA7]) < 0, \
+        "stub still JMP $A7AE -- the fragile hand-rolled RUN was reintroduced"
     assert _find(b, [0x6C, 0xF8, 0xCF]) >= 0, "no JMP ($CFF8) ML fallback"

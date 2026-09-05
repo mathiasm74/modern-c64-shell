@@ -76,22 +76,25 @@ def test_run_stub_runs_basic_program(v):
         assert sv.read_byte(0x00BA) == 0x08, \
             "stub did not restore $BA -- PEEK(186) would be wrong (?ILLEGAL DEVICE NUMBER)"
         # The stub points the stock NMI vector ($0318) at the RAM escape handler,
-        # so RUN/STOP+RESTORE swaps back to the shell, and -- in mode 0 -- the
-        # BASIC main-loop vector ($0302/IMAIN) at the swap-back, so a program
-        # quitting to READY also returns. (The swap is hardware-only; here we
-        # just verify the vectors are installed.)
+        # so RUN/STOP+RESTORE swaps back to the shell, and -- in mode 0 -- hooks
+        # the BASIC main-loop vector ($0302/IMAIN) at the in-stub run_imain_hook
+        # (which skips the pre-RUN READY, then swaps back when the program later
+        # returns to READY). The stub runs at $CF00, so the hook's run address is
+        # $CF00 + its offset in the stub. (The swap is hardware-only; here we
+        # just verify the vectors are installed and the program actually ran.)
         L = _labels()
         nmi = sv.read_byte(0x0318) | (sv.read_byte(0x0319) << 8)
         assert nmi == L["rbcp_nmi_escape"], \
             "stub did not install the RUN/STOP+RESTORE escape vector " \
             "($0318=%04X, want %04X)" % (nmi, L["rbcp_nmi_escape"])
+        want_imain = 0xCF00 + (L["run_imain_hook"] - L["_run_stub"])
         imain = sv.read_byte(0x0302) | (sv.read_byte(0x0303) << 8)
-        assert imain == L["rbcp_escape_tramp"], \
-            "mode 0 did not hook IMAIN for the quit-return " \
-            "($0302=%04X, want %04X)" % (imain, L["rbcp_escape_tramp"])
+        assert imain == want_imain, \
+            "mode 0 did not hook IMAIN at the in-stub run_imain_hook " \
+            "($0302=%04X, want %04X)" % (imain, want_imain)
         rows = [r.strip() for r in sv.screen_text().split("\n")]
         assert "ok" in rows, \
-            "stub did not RUN the BASIC program\n%s" % sv.screen_text()
+            "stub did not RUN the BASIC program (auto-typed RUN)\n%s" % sv.screen_text()
 
 
 def test_run_stub_relinks_broken_link(v):
