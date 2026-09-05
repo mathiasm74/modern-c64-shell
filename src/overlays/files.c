@@ -65,6 +65,12 @@ static void crlf(void)
 #define A2L    (*(unsigned char *)0x02E3)
 #define A2     ((const char *)0x02E4)        /* 16 chars */
 
+/* TAB-completion name cache valid flag ($CE00; docs/TAB-COMPLETION.md). A
+   directory-changing command clears it ONLY on success -- a failed cd/mv/rm/cp
+   didn't change the directory, so the cached names (and the current path pwd
+   reports) are still good and must survive the error. */
+#define TC_OK  (*(unsigned char *)0xCE00)
+
 /* ---- cat (dump) / less (page) ------------------------------------------- */
 static void pager(unsigned char paged)
 {
@@ -173,6 +179,7 @@ static void copy(void)
     k_clrchn();
     k_close();
 
+    TC_OK = 0;                          /* a new file appeared -> stale cache */
     puts_raw("copied ");
     put_uint(len);
     puts_raw(" bytes");
@@ -283,15 +290,21 @@ static void command_channel(const char *cmd, unsigned char len,
     code = read_status(buf, f);         /* OPEN ran it; read the result */
     k_close();
     k_clrchn();
-    if (code <= 0)                      /* 00 OK, or -1 read timeout: silent */
+    if (code == 0) {                    /* 00 OK: success, silent */
+        TC_OK = 0;                      /* directory changed -> stale cache */
+        return;
+    }
+    if (code < 0)                       /* read timeout: no change, keep cache */
         return;
     if (scratch && code == 1) {         /* FILES SCRATCHED: count in field 2 */
-        if (is_zero(f[2])) {            /* nothing matched */
+        if (is_zero(f[2])) {            /* nothing matched: no change */
             puts_raw(what);
             puts_raw("not found");
             crlf();
+        } else {
+            TC_OK = 0;                  /* scratched >= 1: a file went away */
         }
-        return;                         /* scratched >= 1: success, silent */
+        return;
     }
     msg = f[1];
     while (*msg == ' ')

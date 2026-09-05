@@ -672,23 +672,24 @@ void cmd_less(int argc, char *argv[])
     files_run(1, argv[1], 0);
 }
 
+/* cp/mv/rm/cd invalidate the TAB-completion cache only when they SUCCEED --
+   the overlay clears $CE00 after a good copy/rename/scratch/cd. A failed one
+   (missing file, bad path, offline drive) left the directory unchanged, so the
+   cached names -- and the path pwd shows -- must survive the error. */
 void cmd_cp(int argc, char *argv[])
 {
-    TAB_CACHE_OK = 0;
     if (argc < 3) { usage("cp <src> <dst>"); return; }
     files_run(2, argv[1], argv[2]);
 }
 
 void cmd_mv(int argc, char *argv[])
 {
-    TAB_CACHE_OK = 0;
     if (argc < 3) { usage("mv <old> <new>"); return; }
     files_run(3, argv[1], argv[2]);     /* overlay builds r0:<new>=<old> */
 }
 
 void cmd_rm(int argc, char *argv[])
 {
-    TAB_CACHE_OK = 0;
     if (argc < 2) { usage("rm <name>"); return; }
     files_run(4, argv[1], 0);
 }
@@ -713,7 +714,6 @@ void cmd_cd(int argc, char *argv[])
     unsigned char i = 0, j;
 
     if (argc < 2) { usage("cd <path>"); return; }
-    TAB_CACHE_OK = 0;
     CD_CMD[i++] = 'c'; CD_CMD[i++] = 'd';
     if (argv[1][0] == '/' && argv[1][1] == '/' && argv[1][2] == '\0') {
         CD_CMD[i++] = 0x5E;             /* "cd //" -> "CD<up-arrow>" flash root */
@@ -774,8 +774,12 @@ void cmd_device(int argc, char *argv[])
     /* The parse/probe/report is in the files overlay (cmd 16). default_device
        and device_name stay resident (read everywhere), so pass their addresses
        in the mailbox for the overlay to update in place. */
-    TAB_CACHE_OK = 0;                   /* another unit = another directory */
+    unsigned char prev = default_device;
+
     *(unsigned char **)0x02F4 = &default_device;
     *(char **)0x02F6 = &device_name[0][0];
     files_run(16, argc > 1 ? argv[1] : 0, argc >= 3 ? argv[2] : 0);
+    if (default_device != prev)         /* only a real switch is a new directory;
+                                           a failed probe keeps the cache valid */
+        TAB_CACHE_OK = 0;
 }

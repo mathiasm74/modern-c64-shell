@@ -70,13 +70,27 @@ def test_rm_missing_reports_not_found(v):
         "rm of a missing file should report not found\n%s" % v.screen_text()
 
 
-def test_rm_invalidates_tab_cache(v):
-    # rm changes the directory, so its thunk clears the completion cache's
-    # valid flag ($CE00) even before the overlay runs.
-    v.write_byte(0xCE00, 1)
-    _type(v, "rm zznope")
+def test_rm_invalidates_tab_cache_only_on_success(v):
+    # rm invalidates the completion cache ($CE00) only when it actually removes
+    # a file -- a directory that changed makes the cached names stale. A FAILED
+    # rm (nothing matched) left the directory untouched, so the cache (and the
+    # path pwd reports) must survive: clearing it there is the "an error forgets
+    # the data tab-completion/pwd need" bug.
+    seed_files(v)
+    v.write_byte(0xCE00, 1)                     # pretend a listing filled it
+    _type(v, "rm zznope")                       # no such file -> "rm: not found"
     for _ in range(20):
         if "not found" in v.screen_text():
             break
         v.run_for(0.4)
-    assert v.read_byte(0xCE00) == 0, "rm did not invalidate the completion cache"
+    assert v.read_byte(0xCE00) == 1, \
+        "a failed rm wrongly invalidated the completion cache"
+
+    v.write_byte(0xCE00, 1)
+    _type(v, "rm doc")                          # a real file (SEQ) -> scratched
+    for _ in range(20):
+        v.run_for(0.4)
+        if v.read_byte(0xCE00) == 0:
+            break
+    assert v.read_byte(0xCE00) == 0, \
+        "a successful rm did not invalidate the completion cache"
