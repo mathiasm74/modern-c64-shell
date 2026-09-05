@@ -167,8 +167,8 @@ OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/ove
 # full), C = about+picker (9). overlays_c is APPENDED in onerom-stock.json so
 # font B's loadable set index stays 4; C is loadable set 5.
 OVERLAYS_A := $(BUILD)/overlays/files.bin
-OVERLAYS_B := $(BUILD)/overlays/edit.bin $(BUILD)/overlays/dir.bin
-OVERLAYS_C := $(BUILD)/overlays/about.bin $(BUILD)/overlays/picker.bin
+OVERLAYS_B := $(BUILD)/overlays/edit.bin
+OVERLAYS_C := $(BUILD)/overlays/about.bin $(BUILD)/overlays/picker.bin $(BUILD)/overlays/dir.bin
 OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin $(BUILD)/overlays_c.bin
 
 # The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;

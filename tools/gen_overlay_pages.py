@@ -34,17 +34,17 @@ if os.environ.get("OVL_C128"):
     LAYOUT = [
         ("files.bin", "FILES", "FIRST_PAGE", 1),
         ("edit.bin",  "EDIT",  "FIRST_PAGE", 2),
-        ("dir.bin",   "DIR",   "FIRST_PAGE", 2),
         ("about.bin", "ABOUT", "FIRST_PAGE", 3),
         ("picker.bin", "PICKER", "FIRST_PAGE", 3),
+        ("dir.bin",   "DIR",   "FIRST_PAGE", 3),
     ]
 else:
     LAYOUT = [
         ("files.bin", "FILES", "FIRST_PAGE", 4),
         ("edit.bin",  "EDIT",  "FIRST_PAGE", 5),
-        ("dir.bin",   "DIR",   "FIRST_PAGE", 5),
         ("about.bin", "ABOUT", "FIRST_PAGE", 7),
         ("picker.bin", "PICKER", "FIRST_PAGE", 7),
+        ("dir.bin",   "DIR",   "FIRST_PAGE", 7),
     ]
 
 

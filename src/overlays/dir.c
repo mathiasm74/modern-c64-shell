@@ -16,6 +16,15 @@
 
 unsigned char __fastcall__ k_chrout(unsigned char c);
 unsigned char k_getin(void);            /* crt0_dir.s: GETIN ($FFE4) */
+/* KERNAL file-I/O wrappers (crt0_dir.s) -- pwd uses them for the drive's PWD
+   command on the command channel, the same ABI cd/mv/rm use in files.c. */
+void __fastcall__ k_setlfs(unsigned char dev, unsigned char sa);
+void __fastcall__ k_setnam(const char *name, unsigned char len);
+unsigned char k_open(void);
+void k_close(void);
+unsigned char k_chkin(void);
+void k_clrchn(void);
+unsigned char k_chrin(void);
 
 #define ST_EOI     0x40
 #define ST_NODEV   0x80
@@ -443,11 +452,75 @@ static void do_ls(void)
     cache_done();
 }
 
+/* Print the device prefix ("<dev>[ <name>]: ") shared by both pwd paths. */
+static void pwd_prefix(void)
+{
+    unsigned char j;
+
+    put_uint(MB_DEV);
+    if (MB_NLEN) {
+        k_chrout(' ');
+        for (j = 0; j < MB_NLEN; ++j)
+            k_chrout(MB_NAME[j]);
+    }
+    puts_raw(": ");
+}
+
+/* Ask the drive directly for its current path via the "PWD" command channel
+   command (Meatloaf and other network drives implement it; it returns the path
+   in PETSCII on channel 15). Returns 1 if a path was printed, 0 to fall back to
+   the directory-header reconstruction. A drive without PWD answers with its DOS
+   status instead ("31,SYNTAX ERROR,..."), which starts with two digits and a
+   comma -- we detect that (and an empty reply) and fall back. */
+static unsigned char try_pwd(void)
+{
+    char path[64];
+    unsigned char n = 0, b;
+
+    k_setnam("PWD", 3);
+    k_setlfs(MB_DEV, 15);               /* command channel */
+    k_open();
+    if (svc_iec_status() & ST_NODEV) {
+        k_close();
+        k_clrchn();
+        return 0;
+    }
+    k_chkin();
+    for (;;) {
+        b = k_chrin();
+        if (svc_iec_status() & ST_TIMEOUT)
+            break;
+        if (b && b != CR && n < 63)
+            path[n++] = b;
+        if (svc_iec_status() & ST_EOI)
+            break;
+    }
+    k_close();
+    k_clrchn();
+    if (svc_iec_status() & ST_TIMEOUT)
+        return 0;                       /* no usable reply */
+    path[n] = 0;
+    if (n == 0)
+        return 0;                       /* empty (root) -> header shows the name */
+    if (path[0] >= '0' && path[0] <= '9' &&
+        path[1] >= '0' && path[1] <= '9' && path[2] == ',')
+        return 0;                       /* a DOS status, not a path: unsupported */
+
+    pwd_prefix();
+    for (b = 0; b < n; ++b)
+        k_chrout(path[b]);
+    k_chrout(CR);
+    return 1;
+}
+
 static void do_pwd(void)
 {
     unsigned int blocks;
     unsigned char i, q0, q1, j;
     unsigned char any = 0, first = 1;
+
+    if (try_pwd())                      /* drive answered PWD directly */
+        return;
 
     if (!dir_begin(0))
         return;
