@@ -175,7 +175,7 @@ static void report_no_device(unsigned char dev)
    back (a truly unresponsive drive). */
 static void report_drive_status(void)
 {
-    unsigned char b, field = 0, got = 0;
+    unsigned char b, field = 0, got = 0, eat_sp = 0;
 
     iec_set_fa(default_device);
     iec_set_sa(15);
@@ -190,8 +190,12 @@ static void report_drive_status(void)
             if (b == ',') {
                 if (++field == 2)   /* stop after code + message */
                     break;
-                /* skip the comma; the message carries a leading space */
+                chrout(' ');        /* "<code> <message>" */
+                eat_sp = 1;         /* swallow the message's own leading space(s) */
             } else if (b != CR && b != 0) {
+                if (eat_sp && b == ' ')
+                    continue;
+                eat_sp = 0;
                 chrout(b);
                 got = 1;
             }
