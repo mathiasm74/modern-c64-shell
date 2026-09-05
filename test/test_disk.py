@@ -86,13 +86,13 @@ def test_ls_colors_names_by_type(v):
     assert seq == 0x03, "SEQ should be cyan, got %d" % seq
 
 
-def test_pwd_prints_device_and_disk_name(v):
-    # pwd prefixes the current device (8, no name set here) before the title.
+def test_pwd_prints_disk_name(v):
+    # On the 1541 (which SYNTAX-ERRORs the PWD command) pwd falls back to the
+    # header and prints just the disk title -- the device/name are already in
+    # the prompt, so pwd no longer repeats them.
     seed_dir(v)
     _type(v, "pwd", clear=True)
     assert _wait_for(v, "TEST DISK"), "pwd did not print the disk name"
-    assert "8: TEST DISK" in v.screen_text(), \
-        "pwd did not prefix the device number\n%s" % v.screen_text()
 
 
 def test_load_into_memory(v):

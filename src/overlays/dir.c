@@ -453,19 +453,6 @@ static void do_ls(void)
 }
 
 /* Print the device prefix ("<dev>[ <name>]: ") shared by both pwd paths. */
-static void pwd_prefix(void)
-{
-    unsigned char j;
-
-    put_uint(MB_DEV);
-    if (MB_NLEN) {
-        k_chrout(' ');
-        for (j = 0; j < MB_NLEN; ++j)
-            k_chrout(MB_NAME[j]);
-    }
-    puts_raw(": ");
-}
-
 /* Ask the drive directly for its current path via the "PWD" command channel
    command (Meatloaf and other network drives implement it; it returns the path
    in PETSCII on channel 15). Returns 1 if a path was printed, 0 to fall back to
@@ -506,7 +493,7 @@ static unsigned char try_pwd(void)
         path[1] >= '0' && path[1] <= '9' && path[2] == ',')
         return 0;                       /* a DOS status, not a path: unsupported */
 
-    pwd_prefix();
+    /* Just the path -- the device/name already show in the prompt. */
     for (b = 0; b < n; ++b)
         k_chrout(path[b]);
     k_chrout(CR);
@@ -516,7 +503,7 @@ static unsigned char try_pwd(void)
 static void do_pwd(void)
 {
     unsigned int blocks;
-    unsigned char i, q0, q1, j;
+    unsigned char i, q0, q1;
     unsigned char any = 0, first = 1;
 
     if (try_pwd())                      /* drive answered PWD directly */
@@ -525,14 +512,8 @@ static void do_pwd(void)
     if (!dir_begin(0))
         return;
 
-    if (dir_line(&blocks)) {            /* header line: device, name, disk title */
-        put_uint(MB_DEV);
-        if (MB_NLEN) {
-            k_chrout(' ');
-            for (j = 0; j < MB_NLEN; ++j)
-                k_chrout(MB_NAME[j]);
-        }
-        puts_raw(": ");
+    if (dir_line(&blocks)) {            /* header line: the disk title (the
+                                           device/name are already in the prompt) */
         for (i = 0; dir_buf[i] && dir_buf[i] != '"'; ++i)
             ;
         if (dir_buf[i] == '"') {
