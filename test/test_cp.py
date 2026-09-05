@@ -101,5 +101,7 @@ def test_spaced_filenames_end_to_end(v):
     _typeln(v, 'rm "my prog"')
     _typeln(v, 'clear')
     _typeln(v, 'load "my prog"')
-    assert _await(v, "not found"), \
+    # load now surfaces the drive's error channel: a missing file is the 1541's
+    # "62 FILE NOT FOUND" (uppercase) rather than our old lowercase message.
+    assert _await(v, "FILE NOT FOUND"), \
         "spaced file was not scratched: %r" % v.screen_text()

@@ -52,15 +52,17 @@ def test_load_completes(v):
 def test_load_missing_reports_not_found(v):
     """A missing file streams back no data (immediate EOI, no timeout); load
     must say so rather than read $00,$00 as a load address and print a bogus
-    "loaded $0000-$0000"."""
+    "loaded $0000-$0000". It now reports the drive's own error-channel status,
+    so a 1541 says "62 FILE NOT FOUND" (a networked Meatloaf that's offline says
+    "74 DRIVE NOT READY" instead -- hardware-only)."""
     v.run_for(0.3)
     _type(v, "load nosuchfile")
-    found = _wait_for(v, "file not found")
+    found = _wait_for(v, "FILE NOT FOUND")
     txt = v.screen_text()
     assert "loaded $0000" not in txt, \
         "missing-file load printed a bogus load range\n%s" % txt
     assert found, \
-        "missing-file load did not report 'file not found'\n%s" % txt
+        "missing-file load did not report the drive status\n%s" % txt
 
 
 def _find(seq, sub):

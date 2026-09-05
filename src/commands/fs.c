@@ -167,6 +167,45 @@ static void report_no_device(unsigned char dev)
     chrout(CR);
 }
 
+/* Read the drive's command/error channel (15) and print "<code> <message>" (the
+   ,track,sector tail dropped), so a failed load shows the drive's real reason:
+   a Meatloaf that's offline reports "74 drive not ready" (distinct from a
+   genuinely missing file, "62 file not found"); a 1541 with no disk likewise
+   says "74 drive not ready". Falls back to "read error" if no status comes
+   back (a truly unresponsive drive). */
+static void report_drive_status(void)
+{
+    unsigned char b, field = 0, got = 0;
+
+    iec_set_fa(default_device);
+    iec_set_sa(15);
+    iec_setname("");
+    iec_open();
+    if (!(iec_status() & ST_NODEV)) {
+        iec_chkin();
+        for (;;) {
+            b = iec_getbyte();
+            if (iec_status() & ST_TIMEOUT)
+                break;
+            if (b == ',') {
+                if (++field == 2)   /* stop after code + message */
+                    break;
+                /* skip the comma; the message carries a leading space */
+            } else if (b != CR && b != 0) {
+                chrout(b);
+                got = 1;
+            }
+            if (iec_status() & ST_EOI)
+                break;
+        }
+    }
+    iec_close();
+    iec_clrchn();
+    if (!got)
+        puts_raw("read error");
+    chrout(CR);
+}
+
 /* (device's bus probe moved into the files overlay -- it uses the KERNAL OPEN
    shim there; see do_device / device_present_ov in src/overlays/files.c.) */
 /* dir / ls / pwd -- the "dir" tardis overlay (src/overlays/dir.c). These need
@@ -245,8 +284,7 @@ void cmd_load(int argc, char *argv[])
     if ((iec_status() & ST_EOI) && !(iec_status() & ST_TIMEOUT)) {
         iec_close();
         iec_clrchn();
-        puts_raw("file not found");
-        chrout(CR);
+        report_drive_status();          /* the drive's reason (offline vs missing) */
         return;
     }
     hi = iec_getbyte();
@@ -268,8 +306,7 @@ void cmd_load(int argc, char *argv[])
     iec_clrchn();
 
     if (iec_status() & ST_TIMEOUT) {
-        puts_raw("read error");     /* no disk / file not found / no data */
-        chrout(CR);
+        report_drive_status();      /* the drive's reason (no disk / offline / ...) */
         return;
     }
 
