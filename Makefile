@@ -123,7 +123,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash onerom-c128 onerom-c128-flash memtest memtest-flash sizes
+.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash onerom-c128 onerom-c128-flash onerom-c64c onerom-c64c-flash memtest memtest-flash sizes
 
 all: $(ROM16K)
 
@@ -404,6 +404,30 @@ onerom-c128-flash: onerom-c128
 	@echo ""
 	@echo "Flashed. COLD-BOOT the One ROM: power the C128 fully off AND briefly"
 	@echo "unplug the One ROM's USB, then reconnect and power on. Then type GO64."
+
+# ----------------------------------------------------------------------------
+# Commodore 64C firmware: Tardis DOS for a C64C's SINGLE combined KERNAL+BASIC
+# ROM (251913), served by a 28-pin One ROM (default fire-28-a). A 28-pin board
+# has no X1 pin, so it can't serve the breadbin's separate 24-pin KERNAL+BASIC
+# 2364s (a multi-CS set) -- but the C64C's one combined 16KB chip serves as a
+# single ROM, which it can. Built by tools/build_c64c.sh (reuses the combined-
+# ROM TARGET_C128 mode; skips the char ROM, so `font` fails). See the "C64C
+# port" section in CLAUDE.md. Shares build/ with the C64 build, so the script
+# cleans first -- and you must `make clean` before a subsequent plain C64 build.
+C64C_BOARD ?= fire-28-a
+C64C_VERSION := $(shell grep -o 'v0\.1\.[0-9]*' src/commands/builtins.c | head -1)
+onerom-c64c:
+	ONEROM_BOARD=$(C64C_BOARD) tools/build_c64c.sh
+
+# Flash it. Like the C128, a 28-pin One ROM serving a combined image wants a
+# true power-off cold boot to serve cleanly, so this programs WITHOUT a reboot
+# and tells you to power-cycle by hand.
+onerom-c64c-flash: onerom-c64c
+	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
+		--firmware $(BUILD)/c64c-tardis-dos-$(C64C_VERSION)-for-onerom-$(C64C_BOARD).bin
+	@echo ""
+	@echo "Flashed. COLD-BOOT the One ROM: power the C64C fully off AND briefly"
+	@echo "unplug the One ROM's USB, then reconnect and power on."
 
 # ----------------------------------------------------------------------------
 # Hardware bus diagnostic ROM (`make memtest` / `make memtest-flash`).
