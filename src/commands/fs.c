@@ -515,6 +515,45 @@ void cmd_run(int argc, char *argv[])
 }
 #pragma code-name (pop)
 
+/* sys <addr> - call machine code at <addr> in the CURRENT (Tardis) environment,
+   as a subroutine: JSR in, and return to the prompt when it RTSes (via
+   run_program in c_io.s). Like BASIC's SYS but WITHOUT the run/stock-ROM swap,
+   so it suits routines that use only the documented KERNAL entry points ($FFD2
+   CHROUT, $FFE4 GETIN, the file-I/O vectors) or that merely trip an I/O-region
+   device -- e.g. a SIDKick pico's config, `sys 54301` / `sys 54333`. A program
+   that needs stock KERNAL/BASIC belongs on `run`; one that never RTSes (or
+   trashes the stack) takes the shell with it -- reset to recover, exactly like
+   SYS. The address is decimal by default, hex with a '$' prefix (the peek/poke
+   convention), so `sys 54301` matches the number you'd type in BASIC. */
+static unsigned int parse_addr(const char *s)
+{
+    unsigned int v = 0;
+    char c;
+
+    if (*s == '$') {
+        ++s;
+        while ((c = *s++) != 0) {
+            v <<= 4;
+            if (c >= '0' && c <= '9')      v |= (unsigned char)(c - '0');
+            else if (c >= 'a' && c <= 'f') v |= (unsigned char)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') v |= (unsigned char)(c - 'A' + 10);
+        }
+    } else {
+        while ((c = *s++) >= '0' && c <= '9')
+            v = v * 10 + (unsigned char)(c - '0');
+    }
+    return v;
+}
+
+void cmd_sys(int argc, char *argv[])
+{
+    if (argc < 2) {
+        usage("sys <addr>");
+        return;
+    }
+    run_program(parse_addr(argv[1]));
+}
+
 /* basic - leave the shell for real stock BASIC by swapping the One ROM to the
    stock C64 ROMs so stock KERNAL/BASIC take over (there's no OS underneath, but
    there IS a real C64 one bank-swap away -- and it lands you at BASIC, hence the
