@@ -496,6 +496,10 @@ static void launch_stock_program(unsigned char mode)
 
     rbcp_launch_stock();                /* swap; never returns */
 }
+#pragma code-name (pop)                 /* launch_stock_program stays in CODE2
+                                           (KERNAL half); cmd_run + sys below go
+                                           in the BASIC half to keep the KERNAL
+                                           half clear of the $FE00 back-channel */
 
 void cmd_run(int argc, char *argv[])
 {
@@ -513,7 +517,6 @@ void cmd_run(int argc, char *argv[])
     }
     launch_stock_program(0);            /* swap to stock and RUN; never returns */
 }
-#pragma code-name (pop)
 
 /* sys <addr> - call machine code at <addr> in the CURRENT (Tardis) environment,
    as a subroutine: JSR in, and return to the prompt when it RTSes (via
@@ -528,19 +531,21 @@ void cmd_run(int argc, char *argv[])
 static unsigned int parse_addr(const char *s)
 {
     unsigned int v = 0;
-    char c;
+    unsigned char c;
 
     if (*s == '$') {
         ++s;
-        while ((c = *s++) != 0) {
+        while ((c = (unsigned char)*s++) != 0) {
             v <<= 4;
             if (c >= '0' && c <= '9')      v |= (unsigned char)(c - '0');
             else if (c >= 'a' && c <= 'f') v |= (unsigned char)(c - 'a' + 10);
             else if (c >= 'A' && c <= 'F') v |= (unsigned char)(c - 'A' + 10);
         }
     } else {
-        while ((c = *s++) >= '0' && c <= '9')
-            v = v * 10 + (unsigned char)(c - '0');
+        /* v = v*10 + digit, but *10 as (v<<3)+(v<<1) so cc65 doesn't pull in
+           its 16-bit multiply runtime (~190 bytes) just for a number parse. */
+        while ((c = (unsigned char)*s++) >= '0' && c <= '9')
+            v = (v << 3) + (v << 1) + (unsigned char)(c - '0');
     }
     return v;
 }
@@ -577,11 +582,20 @@ void cmd_basic(int argc, char *argv[])
     settings_save();                    /* snapshot colors + history before leaving */
     /* With a program loaded, hand it to stock BASIC intact (init-without-NEW +
        LINKPRG) and stop at READY. so it can be LISTed / RUN -- a bare cold swap
-       would NEW it away. With nothing loaded, just swap: the user gets a fresh
-       stock BASIC (or the stock reset autostarts a cartridge). */
-    if (load_start != 0)
-        launch_stock_program(1);        /* -> stock BASIC READY., program intact */
-    rbcp_launch_stock();                /* never returns */
+       would NEW it away. With nothing loaded, set up an EMPTY program at $0801
+       instead of a bare cold swap: either way we go through the run-stub, which
+       is what installs the escape hooks -- the RUN/STOP+RESTORE NMI vector AND
+       the IGONE `EXIT` wedge -- so the user can always get back to Tardis (a
+       cold swap left stock BASIC with no way back but a power cycle). The stub
+       skips the "**** COMMODORE 64 BASIC V2 ****" banner in both cases, landing
+       straight at READY. -- consistent with the program-loaded path. */
+    if (load_start == 0) {
+        *(unsigned char *)0x0801 = 0;   /* empty BASIC program (end-of-program */
+        *(unsigned char *)0x0802 = 0;   /*   marker) so LINKPRG/READY are clean */
+        load_start = 0x0801;
+        load_end = 0x0803;
+    }
+    launch_stock_program(1);            /* -> stock BASIC READY. + EXIT; never returns */
 }
 
 /* font [0|1] - live-switch the served character ROM between two font sets via

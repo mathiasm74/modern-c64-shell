@@ -151,6 +151,14 @@ _run_stub:
         jsr $A659               ; CLR - set TXTPTR, ARYTAB/STREND, FRETOP
         jsr $A533               ; LINKPRG - rebuild line links + set VARTAB,
                                 ;   exactly as stock BASIC's LOAD tail ($A52A)
+        ; Hook IGONE ($0308) with basic_exit_wedge so typing EXIT at the stock
+        ; BASIC prompt swaps back to Tardis. $E453 above reset $0308 to the
+        ; default ($A7E4), so install it now (after LINKPRG). The wedge runs at
+        ; its RUN address ($CF00 + its offset in the stub).
+        lda #<(RUN_STUB_BASE + (basic_exit_wedge - _run_stub))
+        sta $0308
+        lda #>(RUN_STUB_BASE + (basic_exit_wedge - _run_stub))
+        sta $0309
         lda RUN_MODE
         bne @ready
         ; mode 0 (run): auto-type "RUN" + CR into the keyboard buffer and drop
@@ -213,4 +221,48 @@ run_imain_hook:
         jmp $A483               ; stock BASIC MAIN: read + execute the buffered "RUN"
 @escape:
         jmp rbcp_escape_tramp
+
+; --- IGONE ($0308) hook: the stock-BASIC `EXIT` command ----------------------
+; Runs at $CF00 + (here - _run_stub); installed at $0308 by the BASIC path above.
+; The interpreter's statement loop does JMP ($0308) here BEFORE fetching the
+; statement, so we mimic the default IGONE ($A7E4 = JSR CHRGET / JSR $A7ED /
+; JMP $A7AE): CHRGET the first char, and if the statement is exactly "EXIT" +
+; end-of-statement, swap back to Tardis (rbcp_escape_tramp); otherwise chain to
+; the real dispatch at $A7E7 with A and TXTPTR exactly as the default left them.
+; After CHRGET, TXTPTR ($7A/$7B) points AT the first char, so the rest of "EXIT"
+; is at offsets +1..+3 and the terminator ($00 end-of-line, or ':') at +4.
+; Position-independent: ZP/absolute refs are all fixed addresses.
+.export basic_exit_wedge
+basic_exit_wedge:
+        jsr $0073               ; CHRGET: advance TXTPTR, load first char -> A
+        cmp #$45                ; 'E' ?
+        bne @go                 ; no -> normal dispatch (A, TXTPTR untouched)
+        tya
+        pha                     ; save Y across the peek
+        ldy #$01
+        lda ($7A),y             ; +1
+        cmp #$58                ; 'X'
+        bne @nope
+        iny
+        lda ($7A),y             ; +2
+        cmp #$49                ; 'I'
+        bne @nope
+        iny
+        lda ($7A),y             ; +3
+        cmp #$54                ; 'T'
+        bne @nope
+        iny
+        lda ($7A),y             ; +4: end of statement?
+        beq @yes                ; $00 end-of-line
+        cmp #$3A                ; ':'
+        beq @yes
+@nope:
+        pla
+        tay                     ; restore Y
+        lda #$45                ; restore A='E' for the dispatcher
+@go:
+        jmp $A7E7               ; JSR $A7ED (dispatch) / JMP $A7AE (loop)
+@yes:
+        jmp rbcp_escape_tramp   ; "EXIT" -> swap back to Tardis (full reset; the
+                                ; saved Y left on the stack no longer matters)
 _run_stub_end:
