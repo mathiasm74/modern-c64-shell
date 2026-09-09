@@ -99,7 +99,7 @@ static void history_add(const char *s)
         ++i;
     }
     hist[hist_next][i] = 0;
-    hist_next = (hist_next + 1) % HIST_N;
+    hist_next = (hist_next + 1) & (HIST_N - 1);
     if (hist_count < HIST_N)
         ++hist_count;
 }
@@ -109,7 +109,7 @@ static const char *history_get(unsigned char browse)
 {
     if (browse == 0)
         return "";
-    return hist[(hist_next + HIST_N - browse) % HIST_N];
+    return hist[(hist_next + HIST_N - browse) & (HIST_N - 1)];
 }
 
 /* Compare two NUL-terminated strings for equality. Input and the table names
@@ -496,9 +496,9 @@ void settings_save(void)
     for (j = 0; j < k; ++j)
         nv_blob[i++] = prompt_str[j];
     nv_blob[i++] = hist_count;
-    oldest = (unsigned char)((hist_next + HIST_N - hist_count) % HIST_N);
+    oldest = (unsigned char)((hist_next + HIST_N - hist_count) & (HIST_N - 1));
     for (n = 0; n < hist_count; ++n) {
-        s = hist[(unsigned char)((oldest + n) % HIST_N)];
+        s = hist[(unsigned char)((oldest + n) & (HIST_N - 1))];
         k = 0;
         while (s[k] && k < NV_ENTRY_MAX)
             ++k;
