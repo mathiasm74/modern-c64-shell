@@ -28,10 +28,12 @@ ONEROM_CFG   := cfg/onerom.json
 # multi-ROM-served slot ever worked -- per Piers, an accident). LOAD_SLOT
 # now refuses the size mismatch, so cfg/onerom-stock.json carries each
 # overlay image tripled into a 3-chip multi set to match (hardware-validated
-# on 0.7.1, 2026-09-04). Revisit when 0.7.2 lands -- Piers may add a proper
-# "copy single ROM into multi-ROM slot" primitive, which would also enable
-# the ROM-bank-swap command architecture.
-ONEROM_FW_VERSION ?= 0.7.1
+# on 0.7.1, 2026-09-04; the tripled-overlay workaround still holds on 0.7.2,
+# hardware-validated 2026-09-09). Moved 0.7.1 -> 0.7.2 chasing the recurring
+# "One ROM drops off USB during programming" gremlin (0.7.2 is where a proper
+# "copy single ROM into multi-ROM slot" primitive + the ROM-bank-swap command
+# architecture were expected; revisit those when needed).
+ONEROM_FW_VERSION ?= 0.7.2
 
 # Plugins are supplied on the CLI (not pinned in the config JSONs), so every
 # build picks the latest plugin versions compatible with the firmware the CLI
