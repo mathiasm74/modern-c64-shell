@@ -238,16 +238,41 @@ Remaining increments:
   scratch slot (font B uses slot 2; find a free one, or `LOAD_SLOT` on demand).
   Flash; `banktest` must print the banner **and** leave a program loaded at
   `$0801-$7FFF` intact (the run-from-ROM, no-user-RAM-clobber proof).
-- **Increment 4 — move the fast loader (the pressure proof).** Relocate the Epyx
-  path into a loader bank: `fastload_recv.s` (321 B) + `fastload_send.s` (106 B)
-  + `fload_program`/`fast_receive_prg`/`cmd_fload` glue, calling only the static
-  `iec_*`/screen/CHROUT. Route **both** `fload` and `run <name>` through
-  `bank_call` (else the resident copy stays and nothing is freed). It's timing-
-  critical but ROM-to-ROM access is identical, so timing is preserved; the swap
-  happens once, before the timed transfer. **Measure `make` free-byte deltas
-  before/after** — that number is the pressure-relief proof. Data-driven
-  dispatch (command table in the bank, not the base) is the follow-on that takes
-  per-command cost off the 16 KB entirely.
+- **Increment 4 — move the fast loader (the pressure proof).** *De-risked:* the
+  timed receive is a single call — `fast_receive_prg` calls `_epyx_recv_prg`
+  (fastload_recv.s), whose sample loop runs internally. So the **timing-critical
+  ASM stays RESIDENT** in the KERNAL half (shared with the fast-dir overlay via
+  the SVC table already), and only the **non-timing orchestration glue** moves
+  to a bank: `fold_name`, the install/header sequence, the `recv_prg` call,
+  the drive-still-there verify, and the report. There is no timing risk, because
+  no timed code is banked.
+
+  Shape:
+  1. Expose the primitives the glue needs but the dir-tailored table lacks:
+     `_epyx_recv_prg` (0-arg, whole-PRG receive) as a direct SVC entry, and a
+     `send_header_mb` **mailbox wrapper** for the named header — SVC routines are
+     capped at ONE arg (overlay vs resident run on separate cc65 stacks, so a
+     stack-passed 2nd arg is garbage; svc 12 is already the `$`-header wrapper
+     for exactly this reason), so the 2-arg `send_header(name,len)` can't be a
+     plain entry — the wrapper reads the folded name from the mailbox. There's
+     room: SVC entries sit at `$FF80` and the file-I/O stubs begin at `$FFBA`,
+     leaving `$FFB0-$FFB9` (3 more entries) free.
+  2. A **C loader bank** (`src/banks/loader.c` + a `$A000` crt0/cfg, modelled on
+     the overlay crt0 but linked to ROM at `$A000` instead of RAM at `$8800`):
+     `loader_main` reads a small mailbox (device + filename pointer), runs the
+     fload sequence via SVC + `$FFD2`, and writes `load_start`/`load_end` + a
+     status back to the mailbox. No writable state at `$A000` (it's ROM); the
+     mailbox and the C stack live in normal RAM.
+  3. Base `cmd_fload` and `cmd_run` set the mailbox and `bank_call` the loader,
+     then read the result. **Both** must route through it, or the resident copy
+     stays and nothing is freed.
+  4. **Measure `make` free-byte deltas** before/after — the glue that leaves the
+     16 KB (`fold_name` ~112, `fload_program` ~170, `fast_receive_prg` ~75, the
+     `cmd_fload` report) is the pressure-relief proof; the timed ASM stays put.
+
+  Hardware validation is a normal `fload`/`run <name>` (the swap is inert in
+  VICE). Data-driven dispatch (command table in the bank, not the base) is the
+  follow-on that takes per-command cost off the 16 KB entirely.
 
 Order rationale: 2–3 prove the mechanism cheaply and safely; 4 is the payoff but
 the riskiest (timing + `run` coupling + hardware-only), so it goes last, on top
