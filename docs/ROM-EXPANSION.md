@@ -205,6 +205,54 @@ the done response, then `JSR`s the window. Validate the same way (message +
 program intact). This PoC also answers the "live-slot reprogram" open question
 that both this and the cart-return plugin depend on.
 
+## PoC status & grounded increment plan
+
+Built and verified (this is real, in-tree):
+
+- **Increment 1 — bank build + ABI (done).** `cfg/bank.cfg` links a self-
+  contained 8 KB image to run at `$A000-$BFFF` with a `$A000` JMP-table entry
+  ABI; `src/banks/bank1.s` is a minimal test bank (entry 0 prints "hello from
+  rom bank 1" via the static `$FFD2` CHROUT, touches no writable memory).
+  `make banks` → `build/banks/bank1.bin` (8 KB, first bytes `4C 03 A0` = the
+  entry JMP). This is the verifiable foundation; the swap itself is hardware-
+  only so the remaining increments are validated on the C64.
+
+The mechanism is grounded in existing, hardware-validated code:
+
+- The swap is the **`font` path**: `rbcp_font_tramp` (launch.s) already does
+  `enter CR → LOAD_SLOT (A=RAM slot, X=flash slot) → SWITCH_SLOT → exit CR`,
+  running from the RBCP RAM block, live, with the CPU executing from the
+  unchanging KERNAL half. A bank dispatcher is the same primitive applied twice.
+
+Remaining increments:
+
+- **Increment 2 — dispatcher + swap-back.** A resident `bank_call(bank, index)`
+  in the **KERNAL/static half** (survives the swap): set the font-style mailbox
+  (flash slot, RAM slot), call a `bank_tramp` (a near-clone of `rbcp_font_tramp`)
+  that `LOAD_SLOT`+`SWITCH_SLOT`s the bank in, `JSR $A000 + 3*index`, then
+  `SWITCH_SLOT`s back to the base RAM slot 0. Add a `banktest` command that
+  calls `bank_call(BANK1, 0)`. Two RBCP transactions (in, out) per invocation.
+- **Increment 3 — firmware set + hardware bring-up.** Add a bank set to the
+  stock config: `[bank1.bin | build/kernal.bin | c64-charset]` — KERNAL + char
+  byte-identical to the base set so `SWITCH_SLOT` is live-safe. Pick its RAM
+  scratch slot (font B uses slot 2; find a free one, or `LOAD_SLOT` on demand).
+  Flash; `banktest` must print the banner **and** leave a program loaded at
+  `$0801-$7FFF` intact (the run-from-ROM, no-user-RAM-clobber proof).
+- **Increment 4 — move the fast loader (the pressure proof).** Relocate the Epyx
+  path into a loader bank: `fastload_recv.s` (321 B) + `fastload_send.s` (106 B)
+  + `fload_program`/`fast_receive_prg`/`cmd_fload` glue, calling only the static
+  `iec_*`/screen/CHROUT. Route **both** `fload` and `run <name>` through
+  `bank_call` (else the resident copy stays and nothing is freed). It's timing-
+  critical but ROM-to-ROM access is identical, so timing is preserved; the swap
+  happens once, before the timed transfer. **Measure `make` free-byte deltas
+  before/after** — that number is the pressure-relief proof. Data-driven
+  dispatch (command table in the bank, not the base) is the follow-on that takes
+  per-command cost off the 16 KB entirely.
+
+Order rationale: 2–3 prove the mechanism cheaply and safely; 4 is the payoff but
+the riskiest (timing + `run` coupling + hardware-only), so it goes last, on top
+of a proven dispatcher.
+
 ## Cross-references
 
 - `CART-RETURN-PLUGIN.md` — shares the host-control-fork plugin work and the

@@ -125,7 +125,7 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
-.PHONY: all clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash onerom-c128 onerom-c128-flash onerom-c64c onerom-c64c-flash memtest memtest-flash sizes
+.PHONY: all banks clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash onerom-c128 onerom-c128-flash onerom-c64c onerom-c64c-flash memtest memtest-flash sizes
 
 all: $(ROM16K)
 
@@ -234,6 +234,15 @@ $(BUILD)/overlays/%.o: src/overlays/%.s | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 $(BUILD)/overlays/%.bin: $(BUILD)/overlays/%.o cfg/overlay.cfg
 	$(LD) -C cfg/overlay.cfg -o $@ $<
+
+# --- ROM-expansion PoC banks (docs/ROM-EXPANSION.md, Option A) ---------------
+# A bank is a self-contained 8KB ROM image served at $A000-$BFFF in place of the
+# base set's BASIC half; cfg/bank.cfg links it there with a $A000 JMP-table ABI.
+# (The generic $(BUILD)/%.o rule above assembles src/banks/*.s -> build/banks/*.o.)
+$(BUILD)/banks/%.bin: $(BUILD)/banks/%.o cfg/bank.cfg
+	$(LD) -C cfg/bank.cfg -o $@ $<
+	@echo "  $(@F) : $$(wc -c < $@) bytes"
+banks: $(BUILD)/banks/bank1.bin
 # Generated overlay page-number map (start page of each overlay), derived from
 # the actual .bin sizes. The resident overlay thunks include it; their .s
 # therefore depend on it, and it depends on the overlay .bin -- so the page
