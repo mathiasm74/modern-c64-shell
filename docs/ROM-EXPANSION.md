@@ -287,16 +287,32 @@ Remaining increments:
      longer exercise the fast-load path — a real regression for a command that
      had VICE coverage.
 
-  **The lesson (what banks are actually good for):** banking an *existing*
-  resident command helps little — resident commands are either small or share
-  resident helpers, and the bank plumbing costs ~what a thin command saves. The
-  16 KB relief from this architecture is really about **(a)** *future* commands
-  living entirely in banks with **data-driven dispatch** (so a new command costs
-  ~0 base bytes — the true answer to "new functionality keeps filling the
-  16 KB"), and **(b)** running command bodies from ROM instead of the `$8800`
-  RAM overlay (the no-user-clobber win), *not* about clawing space back by moving
-  today's resident code. The `banktest` PoC proves the mechanism; the next real
-  step is **data-driven dispatch**, not more single-command moves.
+  **The lesson — don't split a cluster.** The protocol didn't *have* to stay
+  resident; it stayed resident because I moved only `fload` and left its
+  co-user `dir` calling it through SVC. A bank is served as a whole window and
+  only one is served at a time, so:
+
+  > **Code that calls each other must be in the same bank (or the callee must be
+  > resident). Resident = the universally-shared primitives everything uses
+  > (`iec_*`, screen, dispatch, RBCP). Banks = clusters of commands + their
+  > *private* helpers.**
+
+  The Epyx protocol + `fload` + `run`'s fast path + `dir` form one cluster (they
+  call only each other and the resident `iec_*`). The right move is a single
+  **"disk bank"** holding all of them; then the ~430 B protocol + the install +
+  the glue all leave the 16 KB — a real saving. (Two caveats: `dir` is already a
+  RAM overlay, so *its* body is already out of the 16 KB — the NEW bytes freed
+  are the resident protocol/install; and the protocol is ROM-to-ROM either way,
+  swapped in once before the timed transfer, so no timing risk.)
+
+  My single-`fload` attempt failed precisely because it split that cluster. So
+  the two real levers are: **(a)** move whole *clusters* into banks (the disk
+  bank frees the resident fast-load code); and **(b) data-driven dispatch** —
+  future commands living entirely in banks with their command table in the bank,
+  so a new command costs ~0 base bytes (the true answer to "new functionality
+  keeps filling the 16 KB"), plus the run-from-ROM/no-`$8800`-clobber win. The
+  `banktest` PoC proves the mechanism; the disk-bank cluster and data-driven
+  dispatch are the two things that actually move the needle.
 
 Order rationale: 2–3 prove the mechanism cheaply and safely; 4 is the payoff but
 the riskiest (timing + `run` coupling + hardware-only), so it goes last, on top
