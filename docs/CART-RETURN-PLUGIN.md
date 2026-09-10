@@ -62,82 +62,150 @@ lives in a served range:
 
 So the plugin can watch for the exit even though it is blind to the cart itself.
 
-## Mechanism (the clean version): ride the reset-vector fetch
+## What the plugin API actually allows (`firmware/ora/api.h`)
 
-A reset boundary is the one moment nothing is half-executed, so it is the only
-*safe* place to change the served KERNAL/BASIC out from under the CPU. If the
-cart exits with a soft reset (`JMP ($FFFC)` — the common case):
+Read the header before committing to a mechanism; the reality changes the shape.
+Plugins are C binaries that run on the free CPU cores (serving is PIO+DMA), get
+a `ora_lookup_fn` to reach firmware facilities, run their own main loop, and
+`ora_yield` to cooperate with the other core. There is a **C64 kernal-patcher
+example** in `firmware/ora/examples/` — the closest existing thing to what we
+want; follow it.
 
-1. Plugin, currently serving the **stock** set in cart-mode, sees the read at
-   `$FFFC`.
-2. It **switches the served set back to Tardis** and serves *Tardis's* reset
-   vector bytes for the `$FFFC/$FFFD` reads.
-3. The CPU takes Tardis's reset address and jumps straight into Tardis's
-   now-served reset — atomic, safe, no half-executed instruction.
-4. Tardis's `reset.s` runs and must **skip the cart autostart this time** (else
-   it re-detects `CBM80` and bounces back to stock). The plugin leaves a
-   "returning from cart — skip the cart" hint in the back-channel that
-   `reset.s` reads. This is a small change on our side; boot already does RBCP
-   reads.
+The relevant capabilities:
 
-That is the whole happy path: one bus-triggered slot switch + a few lines in
-`reset.s`.
+- **Monitor modes:** `ORA_MONITOR_MODE_OBSERVE` (passive), `..._CONTROL`
+  (the plugin "takes control of what One ROM serves, modifying or replacing the
+  ROM image"), and `..._OVERRIDE` ("take over individual read cycles") — the
+  last is **not yet implemented**.
+- **The address monitor is a polling FIFO ring buffer**, not a per-address
+  callback. You configure it, start it, and poll the DMA write position (or
+  `ora_wait_for_knock` blocks until a knock pattern appears in the ring — this
+  is how RBCP spots its command frames). So you always learn about an access a
+  few cycles *after* it happened.
+- **Patch the served image:** `ora_reprogram_ram_rom_slot` updates a contiguous
+  region of the RAM slot currently being served (pin mapping applied for you);
+  `ora_read_ram_rom_slot` reads it back.
+- **Switch the served set:** `ora_set_active_ram_slot` "atomically switches the
+  ROM image being served to the host to the specified RAM slot."
+- **No host↔plugin back-channel beyond RBCP.** Metadata/GPIO are device→plugin.
 
-## Gotcha #1 — the initial reset looks identical to the exit reset
+The consequence for us: **the elegant "serve Tardis's reset vector for the exact
+`$FFFC` read" needs OVERRIDE mode, which isn't implemented.** The monitor is
+observe-after-the-fact, so we can't change what a specific read returns in real
+time. A plain observe-then-`set_active_ram_slot` is worse than useless: by the
+time the FIFO shows `$FFFC` was read, the CPU has already latched the *stock*
+vector and jumped to the *stock* reset address — switch the slot now and it
+executes Tardis's bytes at a stock address → garbage.
 
-When Tardis first hands off to a cart it does `_rbcp_launch_stock` → `JMP
-($FFFC)` → stock reset. That is **also** a `$FFFC` fetch. If the plugin fired on
-it, it would yank control back to Tardis before the cart ever ran.
+## Mechanism (revised): pre-patch the served stock image with a return stub
 
-So the plugin must **arm** its exit-watch only *after* the handoff:
+CONTROL mode + `ora_reprogram_ram_rom_slot` give the real lever: **modify the
+served stock ROM image so the cart's exit lands in a small 6502 stub we inject,
+which swaps back to Tardis via RBCP.** No real-time interception needed.
 
-- As it swaps for a cart, Tardis signals the plugin over the back-channel:
-  "cart-mode — arm the return-watch."
-- The plugin **ignores the immediately-following reset** (the handoff's own
-  `$FFFC`) and only watches for the *next* reset-vector fetch (the cart's
-  deliberate exit).
+1. Tardis detects the cart and swaps to the stock set as today
+   (`_rbcp_launch_stock`), but first tells the plugin (over RBCP — see the
+   two-plugin note) "cart-mode: arm the return."
+2. The cart boots normally off the *unpatched* stock reset path (CBM80
+   autostart). **We must not patch the reset vector before this**, or the
+   initial boot would hit our stub instead of the cart.
+3. Once the cart is up, the plugin patches the served stock image:
+   - inject a small return stub into stock ROM **dead space** — the C64 KERNAL
+     has ~28 unused `$AA` bytes at `$E4B7-$E4D2` (and BASIC ~30 at `$BF53`); the
+     stub is only a few bytes (issue the RBCP switch-to-Tardis sequence, then
+     `JMP ($FFFC)`);
+   - repoint the reset vector `$FFFC/$FFFD` at the stub.
+   Both are `ora_reprogram_ram_rom_slot` writes to the served stock slot.
+4. The cart exits via `JMP ($FFFC)` → our stub → RBCP swap to the Tardis set →
+   Tardis reset.
+5. Tardis's `reset.s` must **skip the cart autostart this time** so it doesn't
+   re-detect `CBM80` and bounce back. A RAM flag distinguishes it (set by the
+   stub / cleared on cold power-on), or the swap-back sequence itself carries
+   the hint.
 
-Note the initial cart boot never touches the BASIC cold-start entry either: the
-stock reset autostarts the cart *before* falling through to BASIC. So a fetch of
-the cold-start entry while armed is itself a strong "cart exited" signal — a
-useful secondary trigger, and a fallback for carts that exit to cold-start
-without a reset (but see Gotcha #2).
+Timing of step 3 ("cart is up") is the crux — see Gotcha #1.
 
-## Gotcha #2 — carts that don't exit via a reset
+Note this reuses machinery we already have: the RBCP swap-back is exactly what
+`rbcp_escape_tramp` does, and the injected stub is a cousin of the `run` stub.
 
-Some carts "exit to BASIC" by jumping *straight into* the BASIC cold start
-rather than resetting. There is no reset boundary to ride, and flipping the
-served KERNAL/BASIC out from under a running routine corrupts it (the CPU would
-fetch Tardis bytes where the running stock routine expected stock bytes).
+## Gotcha #1 — *when* to patch (the initial boot must stay unpatched)
 
-Handling that cleanly needs the plugin to **inject a redirect** — serve *custom*
-bytes at the cold-start entry that bounce the CPU to Tardis's reset — rather
-than merely flip a slot. Whether that's possible depends on how much
-fine-grained per-address control the plugin API exposes (a single custom-byte
-override at a chosen address would be enough: serve a `JMP ($FFFC)` there, with
-the reset vector already pointed at Tardis).
+The reset vector can't be patched until the cart has booted, because the cart's
+own autostart rides the stock reset path. So the plugin has to detect
+"cart is up" before it patches. Options, easiest to most precise:
 
-Summary: **reset-style exits → clean (slot switch only); direct-JMP-to-BASIC
-exits → hard (needs byte injection).**
+- **Delay:** patch a fixed interval after the arm/handoff (a cart's menu is up
+  within a fraction of a second). Crude but simple, and the window before a user
+  could exit is huge.
+- **KERNAL-activity watermark:** the plugin can't see the cart at `$8000`, but
+  it *can* see the cart calling the KERNAL — `CHROUT`/screen/keyboard reads are
+  in served ranges. Wait until N such accesses have gone by (the initial reset
+  sequence has a known, bounded shape), then patch. More precise, still simple.
+- **Watch the initial reset settle:** the handoff's own `$FFFC` read is the
+  first thing in the FIFO after arming; ignore it, then patch once traffic
+  moves past the reset sequence.
+
+The RAM flag that tells `reset.s` "skip the cart this time" has the same
+cold-vs-warm concern: it must survive the cart's exit but be clear on a true
+cold power-on. A dedicated NV cell (we already use the One ROM NV for settings)
+or a magic RAM signature checked against a power-on RAM pattern both work.
+
+## Gotcha #2 — cart exit styles (pre-patching covers more than the reset-ride would)
+
+Pre-patching is actually *stronger* than the abandoned reset-vector-ride here:
+because we're editing the served image, we can repoint **every** "back to BASIC"
+entry the cart might use, not just `$FFFC`:
+
+- `$FFFC/$FFFD` — soft-reset exits.
+- `$A000/$A001` — the BASIC **restart** vector (warm exits jump through it).
+- the BASIC **cold-start** entry in the `$E000` KERNAL region.
+
+Point them all at the same injected stub and both reset-style *and*
+direct-JMP-to-BASIC exits funnel into it. The one thing we can't catch is an
+exit that neither resets nor touches a BASIC entry vector (a cart that does its
+own thing) — but "exit to BASIC" by definition goes through one of these.
+
+The remaining hard case is purely **safety of the running CPU**: for a
+direct-JMP exit the CPU is mid-flow when it reaches the patched entry, but since
+we only changed the *target bytes at that entry* (not the code the CPU is
+currently executing), it lands on our stub cleanly — the stub then does the RBCP
+swap. This is fine as long as the stub itself lives in dead space we injected
+and doesn't disturb anything the cart still needs. Validate per cart.
+
+## The two-plugin limit — fold this into host-control, don't add a third
+
+One ROM runs **two plugins at once** (one system + one user, by resource class).
+We already use **usb** (system) and **host-control / RBCP** (user), and we can't
+drop host-control — the whole overlay/swap/NV story depends on it. So the
+cart-return logic can't be a *third* plugin; it has to be **added to a fork of
+the host-control (user) plugin** — one combined user plugin that does RBCP *and*
+the cart-return watch/patch. That's fine (3rd-party user plugins are supported,
+and we'd be building our own), but it means vendoring/forking Piers'
+host-control plugin source rather than writing a clean-slate plugin. Worth
+confirming with Piers whether he'd take the cart-return watcher upstream into
+host-control instead, so we don't carry a fork.
 
 ## Shape of the feature
 
 Two parts:
 
-1. **Bus-triggered plugin (RP2350):**
-   - Accept a back-channel "arm cart-return watch" command (set by `reset.s` at
-     handoff).
-   - While armed and serving the stock set, ignore the first reset; then watch
-     for a `$FFFC` fetch (and optionally the BASIC cold-start entry).
-   - On trigger: `SWITCH_SLOT` back to the Tardis set, serve Tardis's reset
-     vector, set a "returned-from-cart" back-channel flag, disarm.
-   - Stretch: per-address byte override for the direct-JMP case.
+1. **Plugin (folded into our host-control fork, `firmware/ora` C):**
+   - Accept an RBCP "arm cart-return, stock-set = N, tardis-set = M" command
+     that Tardis issues just before `_rbcp_launch_stock`.
+   - While armed, wait for the cart to be up (Gotcha #1), then
+     `ora_reprogram_ram_rom_slot` the served stock slot: inject the return stub
+     into KERNAL dead space (`$E4B7`) and repoint `$FFFC`, the `$A000` restart
+     vector, and the BASIC cold-start entry at it.
+   - The stub (running as 6502 on the C64) issues the RBCP swap-to-Tardis; the
+     plugin services it with `ora_set_active_ram_slot` like any other switch,
+     and sets the "returned-from-cart" hint.
+   - Model it on the `firmware/ora/examples` **C64 kernal patcher**.
 
 2. **`reset.s` (our ROM):**
-   - At the `CBM80` handoff, send the "arm cart-return watch" hint before
+   - At the `CBM80` handoff, issue the "arm cart-return" RBCP command before
      `_rbcp_launch_stock`.
-   - At boot, read the "returned-from-cart" flag; if set, **skip** the `CBM80`
-     autostart and fall through to the shell (and clear the flag).
+   - At boot, read the "returned-from-cart" hint (NV cell); if set, **skip** the
+     `CBM80` autostart and fall through to the shell (and clear it).
 
 ## Interaction notes
 
@@ -165,21 +233,38 @@ plugin. It is "boot Tardis *despite* the cart" rather than a true "exit the cart
 *to* Tardis," and it only helps 8K carts, but it needs no firmware work and
 gives an escape hatch while the plugin is designed/built.
 
-## Open questions (resolve against Piers' plugin SDK before building)
+## Open questions (answered vs. remaining)
 
-1. Can a 3rd-party plugin **react to a specific served address** during
-   byte-serving (i.e. run logic keyed on the address it's currently serving)?
-2. Can it trigger a **`SWITCH_SLOT`** (or equivalent served-set change) from
-   inside that reaction, within the serving timing budget?
-3. Can it **override individual byte reads** at a chosen address (needed only
-   for the direct-JMP-to-BASIC / injection case)?
-4. What **back-channel** facilities does a 3rd-party plugin get for host↔plugin
-   hints (the "arm" command and the "returned-from-cart" flag)?
-5. Timing: is there headroom in the serve loop to do an address compare +
-   conditional slot switch without missing a byte, or does the plugin model
-   already give a clean hook for "on access to X"?
+Answered by `firmware/ora/api.h`:
 
-If (1) and (2) are yes, the clean reset-style version is buildable. (3) unlocks
-the direct-JMP carts. (4) is needed for the arm/skip handshake but could be
-worked around with a fixed RAM-cell convention if the plugin can read/write a
-byte the host also sees.
+- **Per-address reaction?** Only via a **polling FIFO** (address-monitor ring
+  buffer), not a synchronous per-read hook — so no real-time byte substitution.
+  (`ORA_MONITOR_MODE_OVERRIDE` would give per-read-cycle control but is **not yet
+  implemented**.) → This is why the design pre-patches instead of intercepting.
+- **Switch the served set from the plugin?** Yes — `ora_set_active_ram_slot`
+  (atomic).
+- **Modify served bytes at runtime?** Yes — `ora_reprogram_ram_rom_slot` /
+  `ora_read_ram_rom_slot`. This is the core lever.
+- **Back-channel?** Nothing beyond RBCP — hence arm/skip go over RBCP, which is
+  why cart-return must live in the host-control plugin.
+
+Remaining, to settle before/while building:
+
+1. **`ora_reprogram_ram_rom_slot` on the *actively-served* slot** — is patching
+   the live stock image (not a background slot) safe/atomic w.r.t. an in-flight
+   serve, and how many bytes/how fast? (We only patch a vector + a few stub
+   bytes, so latency is fine, but confirm live-slot writes are supported.)
+2. **Cart-up detection** (Gotcha #1) — pick delay vs KERNAL-activity watermark
+   after seeing what the FIFO actually looks like during a real cart boot.
+3. **The two-plugin question** — will Piers take the cart-return watcher into
+   host-control upstream, or do we vendor a fork? (Affects maintenance, not
+   feasibility.)
+4. **Per-cart validation** — which real 8K carts exit via `$FFFC` vs the `$A000`
+   restart vs cold-start, and does the injected stub disturb anything they still
+   rely on. Hardware-only, per cart.
+
+Net: with `ora_reprogram_ram_rom_slot` + `ora_set_active_ram_slot` confirmed, the
+**pre-patch-the-served-stock-image** version is buildable today (folded into
+host-control), for **8K carts** (the 16K/Ultimax hardware limit stands). The
+`OVERRIDE`-based real-time version is a cleaner future option if/when Piers
+implements that mode.
