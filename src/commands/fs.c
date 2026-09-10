@@ -250,7 +250,6 @@ void cmd_pwd(int argc, char *argv[]) { (void)argc; (void)argv; dir_run(2); }
 #pragma code-name (push, "CODE2")
 #pragma rodata-name (push, "RODATA2")
 static unsigned char fold_name(unsigned char *buf, const char *src);
-static unsigned int fast_receive_prg(void);
 
 void cmd_load(int argc, char *argv[])
 {
@@ -360,6 +359,15 @@ static unsigned char fold_name(unsigned char *buf, const char *src)
    on our DATA-high before every byte, so cc65's per-byte overhead was directly
    slowing the transfer. Sets load_start/load_end; returns the last written
    address, or 0 if fewer than 3 bytes arrived. Caller already sent the header. */
+/* Fast-load `name` over the Epyx path into RAM at the PRG's embedded load
+   address; sets load_start/load_end. Returns the last written address (the
+   value `fload`/`run` report), or 0 on any failure -- which it has already
+   reported (no device / not Epyx-capable / broken stream). Shared by `fload`
+   and `run <name>`.
+
+   No screen-blanking: the receiver (_epyx_recv_byte) paces each byte around
+   VIC-II badlines via the raster, so the display stays visible during the
+   load. */
 static unsigned int fast_receive_prg(void)
 {
     unsigned int end = epyx_recv_prg();
@@ -377,11 +385,7 @@ static unsigned int fast_receive_prg(void)
    address; sets load_start/load_end. Returns the last written address (the
    value `fload`/`run` report), or 0 on any failure -- which it has already
    reported (no device / not Epyx-capable / broken stream). Shared by `fload`
-   and `run <name>`.
-
-   No screen-blanking: the receiver (_epyx_recv_byte) paces each byte around
-   VIC-II badlines via the raster, so the display stays visible during the
-   load. */
+   and `run <name>`. */
 static unsigned int fload_program(const char *name)
 {
     unsigned char namebuf[16];
@@ -396,8 +400,6 @@ static unsigned int fload_program(const char *name)
         return 0;
     }
     if (fastload_epyx_send_header((const char *)namebuf, namelen) != 0) {
-        /* the drive never did the Epyx "ready for header" handshake: it isn't
-           Epyx-capable (or the protocol isn't enabled on it). */
         fastload_epyx_mark_unsupported();
         puts_raw("fast load not supported");
         chrout(CR);
@@ -408,19 +410,9 @@ static unsigned int fload_program(const char *name)
         chrout(CR);
         return 0;
     }
-    /* The Epyx stream can't tell a dead bus from EOF: the C64's pull-ups
-       float CLK ("ready") and DATA high, every sampled byte reads $00 -- and
-       $00 as a block length IS the protocol's terminator, so a cable yanked
-       mid-transfer produces an instant, clean-looking (truncated) EOF. Verify
-       the drive is still on the bus before trusting the result: TALK its
-       command channel. The probe runs ~30ms after the yank (one block
-       boundary), squarely inside the connector's contact bounce, so any
-       single line sample can lie -- every wait in the chkin path is bounded
-       (hs_ack under ATN, wait_clk_lo on the turnaround; the ready-wait passes instantly on a floating bus), and a lie
-       surfaces as NODEV or TIMEOUT rather than a wedge. clrchn always runs:
-       it releases ATN/CLK/DATA even on failure (its UNTALK send aborts
-       instantly when ST already carries NODEV), and it can only add error
-       bits to ST, never clear them, so checking after it is safe.           */
+    /* The Epyx stream can't tell a dead bus from EOF (a yank reads a clean-
+       looking truncated EOF), so verify the drive is still on the bus before
+       trusting the result: TALK its command channel and check ST. */
     iec_set_fa(default_device);
     iec_set_sa(15);
     iec_chkin();
@@ -587,9 +579,11 @@ void cmd_banktest(int argc, char *argv[])
    autostarts a cartridge). Real use requires the host-control plugin (the
    `make onerom-stock` build); on a shell-only OneROM or in VICE the
    protocol calls are inert and the JMP through (FFFC) just re-enters our
-   own shell. Never returns; back to the shell needs a power cycle. Lives
-   in CODE2 (KERNAL ROM) so its bytes don't push the BASIC ROM over budget. */
-#pragma code-name (push, "CODE2")
+   own shell. Never returns; back to the shell needs a power cycle. In the
+   BASIC ROM half (with cmd_font/font_select below) to keep the KERNAL half
+   clear of the $FE00 back-channel window -- the bank dispatcher (launch.s
+   _bank_run_test) must live in the static KERNAL half, so it spends the budget
+   there and cmd_basic/font move here to make room. */
 void cmd_basic(int argc, char *argv[])
 {
     (void)argc; (void)argv;
@@ -658,7 +652,6 @@ unsigned char font_get(void)
 {
     return font_current;
 }
-#pragma code-name (pop)
 
 /* cmd_font lives in the default CODE (BASIC ROM half), not CODE2: the C=
    boot-menu launcher (src/rbcp/launch.s) added enough KERNAL-half asm to push

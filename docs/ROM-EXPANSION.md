@@ -274,6 +274,30 @@ Remaining increments:
   VICE). Data-driven dispatch (command table in the bank, not the base) is the
   follow-on that takes per-command cost off the 16 KB entirely.
 
+  **Attempted and reverted — the fast loader is a BAD bank candidate.** Built it,
+  measured it, backed it out. Two reasons, both important lessons:
+  1. **Nil saving.** The fast loader's *bulk* — the timed Epyx protocol
+     (`fastload_recv/send`, ~430 B) and the M-E/M-W install — is **shared with
+     the dir overlay via SVC and must stay resident**. Only the thin
+     orchestration (~245 B) could move, and that was almost exactly cancelled by
+     the plumbing the move ADDS (mailbox glue + a `send_header_mb` wrapper + 2
+     SVC entries + the dispatcher): net free-byte change ≈ **+6 bytes**.
+  2. **Lost testability.** Routing `fload`/`run <name>` through a bank makes them
+     **hardware-only** (the swap is inert in VICE), so `test_run_arg` could no
+     longer exercise the fast-load path — a real regression for a command that
+     had VICE coverage.
+
+  **The lesson (what banks are actually good for):** banking an *existing*
+  resident command helps little — resident commands are either small or share
+  resident helpers, and the bank plumbing costs ~what a thin command saves. The
+  16 KB relief from this architecture is really about **(a)** *future* commands
+  living entirely in banks with **data-driven dispatch** (so a new command costs
+  ~0 base bytes — the true answer to "new functionality keeps filling the
+  16 KB"), and **(b)** running command bodies from ROM instead of the `$8800`
+  RAM overlay (the no-user-clobber win), *not* about clawing space back by moving
+  today's resident code. The `banktest` PoC proves the mechanism; the next real
+  step is **data-driven dispatch**, not more single-command moves.
+
 Order rationale: 2–3 prove the mechanism cheaply and safely; 4 is the payoff but
 the riskiest (timing + `run` coupling + hardware-only), so it goes last, on top
 of a proven dispatcher.
