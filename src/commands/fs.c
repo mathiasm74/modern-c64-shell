@@ -556,6 +556,23 @@ void cmd_sys(int argc, char *argv[])
     run_program(parse_addr(argv[1]));
 }
 
+/* banktest - ROM-expansion PoC (docs/ROM-EXPANSION.md, Option A). Swaps the
+   served BASIC window to a test ROM bank, runs its entry-0 command (which
+   prints "hello from rom bank 1" from ROM at $A000), then switches back to the
+   base. Proves a command body can live OUTSIDE the 16 KB and run from ROM
+   without touching user RAM. `bank_run_test` (launch.s) returns nonzero if the
+   swap couldn't happen (no One ROM / VICE), and importantly does NOT call $A000
+   in that case (it would be the base's own code, not the bank). */
+extern unsigned char bank_run_test(void);
+void cmd_banktest(int argc, char *argv[])
+{
+    (void)argc; (void)argv;
+    if (bank_run_test() != 0) {
+        puts_raw("bank unavailable");
+        chrout(CR);
+    }
+}
+
 /* basic - leave the shell for real stock BASIC by swapping the One ROM to the
    stock C64 ROMs so stock KERNAL/BASIC take over (there's no OS underneath, but
    there IS a real C64 one bank-swap away -- and it lands you at BASIC, hence the
