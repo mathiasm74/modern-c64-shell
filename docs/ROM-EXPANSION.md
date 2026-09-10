@@ -305,9 +305,24 @@ Remaining increments:
   are the resident protocol/install; and the protocol is ROM-to-ROM either way,
   swapped in once before the timed transfer, so no timing risk.)
 
-  My single-`fload` attempt failed precisely because it split that cluster. So
-  the two real levers are: **(a)** move whole *clusters* into banks (the disk
-  bank frees the resident fast-load code); and **(b) data-driven dispatch** —
+  My single-`fload` attempt failed precisely because it split that cluster.
+
+  **Scope reality for the disk bank (checked in dir.c):** `dir` is not dormant —
+  `dir_begin(1)` is live, and dir's receive loop calls `svc_epyx_recv_byte` /
+  `svc_epyx_wait_ready` **per byte**. A per-byte receive can't be a bank call
+  (no per-byte window swap), so the receiver must sit in the *same served
+  window* as dir's loop. But `dir` is a **C overlay running from RAM at
+  `$8800`**, calling the receiver in resident ROM via SVC. Banking the receiver
+  therefore forces **converting the whole dir C-overlay into a `$A000` ROM bank**
+  (new crt0, BSS/state relocated to RAM since the bank is ROM) and folding the
+  `fload`/`run` fast path in with it. That is a large refactor across *every*
+  disk command, hardware-only to validate, for a one-time ~430–700 B saving.
+  Weigh it against data-driven dispatch, which addresses the *ongoing* pressure
+  and is lower-risk.
+
+  So the two real levers are: **(a)** move whole *clusters* into banks (the disk
+  bank frees the resident fast-load code, at the refactor cost above); and
+  **(b) data-driven dispatch** —
   future commands living entirely in banks with their command table in the bank,
   so a new command costs ~0 base bytes (the true answer to "new functionality
   keeps filling the 16 KB"), plus the run-from-ROM/no-`$8800`-clobber win. The
