@@ -61,13 +61,5 @@ bank_init:
 ; --- KERNAL entry shims -----------------------------------------------------
 ; The bank is linked standalone, so the machine is reached through the fixed
 ; KERNAL entry points (which is exactly why we keep them at their published
-; addresses). Same shims the overlay crt0s provide.
-.export _k_chrout, _k_getin
-
-_k_chrout:
-        jmp $FFD2
-
-_k_getin:
-        jsr $FFE4
-        ldx #$00
-        rts
+; addresses) -- the same set, from the same source, the RAM overlays use.
+.include "kernal_shims.inc"

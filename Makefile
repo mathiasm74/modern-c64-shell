@@ -55,7 +55,7 @@ VERSION := $(shell grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' src/reset.s | head -1)
 # c64-tardis-dos-<version>-for-onerom-<board>.bin.
 ONEROM_STOCK_OUT := $(BUILD)/c64-tardis-dos-$(VERSION)-for-onerom-$(ONEROM_BOARD).bin
 
-ASFLAGS   := --cpu 6502
+ASFLAGS   := --cpu 6502 -I src
 # `make TRACE=1` builds the RBCP swap with border-color stage stamps
 # (RBCP_BOOT_TRACE, src/rbcp/launch.s) for timing the stock-ROM handoff on
 # hardware -- $D020 shows even while the display is blanked. Debug builds
@@ -260,10 +260,26 @@ $(BUILD)/banks/disk_bank_c.o: $(BUILD)/banks/disk_bank.s
 # are cycle-counted, and the extra indirection is the kind of jitter the
 # receiver's badline pacing exists to remove.
 BANK_SHARED_OBJ := $(BUILD)/banks/bk_iec_clkwait.o \
-                   $(BUILD)/banks/bk_fastload_recv.o $(BUILD)/banks/bk_fastload_send.o
+                   $(BUILD)/banks/bk_fastload_recv.o $(BUILD)/banks/bk_fastload_send.o \
+                   $(BUILD)/banks/bk_fastload.o $(BUILD)/banks/bk_dir.o \
+                   $(BUILD)/banks/bank_svc_alias.o
 
 $(BUILD)/banks/bk_%.o: src/%.s | $(BUILD)
 	@mkdir -p $(BUILD)/banks
+	$(AS) $(ASFLAGS) -D BANK_BUILD=1 -o $@ $<
+
+# The C sources shared with the main ROM / the dir overlay, compiled a second
+# time INTO the bank. Same sources, different link: the bank binds their iec_*
+# and svc_* names to the SVC table or to its own local Epyx copies (see
+# cfg/disk_bank.cfg and src/banks/bank_svc_alias.s), so neither file needed
+# source changes to move.
+$(BUILD)/banks/bk_fastload.s: src/fastload.c | $(BUILD)
+	@mkdir -p $(BUILD)/banks
+	$(CC) $(CC65FLAGS) -o $@ $<
+$(BUILD)/banks/bk_dir.s: src/overlays/dir.c | $(BUILD)
+	@mkdir -p $(BUILD)/banks
+	$(CC) $(CC65FLAGS) -I src/overlays -o $@ $<
+$(BUILD)/banks/bk_fastload.o $(BUILD)/banks/bk_dir.o: %.o: %.s
 	$(AS) $(ASFLAGS) -D BANK_BUILD=1 -o $@ $<
 
 $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o \

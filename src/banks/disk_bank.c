@@ -1,47 +1,34 @@
-/* disk_bank.c - the DISK BANK's C side (docs/ROM-EXPANSION.md).
+/* disk_bank.c - the DISK BANK's entry layer (docs/ROM-EXPANSION.md).
  *
- * STAGE 1 SKELETON: proves the C-bank-at-$A000 infrastructure (cfg/disk_bank.cfg
- * + crt0_disk.s) links and runs from served ROM with its state in RAM. The real
- * cluster -- dir/ls/pwd, the Epyx protocol, and the fload/run fast path -- moves
- * in here in the following stages, at which point these stubs are replaced by
- * the moved bodies.
+ * The bank's real content is the disk cluster, linked in from its existing
+ * sources rather than rewritten: src/overlays/dir.c (dir/ls/pwd) and
+ * src/fastload.c + the Epyx protocol asm. This file is only the glue between
+ * the $A000 JMP table (crt0_disk.s) and those bodies.
+ *
+ * dir.c is compiled UNCHANGED, so it still selects its command through the
+ * $02D0 mailbox byte the resident thunk used to set for the overlay. The bank's
+ * per-command entry points set it here instead, which is why moving the cluster
+ * needed no edits to a 567-line file. (Stage 4 can retire the mailbox byte
+ * once the RAM overlay is gone and the JMP table is the only ABI.)
  *
  * Bank rules (see cfg/disk_bank.cfg): code+rodata are served ROM at $A000, so
  * nothing here may write to a $A000-$BFFF address; writable globals are DATA
  * (copied down to RAM by the crt0) or BSS (plain RAM). The machine is reached
- * through the resident KERNAL stubs (k_chrout) and the resident IEC services in
- * the SVC table -- never base BASIC-half routines, which are swapped out while
- * this bank is served.
+ * through the resident KERNAL stubs and the resident IEC services in the SVC
+ * table -- never base BASIC-half routines, which are swapped out while this
+ * bank is served.
  */
 
-void k_chrout(unsigned char c);
-unsigned char k_getin(void);
+void dir_main(void);                    /* src/overlays/dir.c */
 
-#define CR 0x0D
+#define MB_CMD  (*(unsigned char *)0x02D0)      /* 0 dir, 1 ls, 2 pwd */
 
-/* Initialized writable global: lives in DATA, so it exercises the crt0's
-   ROM->RAM copydata. If this reads back as 'D' the copy worked; a bank that
-   tried to keep writable state in its ROM image would read the ROM byte but
-   drop writes into the RAM underneath. */
-static unsigned char tag = 'D';
+void disk_dir(void) { MB_CMD = 0; dir_main(); }
+void disk_ls(void)  { MB_CMD = 1; dir_main(); }
+void disk_pwd(void) { MB_CMD = 2; dir_main(); }
 
-static void puts_bank(const char *s)
-{
-    while (*s)
-        k_chrout(*s++);
-}
-
-static void banner(const char *what)
-{
-    puts_bank("disk bank ");
-    k_chrout(tag);                      /* proves DATA was copied down */
-    k_chrout(':');
-    k_chrout(' ');
-    puts_bank(what);
-    k_chrout(CR);
-}
-
-void disk_dir(void)   { banner("dir");   }
-void disk_ls(void)    { banner("ls");    }
-void disk_pwd(void)   { banner("pwd");   }
-void disk_fload(void) { banner("fload"); }
+/* The fload/run fast path (fload_program + fast_receive_prg, still resident in
+   src/commands/fs.c) moves in here in stage 4, at which point this entry gets
+   its body and cmd_fload/cmd_run route to it. The Epyx protocol it needs is
+   already in this image. */
+void disk_fload(void) { }
