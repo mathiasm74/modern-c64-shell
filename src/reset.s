@@ -80,6 +80,8 @@ COLOR      = $0286              ; current text color
 LSTX       = $C5                ; matrix code of the last key ($FF = none)
 NDX        = $C6                ; keyboard buffer count
 KBD_LAYOUT = $02CB              ; 0 = US/symbolic tables, 1 = Swedish (irq.s)
+BASE_SLOT  = $02CE              ; RAM slot the base set is served from (font A
+                                ; = 0, font B = 2); read by bank_restore
 
 ; --- Constants -----------------------------------------------------------
 COLOR_BLACK  = $00
@@ -299,6 +301,9 @@ reset:
                                 ; page is power-on garbage; a nonzero flag would
                                 ; let the first TAB complete from noise
         sta KBD_LAYOUT          ; default to the US/symbolic key tables
+        sta BASE_SLOT           ; the base set boots served from RAM slot 0; a
+                                ; font switch moves it, and bank_restore
+                                ; (launch.s) switches back to whatever this says
         lda #$FF
         sta LSTX
 
@@ -471,7 +476,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.1.93", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.1.94", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:

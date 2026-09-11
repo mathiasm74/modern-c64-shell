@@ -828,10 +828,19 @@ bank_ensure_base:
 
 @ok:    rts
 
-; SWITCH-only back to the base set in RAM slot 0.
+; SWITCH-only back to the base set -- to the slot it is actually served from,
+; which is NOT always slot 0. A font switch re-serves the base out of a
+; different RAM slot (font B has its own), the two sets differing only in their
+; char ROM, which is what makes that switch live-safe. Hardcoding slot 0 here
+; reverted font B to font A on the next bank command, leaving KBD_LAYOUT on
+; Swedish: the keys still emitted $5B/$5C/$5D but the US charset drew them as
+; "[ ] £" instead of "ä ö å". fs.c keeps BASE_SLOT in step (reset.s clears it).
+BASE_SLOT = $02CE
+
 bank_restore:
         lda #0
-        sta FONT_MB_LOAD
+        sta FONT_MB_LOAD        ; SWITCH only -- the slot already holds the base
+        lda BASE_SLOT
         sta FONT_MB_RAM
         jmp _font_apply
 

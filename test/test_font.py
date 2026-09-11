@@ -32,3 +32,18 @@ def test_font_inert_without_onerom(v):
     _type(v, "ver")
     assert _wait(v, "Tardis DOS v"), \
         "shell unresponsive after font\n%s" % v.screen_text()
+
+
+def test_base_ram_slot_is_initialized_at_boot(v):
+    """reset.s must clear BASE_SLOT ($02CE), the RAM slot the base set is served
+    from, which bank_restore (launch.s) switches back to after a bank command.
+
+    Page-2 RAM is power-on garbage, so leaving this uninitialized would make
+    roughly 255/256 cold boots switch back to a slot that is not serving the
+    base after the very first disk command -- the same hazard reset.s already
+    guards for KBD_LAYOUT. Hardware-only in effect (the swap is inert in VICE),
+    but the initialization is checkable here.
+    """
+    assert v.read_byte(0x02CE) == 0, \
+        "BASE_SLOT ($02CE) = $%02X after boot, must be 0 (RAM slot 0)" % \
+        v.read_byte(0x02CE)

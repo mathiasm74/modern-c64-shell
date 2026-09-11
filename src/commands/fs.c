@@ -344,6 +344,18 @@ void settings_save(void);               /* shell.c; persists the font choice */
 #define KBD_LAYOUT      (*(unsigned char *)0x02CB) /* irq.s key-table selector */
 static unsigned char font_current;      /* BSS: 0 = font A at boot */
 
+/* Which RAM slot the One ROM is serving the BASE set from. It is NOT always 0:
+   a font switch re-serves the base out of a different slot (font B lives in
+   FONTB_RAM_SLOT), and the two sets differ only in their char ROM, which is the
+   whole trick that makes the switch live-safe.
+
+   bank_restore (src/rbcp/launch.s) reads this to switch BACK to the right slot
+   after a bank command. It used to assume slot 0, which silently reverted font
+   B to font A on the next command -- with KBD_LAYOUT left on Swedish, so the
+   keys still emitted $5B/$5C/$5D but the US charset drew them as "[ ] £"
+   instead of "ä ö å". reset.s clears it to 0 at boot. */
+#define BASE_RAM_SLOT (*(unsigned char *)0x02CE)
+
 /* Switch to font `target` (0 = A, 1 = B): RBCP charset swap plus the matching
    keyboard table (font B pairs with the Swedish key tables so the relabelled
    keycaps type the right glyphs). Returns 0 on success (or no-op when already
@@ -370,6 +382,8 @@ unsigned char font_select(unsigned char target)
         return 1;
     font_current = target;
     KBD_LAYOUT = target;
+    /* The base is now served from this slot; bank calls must come back to it. */
+    BASE_RAM_SLOT = target ? FONTB_RAM_SLOT : FONTA_RAM_SLOT;
     return 0;
 }
 
