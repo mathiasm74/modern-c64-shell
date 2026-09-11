@@ -32,15 +32,17 @@ CSTACK_TOP = $A000              ; grows down into $9Fxx RAM
 ; --- $A000 entry JMP table (the bank ABI) -----------------------------------
 ; bank_call (launch.s) JSRs $A000 + 3*entry after switching the served slot.
 .segment "ENTRY"
-        jmp e_dir               ; $A000  entry 0
-        jmp e_ls                ; $A003  entry 1
-        jmp e_pwd               ; $A006  entry 2
-        jmp e_fload             ; $A009  entry 3
-        jmp e_load              ; $A00C  entry 4
-        .byte "dsk1"            ; $A00F  identity, checked by bank_call before it
-                                ; calls in -- so a mis-numbered flash set or
-                                ; uninitialized RAM reports "unavailable"
-                                ; instead of executing garbage
+        .byte "bnk", 0          ; $A000  identity: a bank, and WHICH bank.
+                                ; bank_call checks both before calling in, so a
+                                ; mis-numbered flash set or uninitialized RAM
+                                ; reports "unavailable" instead of executing
+                                ; garbage -- and one bank's entry table can
+                                ; never be run against another bank's code.
+        jmp e_dir               ; $A004  entry 0
+        jmp e_ls                ; $A007  entry 1
+        jmp e_pwd               ; $A00A  entry 2
+        jmp e_fload             ; $A00D  entry 3
+        jmp e_load              ; $A010  entry 4
 
 .segment "CODE"
 

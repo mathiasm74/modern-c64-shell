@@ -22,16 +22,25 @@ struct command {
     void (*handler)(int argc, char *argv[]);
 };
 
-/* Mark a table row as "run entry N of the disk bank". Real code never lives in
+/* Mark a table row as "run entry `e` of bank `b`". Real code never lives in
    page zero, so a handler value below $0100 cannot be a function pointer and is
-   unambiguous. dispatch() (shell.c) routes these through bank_dispatch(). */
-#define BANK_CMD(n)      ((void (*)(int, char **))(n))
+   unambiguous. dispatch() (shell.c) routes these through bank_dispatch().
+   Packing the bank into the high bits keeps a row 4 bytes no matter which bank
+   a command lives in. */
+#define BANK_DISK        0
+#define BANK_UTIL        1
+#define BANK_CMD(b, e)   ((void (*)(int, char **))(((b) << 5) | (e)))
 #define IS_BANK_CMD(fn)  ((unsigned int)(fn) < 0x0100)
 
 /* fs.c: run bank entry `n`, first publishing what every bank command needs
    (the default device and its remembered name) and the argc/argv the bank
    reads its own arguments from. Reports if the bank is unreachable. */
 void bank_dispatch(unsigned char entry, int argc, char *argv[]);
+
+/* The same, but returns the failure instead of reporting it -- for callers that
+   should stay silent when the bank is unreachable (TAB completion: a keystroke
+   that quietly does nothing beats an error message mid-line). */
+unsigned char bank_try(unsigned char entry, int argc, char *argv[]);
 
 /* The dispatch table and its length, defined in shell.c. cmd_help reads them
    so `help` lists whatever commands are registered, with no second list to

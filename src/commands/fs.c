@@ -173,7 +173,7 @@ static void report_no_bank(void)
 #define BD_ARGC (*(unsigned char *)0x03A0)
 #define BD_ARGV (*(char ***)0x03A1)
 
-void bank_dispatch(unsigned char entry, int argc, char *argv[])
+unsigned char bank_try(unsigned char entry, int argc, char *argv[])
 {
     const char *name;
     unsigned char n = 0;
@@ -189,7 +189,12 @@ void bank_dispatch(unsigned char entry, int argc, char *argv[])
     BD_ARGC = (unsigned char)argc;
     BD_ARGV = argv;
 
-    if (bank_call(entry) != 0)
+    return bank_call(entry);
+}
+
+void bank_dispatch(unsigned char entry, int argc, char *argv[])
+{
+    if (bank_try(entry, argc, argv) != 0)
         report_no_bank();
 }
 

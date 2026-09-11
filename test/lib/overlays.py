@@ -27,6 +27,26 @@ def seed_files(v):
     _seed(v, "files.bin", 0x8800)
 
 
+def _seed_bank(v, name):
+    """Write a bank image into the RAM under the $A000 ROM (see seed_disk_bank).
+
+    Only ONE bank can be seeded at a time -- they are all linked to $A000, just
+    as the RAM overlays all share $8800 -- so a test that uses two must re-seed
+    between them."""
+    path = os.path.join(_HERE, "..", "..", "build", "banks", name)
+    with open(path, "rb") as f:
+        img = f.read()
+    end = len(img)
+    while end > 0 and img[end - 1] == 0xFF:
+        end -= 1
+    v.write_memory(0xA000, list(img[:end]))
+
+
+def seed_util_bank(v):
+    """util bank (tab completion) -> the RAM under the $A000 ROM."""
+    _seed_bank(v, "util_bank.bin")
+
+
 def seed_disk_bank(v):
     """disk bank (dir / ls / pwd / fload) -> the RAM under the $A000 ROM.
 
@@ -41,13 +61,7 @@ def seed_disk_bank(v):
     Only the used part is written: the image is $FF-padded to a full 8KB and
     pushing all of that through the monitor is needlessly slow.
     """
-    path = os.path.join(_HERE, "..", "..", "build", "banks", "disk_bank.bin")
-    with open(path, "rb") as f:
-        img = f.read()
-    end = len(img)
-    while end > 0 and img[end - 1] == 0xFF:
-        end -= 1
-    v.write_memory(0xA000, list(img[:end]))
+    _seed_bank(v, "disk_bank.bin")
 
 
 def seed_about(v):

@@ -722,30 +722,61 @@ _font_apply:
 ;
 ; Returns A = 0 if the bank ran, nonzero if it could not be mapped.
 ; -------------------------------------------------------------------------
-BANK_FLASH_SET = 8              ; loadable ROM set: [kernal | char | disk bank]
+; --- the bank ABI, shared by every bank ---------------------------------
+; A bank image starts with its identity, so bank_call can verify it got the set
+; it asked for before calling in; the JMP table follows:
+;
+;   $A000  "bnk"        every bank
+;   $A003  <bank id>    WHICH bank -- catches a mis-numbered flash set, which
+;                       would otherwise run one bank's entry table against
+;                       another's code
+;   $A004  jmp entry 0
+;   $A007  jmp entry 1  ...
+;
+; bank_call takes ONE byte: the bank id in the high 3 bits, the entry in the low
+; 5 (BANK_CMD in shell.h builds it). That keeps a dispatch-table row 4 bytes
+; whatever bank a command lives in.
 BANK_RAM_SLOT  = 1              ; overlay/stock scratch slot (never served)
-BANK_BASE      = $A000          ; the bank's JMP table
-BANK_MAGIC     = $A00F          ; "dsk1", right after the 5-entry table
+BANK_BASE      = $A000          ; identity, then the JMP table at +4
+BANK_TABLE     = $A004
 BANK_VEC       = $02CC          ; computed call target (page-2 scratch)
+BANK_ID        = $02CF          ; bank id being called (page-2 scratch)
+
+; Flash (loadable ROM) set per bank id. Each is [kernal | char | <bank image>],
+; the KERNAL and char byte-identical to the base so SWITCH_SLOT is live-safe.
+bank_flash_set:
+        .byte 8                 ; bank 0: disk  (dir/ls/pwd/fload/load)
+        .byte 9                 ; bank 1: util  (tab completion)
 
 .export _bank_call
 _bank_call:
-        ; target = BANK_BASE + 3*entry
-        sta BANK_VEC            ; stash entry
+        pha                     ; id = (bank << 5) | entry
+        lsr a
+        lsr a
+        lsr a
+        lsr a
+        lsr a
+        sta BANK_ID             ; bank
+        pla
+        and #$1F                ; entry
+
+        ; target = BANK_TABLE + 3*entry
+        sta BANK_VEC
         asl a                   ; 2*entry
         clc
         adc BANK_VEC            ; 3*entry
         clc
-        adc #<BANK_BASE
+        adc #<BANK_TABLE
         sta BANK_VEC
-        lda #>BANK_BASE
+        lda #>BANK_TABLE
         adc #0
         sta BANK_VEC+1
 
         ; --- path 1: served ROM (One ROM) --------------------------------
         lda #1
         sta FONT_MB_LOAD        ; LOAD the bank set, then SWITCH to it
-        lda #BANK_FLASH_SET
+        ldx BANK_ID
+        lda bank_flash_set,x
         sta FONT_MB_FLASH
         lda #BANK_RAM_SLOT
         sta FONT_MB_RAM
@@ -844,20 +875,25 @@ bank_restore:
         sta FONT_MB_RAM
         jmp _font_apply
 
-; Carry clear if the mapped $A000 window really holds a disk bank ("dsk1").
+; Carry clear if the mapped $A000 window really holds the bank we asked for:
+; the "bnk" tag AND the matching bank id, so a mis-numbered flash set is caught
+; rather than run as if it were the intended bank.
 bank_magic_ok:
-        ldx #3
-@cmp:   lda BANK_MAGIC,x
+        ldx #2
+@cmp:   lda BANK_BASE,x
         cmp bank_magic_str,x
         bne @bad
         dex
         bpl @cmp
+        lda BANK_BASE+3
+        cmp BANK_ID
+        bne @bad
         clc
         rts
 @bad:   sec
         rts
 bank_magic_str:
-        .byte "dsk1"
+        .byte "bnk"
 
 ; JSR through the computed vector (the table entry is itself a JMP), then
 ; invalidate the RAM overlay cache.

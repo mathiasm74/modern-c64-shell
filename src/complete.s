@@ -59,7 +59,15 @@ needq   = $02BE                 ; insertion must open a quote (spaced name)
 extraq  = $02BF                 ; insertion appends a closing quote
                                 ; ($02BC is iec.s's PROBEF)
 
-.segment "CODE"
+; Segment: the BASIC half normally, the bank's own CODE when assembled into the
+; util bank (docs/ROM-EXPANSION.md) -- same pattern as fastload_recv.s.
+.ifdef BANK_BUILD
+.define CSEG "CODE"
+.else
+.define CSEG "CODE"
+.endif
+
+.segment CSEG
 
 ; --- helpers ---------------------------------------------------------------
 

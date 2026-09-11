@@ -113,7 +113,7 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s \
-         src/iec_clkwait.s src/svc.s src/complete.s src/parse_addr.s \
+         src/iec_clkwait.s src/svc.s src/parse_addr.s \
          src/rbcp/rbcp.s src/rbcp/launch.s
 SRC_C := src/shell.c src/parser.c \
          src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c \
@@ -276,7 +276,16 @@ $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_ban
 	      $(BANK_SHARED_OBJ) $(RTLIB) -Ln $(BUILD)/banks/disk_bank.labels
 	@echo "  disk_bank.bin : $$(wc -c < $@) bytes"
 
-banks: $(BUILD)/banks/disk_bank.bin
+# The UTIL BANK: tab completion (src/complete.s), assembled into its own image.
+# Separate from the disk bank because it needs no cc65 runtime at all, so it
+# costs nothing out of the program load area (cfg/util_bank.cfg).
+$(BUILD)/banks/util_bank.bin: $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
+                              cfg/util_bank.cfg
+	$(LD) -C cfg/util_bank.cfg -o $@ $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
+	      -Ln $(BUILD)/banks/util_bank.labels
+	@echo "  util_bank.bin : $$(wc -c < $@) bytes"
+
+banks: $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin
 # Generated overlay page-number map (start page of each overlay), derived from
 # the actual .bin sizes. The resident overlay thunks include it; their .s
 # therefore depend on it, and it depends on the overlay .bin -- so the page
@@ -396,7 +405,7 @@ $(BOOTLOADER): $(BOOTLOADER_SRC) tools/build_bootloader.sh | $(BUILD)
 # JiffyDOS is commercial, so unlike the stock ROMs (Zimmers URLs) it stays a
 # local user-supplied file; the C= boot menu (cfg/onerom-stock.json set 3)
 # offers it as a bootable KERNAL.
-ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin stock-roms/JiffyDOS_C64.bin
+ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin stock-roms/JiffyDOS_C64.bin
 onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
 		--config-file cfg/onerom-stock.json $(ONEROM_PLUGINS) \

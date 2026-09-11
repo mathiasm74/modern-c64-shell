@@ -55,18 +55,18 @@ const struct command shell_commands[] = {
     { "dev",    cmd_device },
     { "device", cmd_device },
     { "devices", cmd_devices },
-    { "dir",    BANK_CMD(0) },
+    { "dir",    BANK_CMD(BANK_DISK, 0) },
     { "edit",   cmd_edit   },
-    { "fload",  BANK_CMD(3) },
+    { "fload",  BANK_CMD(BANK_DISK, 3) },
     { "font",   cmd_font   },
     { "help",   cmd_help   },
     { "less",   cmd_less   },
-    { "load",   BANK_CMD(4) },
-    { "ls",     BANK_CMD(1) },
+    { "load",   BANK_CMD(BANK_DISK, 4) },
+    { "ls",     BANK_CMD(BANK_DISK, 1) },
     { "mv",     cmd_mv     },
     { "peek",   cmd_peek   },
     { "poke",   cmd_poke   },
-    { "pwd",    BANK_CMD(2) },
+    { "pwd",    BANK_CMD(BANK_DISK, 2) },
     { "reset",  cmd_reset  },
     { "rm",     cmd_rm     },
     { "run",    cmd_run    },
@@ -81,7 +81,13 @@ const unsigned char shell_command_count =
 
 /* The current command line, NUL-terminated by readline() and then carved into
    tokens in place by parse_line(). */
+/* Pinned at a FIXED address by its own segment (cfg/rom.cfg LINEBUF, $C000):
+   tab completion lives in the util bank now and indexes this buffer directly,
+   and a separately-linked bank cannot chase an address that moves between
+   builds. cfg/util_bank.cfg binds _line to the same address. */
+#pragma bss-name (push, "LINEBUF")
 char line[LINEMAX + 1];         /* non-static: complete.s imports _line */
+#pragma bss-name (pop)
 
 /* Command history: a ring of the last HIST_N submitted (non-empty) lines.
    `hist_next` is where the next one goes; `hist_count` is how many are valid.
@@ -206,7 +212,11 @@ void print_prompt(void)         /* non-static: complete.s reprints the prompt
  * The implementation is assembly (src/complete.s, KERNAL half): the first cut
  * was C right here and cc65 rendered it at ~1.3KB of BASIC ROM. ABI: line
  * length/cursor in CW_LEN/CW_POS ($02B1/$02B2), the buffer is `line` above. */
-void tab_complete(void);
+/* Tab completion lives in the UTIL BANK (entry 0) -- see docs/ROM-EXPANSION.md.
+   Its ABI was already a page-2 mailbox (CW_LEN/CW_POS + $02B3-$02BF), so moving
+   it out of the 16KB ROM only changed how it is reached. It reads the edit
+   buffer directly, which is why `line` is pinned at a fixed address. */
+#define UTIL_TAB_COMPLETE  ((BANK_UTIL << 5) | 0)
 #define CW_LEN (*(unsigned char *)0x02B1)
 #define CW_POS (*(unsigned char *)0x02B2)
 
@@ -260,7 +270,9 @@ static unsigned char readline(void)
         if (c == TAB) {                 /* complete the word at the cursor */
             CW_LEN = len;
             CW_POS = pos;
-            tab_complete();
+            /* Silent on failure: with no bank reachable, TAB simply does
+               nothing, which beats an error message in the middle of a line. */
+            bank_try(UTIL_TAB_COMPLETE, 0, (char **)0);
             len = CW_LEN;
             pos = CW_POS;
             continue;

@@ -11,6 +11,8 @@ Every test submits its line with RETURN so readline is left clean for the next
 test (they share one VICE instance).
 """
 
+from lib.overlays import seed_util_bank
+
 LEFT = 0x9D
 RIGHT = 0x1D
 DEL = 0x14
@@ -168,6 +170,10 @@ def test_clr_wipes_input_not_screen(v):
 # it is GUI/hardware-verified like SHIFT; these tests inject $09.)
 
 def _seed_tab_cache(v, names):
+    """Fill the $CE00 name cache -- and seed the util bank, since completion
+    lives there now (docs/ROM-EXPANSION.md). Without the bank, TAB is silently
+    inert by design, so every completion assertion would fail."""
+    seed_util_bank(v)
     data = [1, len(names)]
     for nm in names:
         data += [len(nm)] + [ord(c) for c in nm.upper()]
