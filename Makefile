@@ -242,7 +242,21 @@ $(BUILD)/overlays/%.bin: $(BUILD)/overlays/%.o cfg/overlay.cfg
 $(BUILD)/banks/%.bin: $(BUILD)/banks/%.o cfg/bank.cfg
 	$(LD) -C cfg/bank.cfg -o $@ $<
 	@echo "  $(@F) : $$(wc -c < $@) bytes"
-banks: $(BUILD)/banks/bank1.bin
+
+# The DISK BANK: cc65 C served as ROM at $A000 (cfg/disk_bank.cfg + crt0_disk.s),
+# with its state in the $98xx-$9Fxx RAM the overlays used to run from. This is
+# where the disk cluster (dir/ls/pwd + the Epyx protocol + the fload/run fast
+# path) moves to; see docs/ROM-EXPANSION.md.
+$(BUILD)/banks/disk_bank.s: src/banks/disk_bank.c | $(BUILD)
+	@mkdir -p $(BUILD)/banks
+	$(CC) $(CC65FLAGS) -o $@ $<
+$(BUILD)/banks/disk_bank_c.o: $(BUILD)/banks/disk_bank.s
+	$(AS) $(ASFLAGS) -o $@ $<
+$(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o cfg/disk_bank.cfg
+	$(LD) -C cfg/disk_bank.cfg -o $@ $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o $(RTLIB)
+	@echo "  disk_bank.bin : $$(wc -c < $@) bytes"
+
+banks: $(BUILD)/banks/bank1.bin $(BUILD)/banks/disk_bank.bin
 # Generated overlay page-number map (start page of each overlay), derived from
 # the actual .bin sizes. The resident overlay thunks include it; their .s
 # therefore depend on it, and it depends on the overlay .bin -- so the page
