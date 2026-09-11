@@ -5,18 +5,22 @@
 Tardis DOS replaces the C64's stock BASIC + KERNAL with a modern command line: line editing, command history, a built-in fast loader, disk and file tools, a text editor, and more. It runs from a [OneROM](https://onerom.org/) — a flash-based ROM-replacement chip that drops into the C64's internal KERNAL/BASIC ROM sockets (it is **not** a cartridge).
 
 <p align="center">
-  <img src="media/boot-screen.jpg" alt="Tardis DOS booting on a real C64" width="560">
+  <img src="media/shell-help.jpg" alt="Tardis DOS running on a real C64: the boot banner, the help command listing every command in three columns, and the prompt showing the attached Meatloaf drive" width="620">
 </p>
 
 ## Bigger on the inside
 
-The C64's ROM sockets give you only 16 KB — far too little for a rich shell. Tardis DOS gets around this the way the Doctor's TARDIS does: some code lives in the 16 KB ROM, but most of the bigger commands (the editor, file tools, directory listing, the colour picker, this shell's own `about` text) are **streamed in from the OneROM's flash as overlays, on demand**. The result is a shell that does far more than 16 KB — bigger on the inside than the outside. That's where the name comes from.
+The C64's ROM sockets give you only 16 KB — far too little for a rich shell. Tardis DOS gets around this the way the Doctor's TARDIS does: the core lives in the 16 KB ROM, and everything else lives *outside* it, in the OneROM's flash. The result is a shell that does far more than 16 KB — bigger on the inside than the outside. That's where the name comes from.
+
+Most commands live in **banks**: 8 KB images the OneROM serves at `$A000`, in place of the shell's own BASIC half, for as long as the command runs. The disk commands, the file commands and TAB completion each live in one. Because a bank is *served as ROM* rather than copied into memory, it costs no RAM at all — your loaded program stays untouched — and reaching it is a ROM swap rather than a transfer. A handful of larger, rarer commands (the text editor, the `about` text) are still **streamed into RAM on demand** instead.
+
+The shell's own dispatch table says which bank a command lives in, so adding one costs the 16 KB ROM four bytes and its name. That is what keeps the budget from filling up as the shell grows: **v0.2.00 has ~5.5 KB of the 16 KB free**, having started this architecture with under 800 bytes left.
 
 There's **no BASIC interpreter** — that's a deliberate trade to reclaim 8 KB of ROM. To run legacy software, Tardis DOS hands off to the *genuine* C64 ROMs: on `run` (or inserting a real cartridge), the OneROM hot-swaps back to the stock BASIC/KERNAL and warm-boots before launching the program.
 
 ## Features
 
-- **Modern shell** — line editing with cursor movement, insert/delete, and an 8-deep command history (↑/↓).
+- **Modern shell** — line editing with cursor movement, insert/delete, an 8-deep command history (↑/↓), and **filename completion** (tap **CTRL** — the C64 has no TAB key), including names with spaces.
 - **Epyx-compatible fast loader** — `fload` / `run` stream programs fast; pairs beautifully with the [Meatloaf](https://github.com/idolpx/meatloaf), and also works with a stock 1541, SD2IEC, Pi1541, and 1541 Ultimate.
 - **Disk & file tools** — `ls`, `dir`, `cd`, `pwd`, `cp`, `mv`, `rm`, `cat`, `less`, `status`, `device`, driving the IEC bus directly.
 - **Text editor** — `edit`, a nano-style editor with cut/copy/paste.
@@ -37,6 +41,7 @@ There's **no BASIC interpreter** — that's a deliberate trade to reclaim 8 KB o
 | `basic` | swap to stock C64 BASIC | `cat` / `less` | show / page a file |
 | `edit` | text editor | `cp` / `mv` / `rm` | copy / rename / delete |
 | `peek` / `poke` | read / write memory | `status` | read the drive's error channel |
+| `sys` | call machine code | `devices` | scan the bus for drives |
 | `border` / `bg` / `text` | set colours | `device` | select the IEC device |
 | `font` | switch charset + keyboard | `about` | about Tardis DOS |
 
@@ -111,13 +116,15 @@ Features that touch the OneROM hardware (the stock-ROM swap, RBCP, NV settings, 
 - Developed and tested on **PAL** hardware. NTSC should work for everything except possibly the cycle-timed Epyx fast loader, which is calibrated for PAL; standard `load` is unaffected.
 - The stock-ROM handoff, persistent settings, and font switching require a OneROM (they're inert on a plain emulator / shell-only build).
 - The character-set half of the Swedish layout under the stock ROMs is still keyboard-only (see the design notes).
+- Releases also carry **C64C** and **C128** (C64-mode, U32 socket) images. Those are built from the same source but are not hardware-validated every release — the breadbin images are.
 
 ## Project layout
 
 ```
-src/            reset, IRQ, KERNAL stubs, IEC + fast loader (asm); shell, parser,
-                commands (C)
-src/overlays/   streamed-on-demand commands (editor, file tools, dir, picker, about)
+src/            reset, IRQ, KERNAL stubs, IEC bus (asm); shell, parser, the
+                resident commands and the bank dispatcher (C)
+src/banks/      commands served from flash as ROM banks (disk, files, completion)
+src/overlays/   commands streamed into RAM on demand (editor, about)
 src/rbcp/       OneROM Bus Control Protocol library + the bank-swap launcher
 cfg/            linker + OneROM firmware configs
 test/           VICE test harness and per-feature tests
