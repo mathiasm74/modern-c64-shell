@@ -7,7 +7,7 @@ deviations from the original draft are folded in below and marked (as-built).
 
 ## Model
 
-**The shell completes what it last saw.** `ls`/`dir` fill a resident name
+**The shell completes what it last saw.** `ls`/`dir` fill a fixed-address name
 cache as a free side effect of drawing their listing; TAB completes only from
 that cache, instantly, with no drive I/O mid-keystroke. An empty or
 invalidated cache makes TAB inert. The mental model is honest for an 8-bit
@@ -19,19 +19,17 @@ Rejected alternatives, for the record:
   timed-transfer abort problems the pager already hit).
 - *Overlay-based completer fetched on TAB*: originally rejected because the
   RBCP transport glitched intermittently and a failed fetch would splatter
-  "overlay load failed" mid-line-edit. **Revised assessment (2026-07-02,
-  after the badline guard fixed the transport):** now a viable fallback if
-  the BASIC half ever needs the bytes back. The cache stays resident as-is;
-  only the ~600-byte matcher (src/complete.s) moves to a ~3-page overlay
-  (fits set B, 28/32 pages used), leaving a ~100-byte resident thunk --
-  net ~500 bytes reclaimed. The mailbox ABI ($02B1/$02B2 + a line-buffer
-  pointer) makes the conversion mechanical; print_prompt goes via a new
-  $FF80 svc entry, CHROUT via $FFD2, and a failed fetch must be silently
-  inert. The one real regression, and why the resident version stays while
-  ROM is plentiful: every TAB press would clobber $8800-$97FF (a loaded
-  program), which is acceptable for overlay *commands* but surprising for a
-  keystroke. (One ROM dependence is not a differentiator: ls/dir -- which
-  fill the cache -- are already RBCP overlays.)
+  "overlay load failed" mid-line-edit. **Superseded (v0.1.95): the matcher now
+  lives in the UTIL BANK** (docs/ROM-EXPANSION.md), which answers the objection
+  rather than accepting it. A bank is *served as ROM*, not fetched into RAM, so
+  there is no fetch to fail and -- the point that killed the overlay idea --
+  nothing is clobbered: the util bank needs no cc65 runtime at all, so a TAB
+  press costs **zero bytes of user RAM**. A bank that cannot be reached leaves
+  TAB silently inert, exactly as required for a keystroke. `_line` is pinned at
+  $C000 (cfg/rom.cfg LINEBUF) so the bank can index it directly, and
+  `print_prompt` is reimplemented inside the bank -- it could NOT be an SVC
+  entry, because SVC entries are JMPs and the resident prompt lives in the
+  BASIC half, which is swapped out while a bank runs.
 
 ## UX rules
 
@@ -65,6 +63,17 @@ Rejected alternatives, for the record:
   end of line), and a unique completion appends the closing quote. The
   ambiguous case extends to the common prefix inside the opened quote.
 
+  Two rules were sharpened after hardware use (v0.1.96/97):
+  - The opening quote goes in as soon as a spaced name is among the
+    **candidates**, not merely when the common prefix contains a space.
+    Quoting on the prefix alone broke as soon as a third name shortened the
+    prefix below the space: nothing was quoted, and typing the rest (" bb")
+    then began a NEW word, so completion hunted for a name starting "bb".
+    Shifted space ($A0) counts, being just as much a word break to the parser.
+  - TAB on a **fully-typed** unique name inside an open quote adds the closing
+    quote, though there is nothing left to complete -- until the quote closes,
+    the parser runs it to end of line and no further argument can be typed.
+
 ## Cache
 
 - **(as-built) Fixed pages $CE00-$CFFF** -- free since the single-page
@@ -82,7 +91,7 @@ Rejected alternatives, for the record:
   typed-input fold alone would never hit. Completion inserts the lowercase
   ASCII form -- the same thing the user would type by hand; truly
   case-sensitive URL segments remain the IEC layer's known limitation.
-- **Fill**: `cache_name()` in the dir overlay parses each drawn line's quoted
+- **Fill**: `cache_name()` in the disk bank (it was the dir overlay) parses each drawn line's quoted
   name (skipping the header/disk title, the BLOCKS FREE trailer, and Meatloaf
   NFO pseudo-entries) and appends it; `cache_done()` sets the valid flag only
   on a clean end (no TIMEOUT/NODEV in ST). Both `ls` and `dir` fill; `pwd`

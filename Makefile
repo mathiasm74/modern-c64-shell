@@ -163,11 +163,10 @@ $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 OVERLAYS := $(BUILD)/overlays/edit.bin $(BUILD)/overlays/about.bin
 # Set/page order MUST match LAYOUT in tools/gen_overlay_pages.py.
 #
-# Only TWO overlays are left: files and picker became the files BANK, and dir
-# became the disk bank (docs/ROM-EXPANSION.md). So there are two sets now --
-# A = edit, B = about -- and the old set C is gone from onerom-stock.json,
-# which renumbered the loadable sets after it (the banks are 7/8/9 now; see
-# bank_flash_set in src/rbcp/launch.s).
+# Only TWO overlays are left -- files and picker became the files bank, dir the
+# disk bank -- so there are two sets: A = edit, B = about. The old set C is gone
+# from onerom-stock.json, which renumbered the loadable sets after it (the banks
+# are 7/8/9; see bank_flash_set in src/rbcp/launch.s).
 OVERLAYS_A := $(BUILD)/overlays/edit.bin
 OVERLAYS_B := $(BUILD)/overlays/about.bin
 OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin
@@ -193,22 +192,18 @@ $(BUILD)/overlays/about.bin: $(BUILD)/overlays/about.o cfg/overlay_about.cfg
 	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
 	@echo "  about overlay: $$(wc -c < $@) bytes"
 
-# The color-picker overlay (border/bg/text with no value): cc65 C, only
-# k_chrout/k_getin (crt0_picker.s, cfg/overlay_picker.cfg).
-
 $(BUILD)/overlays/%.o: src/overlays/%.s | $(BUILD)
 	@mkdir -p $(BUILD)/overlays
 	$(AS) $(ASFLAGS) -o $@ $<
 $(BUILD)/overlays/%.bin: $(BUILD)/overlays/%.o cfg/overlay.cfg
 	$(LD) -C cfg/overlay.cfg -o $@ $<
 
-# --- ROM-expansion PoC banks (docs/ROM-EXPANSION.md, Option A) ---------------
-# A bank is a self-contained 8KB ROM image served at $A000-$BFFF in place of the
-# base set's BASIC half; cfg/bank.cfg links it there with a $A000 JMP-table ABI.
-# (The generic $(BUILD)/%.o rule above assembles src/banks/*.s -> build/banks/*.o.)
-$(BUILD)/banks/%.bin: $(BUILD)/banks/%.o cfg/bank.cfg
-	$(LD) -C cfg/bank.cfg -o $@ $<
-	@echo "  $(@F) : $$(wc -c < $@) bytes"
+# --- banks (docs/ROM-EXPANSION.md) -------------------------------------------
+# A bank is a self-contained 8KB ROM image the One ROM serves at $A000-$BFFF in
+# place of the base set's BASIC half, with a $A000 identity + JMP-table ABI
+# (bank_call in src/rbcp/launch.s). Each has its own link config because their
+# RAM needs differ; they SHARE one RAM window, since only one is served at a
+# time. (The generic $(BUILD)/%.o rule above assembles src/banks/*.s.)
 
 # The DISK BANK: cc65 C served as ROM at $A000 (cfg/disk_bank.cfg + crt0_disk.s),
 # with its state in the $98xx-$9Fxx RAM the overlays used to run from. This is

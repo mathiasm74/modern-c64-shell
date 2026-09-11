@@ -1,4 +1,9 @@
-"""Pre-seed tardis overlays for VICE tests.
+"""Pre-seed tardis overlays and BANKS for VICE tests.
+
+Two mechanisms live here now. A RAM overlay is fetched to $8800; a bank is
+SERVED as ROM at $A000 and seeds into the RAM underneath it (bank_call falls
+back to running it from there when no One ROM answers). Most commands are banks
+now -- only edit and about are still overlays.
 
 Overlays normally fetch from the One ROM's flash on demand; VICE has no One
 ROM, so tests write the overlay image straight into its run address. The
