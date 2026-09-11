@@ -2,7 +2,7 @@
 
 **A modern command-line shell for the Commodore 64 — booting in place of BASIC and the KERNAL.**
 
-Tardis DOS replaces the C64's stock BASIC + KERNAL with a modern command line: line editing, command history, a built-in fast loader, disk and file tools, a text editor, and more. It runs from a [OneROM](https://onerom.org/) — a flash-based ROM-replacement chip that drops into the C64's internal KERNAL/BASIC ROM sockets (it is **not** a cartridge).
+Tardis DOS replaces the C64's stock BASIC + KERNAL with a modern command line: line editing, command history, file name tab-completion, a built-in fast loader, disk and file tools, a text editor, and more. Its served from a [OneROM](https://onerom.org/) — a flash-based ROM-replacement chip that drops into the C64's internal KERNAL/BASIC ROM sockets. It is **not** a cartridge, and it's **not** Linux. It's just your Commodore with shell commands that are familiar.
 
 <p align="center">
   <img src="media/shell-help.jpg" alt="Tardis DOS running on a real C64: the boot banner, the help command listing every command in three columns, and the prompt showing the attached Meatloaf drive" width="620">
@@ -10,11 +10,7 @@ Tardis DOS replaces the C64's stock BASIC + KERNAL with a modern command line: l
 
 ## Bigger on the inside
 
-The C64's ROM sockets give you only 16 KB — far too little for a rich shell. Tardis DOS gets around this the way the Doctor's TARDIS does: the core lives in the 16 KB ROM, and everything else lives *outside* it, in the OneROM's flash. The result is a shell that does far more than 16 KB — bigger on the inside than the outside. That's where the name comes from.
-
-Most commands live in **banks**: 8 KB images the OneROM serves at `$A000`, in place of the shell's own BASIC half, for as long as the command runs. The disk commands, the file commands and TAB completion each live in one. Because a bank is *served as ROM* rather than copied into memory, it costs no RAM at all — your loaded program stays untouched — and reaching it is a ROM swap rather than a transfer. A handful of larger, rarer commands (the text editor, the `about` text) are still **streamed into RAM on demand** instead.
-
-The shell's own dispatch table says which bank a command lives in, so adding one costs the 16 KB ROM four bytes and its name. That is what keeps the budget from filling up as the shell grows: **v0.2.00 has ~5.5 KB of the 16 KB free**, having started this architecture with under 800 bytes left.
+The C64's ROM sockets give you only 16 KB — far too little for a rich shell. Tardis DOS gets around this the way as the [Doctor's TARDIS](https://en.wikipedia.org/wiki/TARDIS); _it's bigger on the inside than the outside_. The core lives in the 16 KB ROM, and everything else lives *outside* it, in the OneROM's flash and is swapped in as needed. The result is a shell that does far more than 16 KB.
 
 There's **no BASIC interpreter** — that's a deliberate trade to reclaim 8 KB of ROM. To run legacy software, Tardis DOS hands off to the *genuine* C64 ROMs: on `run` (or inserting a real cartridge), the OneROM hot-swaps back to the stock BASIC/KERNAL and warm-boots before launching the program.
 
@@ -29,21 +25,6 @@ There's **no BASIC interpreter** — that's a deliberate trade to reclaim 8 KB o
 - **Switchable fonts & keyboard** — `font` live-swaps the character ROM *and* keyboard layout together (English / Swedish).
 - **Persistent settings** — colours, command history, and the selected font survive a power cycle (stored in the OneROM's NV flash).
 - **Stock-ROM handoff** — `run` / `basic` swap the OneROM to genuine C64 ROMs to launch BASIC / machine-language programs and cartridges. **RUN/STOP + RESTORE** escapes a launched program back to the shell.
-
-## Commands
-
-| | | |
-|---|---|---|
-| `help` | list commands | `ls` / `dir` | directory (names / full listing) |
-| `ver` | show version | `cd` / `pwd` | change / show path |
-| `clear` | clear the screen | `load` / `fload` | load a program (standard / fast) |
-| `reset` | soft-reboot | `run` | fast-load and launch a program |
-| `basic` | swap to stock C64 BASIC | `cat` / `less` | show / page a file |
-| `edit` | text editor | `cp` / `mv` / `rm` | copy / rename / delete |
-| `peek` / `poke` | read / write memory | `status` | read the drive's error channel |
-| `sys` | call machine code | `devices` | scan the bus for drives |
-| `border` / `bg` / `text` | set colours | `device` | select the IEC device |
-| `font` | switch charset + keyboard | `about` | about Tardis DOS |
 
 ## Hardware
 
