@@ -138,9 +138,21 @@ static void build_sctab(void)
     }
 }
 
+/* A PETSCII control code has no glyph, so show it the way the C64 shows one
+   inside quotes: the character whose SCREEN code is the byte, in reverse
+   video. Colour codes typed with CTRL/C= (and any already embedded in a
+   loaded program) are therefore visible and distinguishable from each other,
+   rather than all collapsing to '?'. */
+static unsigned char ctrl_glyph(unsigned char c)
+{
+    return (unsigned char)((c & 0x7F) | 0x80);
+}
+
 static unsigned char scrc(unsigned char c)
 {
-    if (c < 0x20 || c > 0x7F)
+    if (c < 0x20 || (c >= 0x80 && c <= 0x9F))
+        return ctrl_glyph(c);
+    if (c > 0x7F)
         return 0x3F;
     return sctab[c - 0x20];
 }
@@ -215,11 +227,8 @@ static unsigned int render_row(unsigned char r, unsigned int p)
         ch = chat(p);
         if (ch == CR_CH)
             break;
-        if (c < COLS) {
-            if (ch < 0x20 || ch > 0x7F)
-                ch = 0x3F;
-            row[c] = sctab[ch - 0x20];
-        }
+        if (c < COLS)
+            row[c] = scrc(ch);
         ++c;
         ++p;
     }
@@ -937,7 +946,13 @@ void edit_main(void)
             insert_ch(CR_CH);               /* structural: full redraw */
             break;
         default:
-            if (c >= 0x20 && c <= 0x7E) {
+            /* Printable text, plus the PETSCII colour codes (CTRL/C= 1-8).
+               Those are control bytes, so they would otherwise be swallowed
+               here -- and they are the only way to put a colour into a BASIC
+               string. */
+            if ((c >= 0x20 && c <= 0x7E) || c == 0x05 || c == 0x1C ||
+                c == 0x1E || c == 0x1F || (c >= 0x81 && c <= 0x9F &&
+                c != 0x8D && c != 0x91 && c != 0x93 && c != 0x9D)) {
                 insert_ch(c);
                 light = 1;
             }

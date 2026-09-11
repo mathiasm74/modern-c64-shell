@@ -70,3 +70,25 @@ def test_shifted_punctuation_and_cursor(v):
     assert tab[51] == 0x93, "shift-HOME should be CLR ($93)"
     # the shift keys themselves emit nothing
     assert tab[15] == 0x00 and tab[52] == 0x00, "a SHIFT key must emit nothing"
+
+
+def test_colour_code_tables(v):
+    """CTRL+1..8 and C=+1..8 emit the sixteen PETSCII colour codes.
+
+    These are control codes, not characters, so they cannot live in the key
+    tables and are reached only through a modifier -- and they are the only way
+    to get a colour into a BASIC string, since you cannot type one. The live
+    matrix is hardware-only (the harness injects into the keyboard buffer, not
+    the matrix), but the TABLES are checkable straight out of ROM.
+    """
+    want_ctrl = [0x90, 0x05, 0x1C, 0x9F,    # black, white, red, cyan
+                 0x9C, 0x1E, 0x1F, 0x9E]    # purple, green, blue, yellow
+    want_cbm = [0x81, 0x95, 0x96, 0x97,     # orange, brown, lt red, dk grey
+                0x98, 0x99, 0x9A, 0x9B]     # grey, lt green, lt blue, lt grey
+
+    got = v.read_memory(_symbol_addr("ctrl_color"), 8)
+    assert got == want_ctrl, "CTRL colours: %s want %s" % (
+        [hex(b) for b in got], [hex(b) for b in want_ctrl])
+    got = v.read_memory(_symbol_addr("cbm_color"), 8)
+    assert got == want_cbm, "C= colours: %s want %s" % (
+        [hex(b) for b in got], [hex(b) for b in want_cbm])

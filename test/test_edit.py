@@ -336,3 +336,41 @@ def test_edit_basic_roundtrip_is_byte_exact(v):
         "tokenized bytes differ\n got: %s\nwant: %s" % (
             " ".join("%02X" % b for b in got),
             " ".join("%02X" % b for b in want))
+
+
+def test_edit_accepts_and_shows_colour_codes(v):
+    """A colour code typed into the editor is stored AND visible.
+
+    Two separate things had to change for this. The byte is a control code, so
+    the editor's insert filter dropped it; and it has no glyph, so it rendered
+    as '?' like every other unprintable. It now shows the way the C64 shows a
+    control code inside quotes -- the character whose SCREEN code is the byte,
+    in reverse video -- so the eight colours are distinguishable from each
+    other instead of all looking the same.
+
+    The physical CTRL+3 is hardware-only (the harness injects into the keyboard
+    buffer, not the matrix; test_keyboard checks the table it decodes to), so
+    this injects the resulting byte.
+    """
+    _seed(v)
+    v.run_for(0.3)
+    _keys(v, "edit")
+    _keys(v, [CR])
+    _wait(v, "edit: (new)")
+
+    _keys(v, ['1', '0', ' ', 'p', 'r', 'i', 'n', 't', ' ', '"', 0x1C, 'h', 'i'])
+    v.run_for(0.3)
+
+    # row 1 is the first document row; "10 print \"" is 10 chars, so the colour
+    # code lands in column 10 and the text resumes after it.
+    cells = v.screen_cells() if hasattr(v, "screen_cells") else None
+    row = v.read_memory(0x0400 + 40, 40)
+    assert row[10] == (0x1C | 0x80), \
+        "colour code not shown as a reverse-video glyph: got $%02X" % row[10]
+    txt = v.screen_text()
+    assert "hi" in txt, "text after the colour code was lost\n%s" % txt
+
+    _keys(v, [CTRL_X])                  # discard: modified buffer prompts
+    v.run_for(0.3)
+    _keys(v, "n")
+    _wait(v, "8>")

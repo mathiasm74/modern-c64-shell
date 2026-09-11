@@ -144,7 +144,10 @@ scan_keyboard:
 
         ldx found_key
         cpx #$FF
-        beq @none               ; nothing pressed this scan
+        bne :+
+        jmp @none               ; nothing pressed this scan (out of branch range
+                                ; since the colour-code decode grew this block)
+:
         cpx LSTX
         beq @held               ; same key still held -> maybe auto-repeat
         stx LSTX                ; new key: emit it and arm the initial delay
@@ -169,10 +172,23 @@ scan_keyboard:
         jsr decode_unshift      ; unshifted decode (US or Swedish table)
         jmp @emit
 @viactrl:
-        ; CTRL+letter emits the ASCII control code ($01-$1A), nano-style:
-        ; ^k = $0B, ^x = $18, ^i = $09, ... (used by the edit overlay's
-        ; bindings). CTRL with a non-letter emits the plain unshifted character.
+        ; CTRL+1..8 emit the eight PETSCII colour codes, as on a real C64 --
+        ; the only way to get a colour into a BASIC string, since the codes are
+        ; not typeable characters.
         jsr decode_unshift
+        cmp #'1'
+        bcc @ctrlletter
+        cmp #'9'
+        bcs @ctrlletter
+        sec
+        sbc #'1'
+        tax                     ; 0..7 (X held the matrix code; @emit reloads it)
+        lda ctrl_color,x
+        jmp @emit
+@ctrlletter:
+        ; CTRL+letter emits the ASCII control code ($01-$1A), nano-style:
+        ; ^k = $0B, ^x = $18, ^i = $09, ... (used by the editor's bindings).
+        ; CTRL with anything else emits the plain unshifted character.
         cmp #'a'
         bcc @emit               ; below 'a': emit as-is
         cmp #'z'+1
@@ -183,6 +199,19 @@ scan_keyboard:
         jsr decode_shift        ; shifted decode (US or Swedish table):
         jmp @emit               ; uppercase, !"#$, <>?[], cursor left/up, CLR, ...
 @viacbm:
+        ; C=+1..8 emit the OTHER eight colours (orange, brown, light red, dark
+        ; grey, grey, light green, light blue, light grey), as on a real C64.
+        jsr decode_unshift      ; preserves X (the matrix code)
+        cmp #'1'
+        bcc @cbmat
+        cmp #'9'
+        bcs @cbmat
+        sec
+        sbc #'1'
+        tax
+        lda cbm_color,x
+        jmp @emit
+@cbmat:
         ; VICE's symbolic keymap sends host '_' as @+CBM (the only CBM combo
         ; it uses); decode that one to underscore and ignore the rest.
         cpx #46                 ; the @ key
@@ -248,6 +277,18 @@ ctrl_tap:
 ; still needs it); clobbers A and Y. ROM tables can't be self-modified, so we
 ; branch on the layout byte instead of patching the load operand.
 ; -------------------------------------------------------------------------
+.export ctrl_color, cbm_color
+
+; The C64's sixteen PETSCII colour codes, in keycap order. These are control
+; codes, not characters, so they have no place in the key tables: they are
+; reached only through a modifier.
+ctrl_color:
+        .byte $90, $05, $1C, $9F        ; 1-4: black, white, red, cyan
+        .byte $9C, $1E, $1F, $9E        ; 5-8: purple, green, blue, yellow
+cbm_color:
+        .byte $81, $95, $96, $97        ; 1-4: orange, brown, lt red, dk grey
+        .byte $98, $99, $9A, $9B        ; 5-8: grey, lt green, lt blue, lt grey
+
 decode_unshift:
         ldy KBD_LAYOUT
         beq @us
