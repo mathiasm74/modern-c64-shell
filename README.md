@@ -9,7 +9,7 @@
 Tardis DOS replaces the C64's stock BASIC + KERNAL with a modern command line: line editing, command history, file name tab-completion, a built-in fast loader, disk and file tools, a text editor, and more. Its served from a [OneROM](https://onerom.org/) — a flash-based ROM-replacement chip that drops into the C64's internal KERNAL/BASIC ROM sockets. It is **not** a cartridge, and it's **not** Linux. It's just your Commodore with shell commands that are familiar.
 
 <p align="center">
-  <img src="media/shell-help.jpg" alt="Tardis DOS running on a real C64: the boot banner, the help command listing every command in three columns, and the prompt showing the attached Meatloaf drive" width="620">
+  <img src="media/shell-help.jpg" alt="Tardis DOS running on a real C64: the boot banner, the help command listing every command in three columns, and the prompt showing the attached Meatloaf drive" width="680">
 </p>
 
 ## Bigger on the inside
