@@ -193,3 +193,47 @@ def test_bank_ram_ceiling_and_loader_guards_agree(v):
     assert m, "BANK_RAM_FLOOR missing from src/banks/disk_bank.c"
     assert int(m.group(1), 16) == disk, \
         "`load` floor $%04X != bank RAM start $%04X" % (int(m.group(1), 16), disk)
+
+
+# --- firmware chip-set shapes ----------------------------------------------
+# A BANK set must be [kernal | charset | bank image]. The KERNAL and charset
+# have to be byte-identical to the base set, because SWITCH_SLOT swaps under a
+# running CPU: only the $A000 half may differ.
+#
+# This exists because that invariant was broken by hand and reached hardware.
+# The edit bank's set was created by editing the OVERLAY set it replaced --
+# and an overlay set is the same image on all three chips. The result served
+# the editor's code as the character ROM (the screen filled with giant garbage
+# glyphs) and as the KERNAL. Nothing in the build or the suite noticed: the
+# images were all valid, just wired to the wrong chips.
+
+import json
+
+
+def _chip_sets():
+    with open(os.path.join(_ROOT, "cfg", "onerom-stock.json")) as f:
+        return json.load(f)["chip_sets"]
+
+
+def test_bank_flash_sets_have_the_right_chip_layout(v):
+    (void) = v                          # static check; no machine needed
+
+    sets = _chip_sets()
+    banks = [(i, s) for i, s in enumerate(sets)
+             if any("banks/" in c.get("file", "") for c in s["chips"])]
+    assert banks, "no bank sets found in cfg/onerom-stock.json"
+
+    for i, s in banks:
+        files = [c.get("file", "") for c in s["chips"]]
+        assert len(files) == 3, "slot %d: a bank set needs 3 chips, got %d" % (i, len(files))
+        assert files[0].endswith("kernal.bin"), \
+            "slot %d chip 0 must be the KERNAL (byte-identical to the base so " \
+            "the live swap is safe), got %r" % (i, files[0])
+        assert "characters" in files[1], \
+            "slot %d chip 1 must be the character ROM -- anything else is served " \
+            "to the VIC as the charset, got %r" % (i, files[1])
+        assert "banks/" in files[2], \
+            "slot %d chip 2 must be the bank image, got %r" % (i, files[2])
+        assert files[0] != files[2], \
+            "slot %d serves the same image as KERNAL and bank -- this is the " \
+            "overlay-set shape (one image on all chips), not a bank set" % i

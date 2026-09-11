@@ -119,25 +119,26 @@
     },
     {
       "type": "multi",
+      "serve_alg": "two_cs_one_addr",
       "chips": [
         {
-          "file": "build/banks/edit_bank.bin",
+          "file": "build/kernal.bin",
           "type": "Chip2364",
           "cs1": "active_low",
           "label": "~edit bank"
         },
         {
-          "file": "build/banks/edit_bank.bin",
+          "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
           "type": "Chip2364",
-          "cs1": "active_low"
+          "cs1": "active_low",
+          "size_handling": "duplicate"
         },
         {
           "file": "build/banks/edit_bank.bin",
           "type": "Chip2364",
           "cs1": "active_low"
         }
-      ],
-      "serve_alg": "two_cs_one_addr"
+      ]
     },
     {
       "type": "multi",
