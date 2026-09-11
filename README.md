@@ -10,14 +10,14 @@ Tardis DOS replaces the C64's stock BASIC + KERNAL with a modern command line: l
 
 ## Bigger on the inside
 
-The C64's ROM sockets give you only 16 KB — far too little for a rich shell. Tardis DOS gets around this the way as the [Doctor's TARDIS](https://en.wikipedia.org/wiki/TARDIS); _it's bigger on the inside than the outside_. The core lives in the 16 KB ROM, and everything else lives *outside* it, in the OneROM's flash and is swapped in as needed. The result is a shell that does far more than 16 KB.
+The C64's ROM sockets give you only 16 KB — far too little for a rich shell. Tardis DOS gets around this the same way the [Doctor's TARDIS](https://en.wikipedia.org/wiki/TARDIS) works; _it's bigger on the inside than the outside_. The core lives in the 16 KB ROM, and everything else lives *outside* it, in the OneROM's flash and is swapped in as needed. The result is a shell that does far more than 16 KB.
 
 There's **no BASIC interpreter** — that's a deliberate trade to reclaim 8 KB of ROM. To run legacy software, Tardis DOS hands off to the *genuine* C64 ROMs: on `run` (or inserting a real cartridge), the OneROM hot-swaps back to the stock BASIC/KERNAL and warm-boots before launching the program.
 
 ## Features
 
 - **Modern shell** — line editing with cursor movement, insert/delete, an 8-deep command history (↑/↓), and **filename completion** (tap **CTRL** — the C64 has no TAB key), including names with spaces.
-- **Epyx-compatible fast loader** — `fload` / `run` stream programs fast; pairs beautifully with the [Meatloaf](https://github.com/idolpx/meatloaf), and also works with a stock 1541, SD2IEC, Pi1541, and 1541 Ultimate.
+- **Epyx-compatible fast loader** — `fload` / `run` stream programs fast; pairs beautifully with the [Meatloaf](https://github.com/idolpx/meatloaf), and will soon also work with a stock 1541, SD2IEC, Pi1541, and 1541 Ultimate.
 - **Disk & file tools** — `ls`, `dir`, `cd`, `pwd`, `cp`, `mv`, `rm`, `cat`, `less`, `status`, `device`, driving the IEC bus directly.
 - **Text editor** — `edit`, a nano-style editor with cut/copy/paste.
 - **Memory tools** — `peek` (with hex-dump), `poke`.
