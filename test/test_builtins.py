@@ -51,12 +51,17 @@ def test_help_lists_every_command(v):
     assert "Commands" in txt, "help did not print its header"
     for name in ("help", "clear", "ver", "basic"):
         assert name in txt, "help did not list %s" % name
+    # ...and it advertises the line-editor features nothing else does. Filename
+    # completion especially: the C64 has no TAB key, so the CTRL-tap binding is
+    # undiscoverable otherwise.
+    assert "CTRL" in txt, "help did not mention the CTRL completion key\n%s" % txt
+    assert "recalls" in txt, "help did not mention command history\n%s" % txt
 
 
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("Tardis DOS v0.1.97")
+    v.assert_screen_contains("Tardis DOS v0.1.98")
 
 
 # `basic` (formerly `exit`, before that `runstock`) swaps the One ROM to the
