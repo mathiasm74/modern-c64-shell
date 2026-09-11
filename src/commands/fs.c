@@ -37,8 +37,21 @@ void rbcp_launch_stock(void);
 
 /* Start address of the most recently loaded program, or 0 if none. Lives in
    BSS, so it is zero at boot. */
-static unsigned int load_start;
-static unsigned int load_end;   /* one past the last byte loaded (= BASIC VARTAB) */
+/* Start/end of the most recently loaded program, or 0 if none.
+ *
+ * These ARE the disk-bank mailbox cells, not copies of them: `load` and `fload`
+ * both run in the bank now, so the bank is what learns the addresses, and a
+ * resident copy has to be refreshed by somebody. That copying is exactly what
+ * broke -- when the resident load/fload thunks were deleted for data-driven
+ * dispatch, only `run <name>` still copied, so `fload x` then a bare `run` said
+ * "nothing loaded", and `load x` then `basic` cold-swapped instead of handing
+ * the program over. Sharing the cells removes the copy, and with it the chance
+ * of it going stale again.
+ *
+ * reset.s zeroes them at boot: page 3 is power-on garbage, and a nonzero
+ * load_start would make a bare `run` launch nothing at all. */
+#define load_start (*(unsigned int *)0x039A)
+#define load_end   (*(unsigned int *)0x039C)
 
 /* The device ls/load/run talk to; `device <n>` changes it. Initialized (DATA,
    restored on reset), not BSS, so it boots as 8. */
@@ -266,11 +279,8 @@ void cmd_run(int argc, char *argv[])
            own failures, so we only have to notice and stop. */
         bank_dispatch(3, argc, argv);
         if (DM_STAT != DM_OK)
-            return;                     /* already reported */
-        load_start = DM_START;
-        load_end = DM_END;
-        if (load_start < 0xCF00 && load_end > 0xCE00)
-            TAB_CACHE_OK = 0;           /* the load overwrote the cache page */
+            return;                     /* already reported: the bank sets
+                                           load_start/load_end itself */
     } else if (load_start == 0) {
         puts_raw("nothing loaded");
         chrout(CR);

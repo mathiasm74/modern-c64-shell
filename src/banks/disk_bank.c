@@ -70,6 +70,11 @@ static void puts_bank(const char *s)
 /* Status handed back to the resident thunk, which owns the reporting -- except
    DM_REPORTED, where the drive's own error-channel message can only be read
    here and has already been printed. */
+/* TAB-completion name cache valid flag ($CE00). A load that lands across it has
+   overwritten the names, so drop it -- the resident thunks used to do this, but
+   both loaders live here now. */
+#define TC_OK (*(unsigned char *)0xCE00)
+
 #define DM_OK          0
 #define DM_NO_DEVICE   1
 #define DM_UNSUPPORTED 2
@@ -211,6 +216,8 @@ void disk_fload(void)
         return;
     }
 
+    if (DM_START < 0xCF00 && DM_END > 0xCE00)
+        TC_OK = 0;                      /* the load overwrote the cache page */
     DM_STAT = DM_OK;
     report_loaded("Fast-loaded $");
 }
@@ -370,6 +377,8 @@ void disk_load(void)
     }
 
     DM_END = (unsigned int)p;
+    if (DM_START < 0xCF00 && DM_END > 0xCE00)
+        TC_OK = 0;                      /* the load overwrote the cache page */
     DM_STAT = DM_OK;
     report_loaded("loaded $");
 }

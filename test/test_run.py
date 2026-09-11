@@ -52,6 +52,36 @@ def test_load_completes(v):
         "load never completed\n%s" % v.screen_text()
 
 
+def test_load_then_bare_run_finds_the_program(v):
+    """A bare `run` after a `load` must not say "nothing loaded".
+
+    load and fload both run in the DISK BANK, so the bank is what learns the
+    program's address; load_start/load_end ARE the bank's mailbox cells rather
+    than resident copies of them. When they were copies, only `run <name>`
+    refreshed them -- so `load x` (or `fload x`) followed by a bare `run` said
+    "nothing loaded", and `basic` cold-swapped instead of handing the program
+    over. Hardware-reported after fload.
+
+    The launch itself is hardware-only (the stock swap is inert in VICE, where
+    the JMP through (FFFC) just re-enters our own reset), so this asserts the
+    part that is observable: the program was remembered.
+    """
+    seed_disk_bank(v)
+    v.run_for(0.3)
+    _type(v, "load prog")
+    assert _wait_for(v, "loaded $"), "load never completed\n%s" % v.screen_text()
+    # the mailbox cells the shell reads as load_start/load_end
+    start = v.read_byte(0x039A) | (v.read_byte(0x039B) << 8)
+    end = v.read_byte(0x039C) | (v.read_byte(0x039D) << 8)
+    assert start != 0 and end > start, \
+        "load did not record the program: start=$%04X end=$%04X" % (start, end)
+
+    _type(v, "run")
+    v.run_for(1.0)
+    assert "nothing loaded" not in v.screen_text(), \
+        "bare run after load reported nothing loaded\n%s" % v.screen_text()
+
+
 def test_load_missing_reports_not_found(v):
     """A missing file streams back no data (immediate EOI, no timeout); load
     must say so rather than read $00,$00 as a load address and print a bogus

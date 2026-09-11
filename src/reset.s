@@ -82,6 +82,7 @@ NDX        = $C6                ; keyboard buffer count
 KBD_LAYOUT = $02CB              ; 0 = US/symbolic tables, 1 = Swedish (irq.s)
 BASE_SLOT  = $02CE              ; RAM slot the base set is served from (font A
                                 ; = 0, font B = 2); read by bank_restore
+LOADADR    = $039A              ; load_start/load_end (disk-bank mailbox)
 
 ; --- Constants -----------------------------------------------------------
 COLOR_BLACK  = $00
@@ -304,6 +305,10 @@ reset:
         sta BASE_SLOT           ; the base set boots served from RAM slot 0; a
                                 ; font switch moves it, and bank_restore
                                 ; (launch.s) switches back to whatever this says
+        sta LOADADR+0           ; "nothing loaded yet": these four bytes ARE the
+        sta LOADADR+1           ; shell's load_start/load_end (the disk-bank
+        sta LOADADR+2           ; mailbox, fs.c). Page 3 is power-on garbage, so
+        sta LOADADR+3           ; a bare `run` would otherwise launch nonsense
         lda #$FF
         sta LSTX
 
@@ -476,7 +481,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.1.99", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.2.00", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:
