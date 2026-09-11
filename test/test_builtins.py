@@ -15,7 +15,7 @@ parser's quoted-string handling or its behavior on very long (truncated)
 lines; those are covered by reading the code, not by an integration test.
 """
 
-from lib.overlays import seed_files
+from lib.overlays import seed_files, seed_files
 
 CLEAR = 0x93
 CR = 0x0D
@@ -43,7 +43,10 @@ def _type_no_clear(v, text):
 
 def test_help_lists_every_command(v):
     # help reads the dispatch table, so it names every registered command.
+    # Its formatting lives in the files bank now, so that has to be present.
+    seed_files(v)
     _type(v, "help")
+    v.run_for(0.5)
     txt = v.screen_text()
     assert "Commands" in txt, "help did not print its header"
     for name in ("help", "clear", "ver", "basic"):
@@ -53,7 +56,7 @@ def test_help_lists_every_command(v):
 def test_ver_prints_version(v):
     # The one place the exact version is asserted; bump here on a version change.
     _type(v, "ver")
-    v.assert_screen_contains("Tardis DOS v0.1.95")
+    v.assert_screen_contains("Tardis DOS v0.1.96")
 
 
 # `basic` (formerly `exit`, before that `runstock`) swaps the One ROM to the

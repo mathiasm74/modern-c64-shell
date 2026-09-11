@@ -10,7 +10,7 @@
  */
 #include "shell.h"
 #include "iec.h"
-#include "commands/overlay.h"     /* run_files_overlay / files_run, for the thunks */
+#include "commands/overlay.h"
 
 #define CR    0x0D
 #define CLEAR 0x93
@@ -177,6 +177,17 @@ unsigned char bank_try(unsigned char entry, int argc, char *argv[])
 {
     const char *name;
     unsigned char n = 0;
+
+    /* Addresses of resident state a bank must update in place: the default
+       device and the per-device name table stay resident because the prompt and
+       every disk command read them. */
+    *(unsigned char **)0x02F4 = &default_device;
+    *(char **)0x02F6 = &device_name[0][0];
+    /* The dispatch table, for `help` -- it lists whatever is registered, and
+       only the resident side knows where the table is. (Shares bytes with
+       mailbox arg 2; commands that use that arg do not read this.) */
+    *(const void **)0x02E4 = (const void *)shell_commands;
+    *(unsigned char *)0x02E6 = shell_command_count;
 
     DB_DEV = default_device;
     name = current_device_name();
@@ -438,143 +449,9 @@ void cmd_font(int argc, char *argv[])
 #define FB_A2L (*(unsigned char *)0x02E3)
 #define FB_A2  ((unsigned char *)0x02E4)        /* 16 chars */
 
-void files_run(unsigned char cmd, const char *a1, const char *a2)
-{
-    unsigned char n;
-
-    FB_CMD = cmd;
-    FB_DEV = default_device;
-    n = 0;
-    if (a1)
-        while (a1[n] && n < 16) { FB_A1[n] = a1[n]; ++n; }
-    FB_A1L = n;
-    n = 0;
-    if (a2)
-        while (a2[n] && n < 16) { FB_A2[n] = a2[n]; ++n; }
-    FB_A2L = n;
-    run_files_overlay();
-}
-
-void cmd_cat(int argc, char *argv[])
-{
-    if (argc < 2) { usage("cat <name>"); return; }
-    files_run(0, argv[1], 0);
-}
-
-void cmd_less(int argc, char *argv[])
-{
-    if (argc < 2) { usage("less <name>"); return; }
-    files_run(1, argv[1], 0);
-}
-
-/* cp/mv/rm/cd invalidate the TAB-completion cache only when they SUCCEED --
-   the overlay clears $CE00 after a good copy/rename/scratch/cd. A failed one
-   (missing file, bad path, offline drive) left the directory unchanged, so the
-   cached names -- and the path pwd shows -- must survive the error. */
-void cmd_cp(int argc, char *argv[])
-{
-    if (argc < 3) { usage("cp <src> <dst>"); return; }
-    files_run(2, argv[1], argv[2]);
-}
-
-void cmd_mv(int argc, char *argv[])
-{
-    if (argc < 3) { usage("mv <old> <new>"); return; }
-    files_run(3, argv[1], argv[2]);     /* overlay builds r0:<new>=<old> */
-}
-
-void cmd_rm(int argc, char *argv[])
-{
-    if (argc < 2) { usage("rm <name>"); return; }
-    files_run(4, argv[1], 0);
-}
-
-/* cd <path> - change the working path on the drive. The files overlay (cmd 7)
-   sends the CD command via its command_channel and reports a failure as
-   "cd: <message>" (a 1541 has no CD and answers SYNTAX ERROR; a Meatloaf
-   navigates and only errors on a missing path); success is silent. Paths can
-   exceed the 16-char mailbox args (Meatloaf URLs), so the thunk prebuilds the
-   whole command into a 40-byte scratch at $0340 (free tape-buffer RAM) and
-   passes only its length in the mailbox.
-
-   A relative path is sent as "CD:<path>". A path starting with '/' is absolute
-   (from the root); the CMD/Meatloaf form for that is "CD/<path>", so the path's
-   own leading slash yields "CD//" for the root or "CD//sub" for a subdir.
-
-   "cd //" is the special case for the flash root -- one level below "/" -- which
-   the drive reaches with "CD<up-arrow>" (PETSCII $5E), not a slash path. */
-#define CD_CMD ((unsigned char *)0x0340)
-void cmd_cd(int argc, char *argv[])
-{
-    unsigned char i = 0, j;
-
-    if (argc < 2) { usage("cd <path>"); return; }
-    CD_CMD[i++] = 'c'; CD_CMD[i++] = 'd';
-    if (argv[1][0] == '/' && argv[1][1] == '/' && argv[1][2] == '\0') {
-        CD_CMD[i++] = 0x5E;             /* "cd //" -> "CD<up-arrow>" flash root */
-    } else {
-        CD_CMD[i++] = (argv[1][0] == '/') ? '/' : ':';
-        for (j = 0; argv[1][j] && i < 39; ++j)
-            CD_CMD[i++] = argv[1][j];
-    }
-    FB_CMD = 7;
-    FB_DEV = default_device;
-    FB_A1L = i;                         /* prebuilt-command length (cmd at $0340) */
-    run_files_overlay();
-}
-
-/* status - read and print the drive's command/error channel (15), the classic
-   "blinking red light" check (`OPEN 1,8,15: INPUT#1,A,B$,C,D`). The read +
-   reformatting lives in the files overlay (cmd 6, status_read): buffering and
-   the comma-field parse cost too much resident ROM. Thin thunk only. */
-/* devices - scan units 8-15 and print each present drive's identity (files
-   overlay cmd 18; it also fills empty name slots as it goes). */
-void cmd_devices(int argc, char *argv[])
-{
-    (void)argc; (void)argv;
-    *(unsigned char **)0x02F4 = &default_device;
-    *(char **)0x02F6 = &device_name[0][0];
-    files_run(18, 0, 0);
-}
-
-/* Boot-time device identity (called once from main): quietly fill the default
-   unit's name slot so the first prompt already reads "8: meatloaf>". Quiet
-   twice over -- the overlay cmd prints nothing, and a failed overlay fetch
-   (VICE: no One ROM) is swallowed. The bus waits run in probe mode inside the
-   overlay, so an absent or still-booting drive can't wedge the boot. */
+/* Identify the default device quietly at boot (files bank entry 15): prints
+   nothing, swallows a failed bank call, and runs the bus in probe mode. */
 void identify_boot_device(void)
 {
-    *(unsigned char **)0x02F4 = &default_device;
-    *(char **)0x02F6 = &device_name[0][0];
-    FB_CMD = 17;
-    FB_DEV = default_device;
-    FB_A1L = 0;
-    FB_A2L = 0;
-    run_files_overlay_quiet();
-}
-
-void cmd_status(int argc, char *argv[])
-{
-    (void)argc; (void)argv;
-    files_run(6, 0, 0);
-}
-
-/* device <n> [name] - set the device ls/load/run talk to (default 8). The bus
-   is probed first: if <n> doesn't answer, report it and keep the current
-   device (so a typo'd unit number can't silently misdirect later commands). A
-   name, if given, is remembered for that device number and reused when
-   `device <n>` is later given without one. */
-void cmd_device(int argc, char *argv[])
-{
-    /* The parse/probe/report is in the files overlay (cmd 16). default_device
-       and device_name stay resident (read everywhere), so pass their addresses
-       in the mailbox for the overlay to update in place. */
-    unsigned char prev = default_device;
-
-    *(unsigned char **)0x02F4 = &default_device;
-    *(char **)0x02F6 = &device_name[0][0];
-    files_run(16, argc > 1 ? argv[1] : 0, argc >= 3 ? argv[2] : 0);
-    if (default_device != prev)         /* only a real switch is a new directory;
-                                           a failed probe keeps the cache valid */
-        TAB_CACHE_OK = 0;
+    bank_try((BANK_FILES << 5) | 15, 0, (char **)0);
 }

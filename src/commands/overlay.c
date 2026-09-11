@@ -138,42 +138,7 @@ void cmd_edit(int argc, char *argv[])
     OVL8_ENTRY();
 }
 
-/* Run the files overlay (cat/less/cp/mv/rm). The fs.c thunk fills the mailbox
-   first, then calls this. */
-void run_files_overlay(void)
-{
-    unsigned char rc = mp_fetch(FILES_FIRST_PAGE, "fil1", FILES_SET);
-
-    if (rc != 0) {
-        mp_failed(rc);
-        return;
-    }
-    OVL8_ENTRY();
-}
-
-/* Like run_files_overlay, but a fetch failure is silent: used by the boot-
-   time device identify, where "overlay load failed" would deface the banner
-   (and on VICE -- no One ROM -- would print at every boot). The prompt just
-   falls back to the bare unit number. */
-void run_files_overlay_quiet(void)
-{
-    if (mp_fetch(FILES_FIRST_PAGE, "fil1", FILES_SET) == 0)
-        OVL8_ENTRY();
-}
-
-
-/* Run the color-picker overlay. `which` (0 border, 1 bg, 2 text) goes in the
-   $02D1 mailbox the overlay reads. */
-void run_picker(unsigned char which)
-{
-    unsigned char rc;
-
-    *(unsigned char *)0x02D1 = which;
-    rc = mp_fetch(PICKER_FIRST_PAGE, "pic1", PICKER_SET);
-    if (rc != 0) {
-        mp_failed(rc);
-        return;
-    }
-    OVL8_ENTRY();
-}
+/* (The files and picker overlays became the FILES BANK -- served ROM, no fetch
+   and no RAM footprint; see docs/ROM-EXPANSION.md. Only edit and about are
+   still fetched into $8800.) */
 

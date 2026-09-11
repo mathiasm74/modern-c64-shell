@@ -15,9 +15,22 @@
 #include "parser.h"
 #include "commands/builtins.h"
 #include "commands/fs.h"
-#include "commands/mem.h"
-#include "commands/config.h"
 #include "commands/overlay.h"
+
+/* ALL of this file's string literals go in the KERNAL half.
+ *
+ * Not just tidiness: the command-name strings are pointed at by shell_commands,
+ * and `help` walks that table from inside the FILES BANK. A bank replaces the
+ * BASIC half while it runs, so a pointer into the BASIC half reads the bank's
+ * own code -- help printed structured garbage until these moved. The rule that
+ * "only the KERNAL half is reachable from a bank" applies to DATA a bank
+ * follows, not only to code it calls.
+ *
+ * cc65 emits the literal pool at the end of the translation unit using whatever
+ * rodata segment is current there, so this push is deliberately never popped.
+ * (It also shifts these bytes off the tight BASIC half, which is a bonus.)
+ */
+#pragma rodata-name (push, "RODATA2")
 
 #define CR       0x0D            /* RETURN: submit the line                 */
 #define DEL      0x14            /* DELETE: backspace                       */
@@ -46,33 +59,33 @@
 const struct command shell_commands[] = {
     { "about",  cmd_about  },
     { "basic",  cmd_basic  },
-    { "bg",     cmd_bg     },
-    { "border", cmd_border },
-    { "cat",    cmd_cat    },
-    { "cd",     cmd_cd     },
+    { "bg",     BANK_CMD(BANK_FILES, 8) },
+    { "border", BANK_CMD(BANK_FILES, 7) },
+    { "cat",    BANK_CMD(BANK_FILES, 0) },
+    { "cd",     BANK_CMD(BANK_FILES, 6) },
     { "clear",  cmd_clear  },
-    { "cp",     cmd_cp     },
-    { "dev",    cmd_device },
-    { "device", cmd_device },
-    { "devices", cmd_devices },
+    { "cp",     BANK_CMD(BANK_FILES, 2) },
+    { "dev",    BANK_CMD(BANK_FILES, 13) },
+    { "device", BANK_CMD(BANK_FILES, 13) },
+    { "devices", BANK_CMD(BANK_FILES, 14) },
     { "dir",    BANK_CMD(BANK_DISK, 0) },
     { "edit",   cmd_edit   },
     { "fload",  BANK_CMD(BANK_DISK, 3) },
     { "font",   cmd_font   },
-    { "help",   cmd_help   },
-    { "less",   cmd_less   },
+    { "help",   BANK_CMD(BANK_FILES, 12) },
+    { "less",   BANK_CMD(BANK_FILES, 1) },
     { "load",   BANK_CMD(BANK_DISK, 4) },
     { "ls",     BANK_CMD(BANK_DISK, 1) },
-    { "mv",     cmd_mv     },
-    { "peek",   cmd_peek   },
-    { "poke",   cmd_poke   },
+    { "mv",     BANK_CMD(BANK_FILES, 3) },
+    { "peek",   BANK_CMD(BANK_FILES, 10) },
+    { "poke",   BANK_CMD(BANK_FILES, 11) },
     { "pwd",    BANK_CMD(BANK_DISK, 2) },
     { "reset",  cmd_reset  },
-    { "rm",     cmd_rm     },
+    { "rm",     BANK_CMD(BANK_FILES, 4) },
     { "run",    cmd_run    },
-    { "status", cmd_status },
+    { "status", BANK_CMD(BANK_FILES, 5) },
     { "sys",    cmd_sys    },
-    { "text",   cmd_text   },
+    { "text",   BANK_CMD(BANK_FILES, 9) },
     { "ver",    cmd_ver    },
 };
 const unsigned char shell_command_count =

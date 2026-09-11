@@ -90,6 +90,9 @@ def test_spaced_filenames_end_to_end(v):
     _typeln(v, 'cp prog "my prog"')
     assert _await(v, "copied"), "cp to a spaced name failed: %r" % v.screen_text()
     _typeln(v, 'clear')
+    # cp is a FILES-bank command and load a DISK-bank one; only one bank can be
+    # seeded at a time in VICE (they all link to $A000), so swap between them.
+    seed_disk_bank(v)
     _typeln(v, 'load "my prog"')
     assert _await(v, "loaded $2000"), \
         "quoted load of the spaced file failed: %r" % v.screen_text()
@@ -100,6 +103,7 @@ def test_spaced_filenames_end_to_end(v):
     seed_files(v)
     _typeln(v, 'rm "my prog"')
     _typeln(v, 'clear')
+    seed_disk_bank(v)
     _typeln(v, 'load "my prog"')
     # load now surfaces the drive's error channel: a missing file is the 1541's
     # "62 FILE NOT FOUND" (uppercase) rather than our old lowercase message.

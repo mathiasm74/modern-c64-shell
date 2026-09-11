@@ -57,6 +57,7 @@ jtmp    = $02BB                 ; scratch counter
 quoted  = $02BD                 ; cursor is inside an open "quote"
 needq   = $02BE                 ; insertion must open a quote (spaced name)
 extraq  = $02BF                 ; insertion appends a closing quote
+anysp   = $03A3                 ; ANY candidate name contains a space
                                 ; ($02BC is iec.s's PROBEF)
 
 ; Segment: the BASIC half normally, the bank's own CODE when assembled into the
@@ -117,6 +118,25 @@ entry_next:
 @done:  rts
 
 ; carry set if the entry at (ptr) prefix-matches line[ws..ws+wl)
+; Set anysp if the entry at (ptr) contains a space anywhere in its name.
+; Shifted space ($A0) counts: CBM names pad and can embed it, and it is just as
+; much a word break to the parser as $20.
+scan_space:
+        lda anysp
+        bne @done               ; already known -- nothing can unset it
+        ldy nlen
+@l:     lda (ptr),y
+        cmp #' '
+        beq @set
+        cmp #$A0
+        beq @set
+        dey
+        bne @l                  ; byte 0 is the length, so stop before it
+@done:  rts
+@set:   lda #1
+        sta anysp
+        rts
+
 entry_match:
         lda nlen
         cmp wl
@@ -219,6 +239,7 @@ _tab_complete:
         jsr walk_init
         lda #0
         sta match_n
+        sta anysp
 @w1:    jsr entry_ok
         bcs @w1end
         jsr entry_match
@@ -257,6 +278,7 @@ _tab_complete:
         sbc #1
         sta cl
 @w1count:
+        jsr scan_space          ; does any candidate contain a space?
         inc match_n
 @w1next:
         jsr entry_next
@@ -275,24 +297,25 @@ _tab_complete:
 @extend:
         sta kins
 
-        ; does the insertion need quoting? unquoted word + a space anywhere
-        ; in the known part of the name (the first cl chars of the match)
+        ; Does the insertion need quoting? Yes if the word is not already
+        ; quoted and ANY candidate contains a space -- not merely the common
+        ; prefix we are about to insert.
+        ;
+        ; Quoting on the prefix alone was not enough. With "aaaaa bbbb 1" and
+        ; "aaaaa bbbb 2" the prefix does contain the space, so that worked; but
+        ; add any third name sharing only "aaaaa" and the prefix stops short of
+        ; it, so nothing was quoted -- and then typing " bb" started a NEW word,
+        ; leaving completion hunting for a name beginning "bb". Opening the
+        ; quote as soon as a spaced name is in play keeps the rest of the name
+        ; inside one word, so completion can continue through the space.
         lda #0
         sta needq
         sta extraq
         lda quoted
         bne @qdone
-        lda cl
-        sta jtmp
-        ldy #1
-@qscan: lda (firstm),y
-        cmp #' '
-        beq @setq
-        iny
-        dec jtmp
-        bne @qscan
+        lda anysp
         beq @qdone
-@setq:  lda #1
+        lda #1
         sta needq
 @qdone:
         ; a unique completion of a (now-)quoted word gets the closing quote

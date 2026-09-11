@@ -155,27 +155,29 @@ def test_wedge_aliases(v):
 def test_bank_call_invalidates_the_overlay_cache(v):
     """A bank call must invalidate the RAM overlay cached at $8800.
 
-    The bank's per-entry init writes $9800-$9FFF (its DATA, BSS and C stack),
-    which is the TAIL of every RAM overlay -- but the cache is validated only by
-    the magic at $8803, BELOW that, so it survives intact. Without the explicit
-    invalidate in bank_gosub (src/rbcp/launch.s) the next overlay command trusts
-    a cache whose upper third is rubble and calls into it.
+    A bank's per-entry init writes its RAM window ($9D70-$9FFF), which overlaps
+    the tail of a RAM overlay -- edit's BSS sits at $9D00. But the overlay cache
+    is validated only by the magic at $8803, well BELOW that, so it survives
+    intact: without the explicit invalidate in bank_gosub (src/rbcp/launch.s)
+    the next overlay command would trust a cache whose upper pages the bank just
+    overwrote and call into it.
 
-    This was a real hardware bug (v0.1.89): `cd` failed most of the time while
-    `bg`/`border`/`text`/`help` -- the same overlay, but lower in it -- worked.
-    VICE never caught it because tests re-seed between commands, so assert the
-    invalidation directly.
+    This was a real hardware bug (v0.1.89), found when `cd` failed while
+    `bg`/`text`/`help` -- then the same overlay, but lower in it -- still
+    worked. VICE never caught it because tests re-seed between commands, so
+    assert the invalidation directly. (`edit` is the subject now: files and
+    picker became banks, so edit is the tallest RAM overlay left.)
     """
-    from lib.overlays import seed_files
+    from lib.overlays import seed_edit
 
-    seed_files(v)
+    seed_edit(v)
     v.run_for(0.2)
-    assert bytes(v.read_memory(0x8803, 4)) == b"fil1", "seeding did not take"
+    assert bytes(v.read_memory(0x8803, 4)) == b"edt1", "seeding did not take"
 
     seed_disk_bank(v)
     _type(v, "pwd", clear=True)
     _wait_for(v, ":")                   # let the bank call run
 
-    assert bytes(v.read_memory(0x8803, 4)) != b"fil1", \
+    assert bytes(v.read_memory(0x8803, 4)) != b"edt1", \
         "overlay magic survived a bank call -- the next overlay command would " \
-        "run a cache whose $9800+ pages the bank just overwrote"
+        "run a cache whose upper pages the bank just overwrote"

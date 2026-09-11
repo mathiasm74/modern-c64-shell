@@ -23,8 +23,15 @@ def _seed(v, name, addr):
 
 
 def seed_files(v):
-    """cat / less / cp / mv / rm overlay -> $8800."""
-    _seed(v, "files.bin", 0x8800)
+    """files bank -> the RAM under the $A000 ROM.
+
+    cat/less/cp/mv/rm/cd/status/border/bg/text/peek/poke/help/device/devices,
+    plus the colour picker. It was a RAM overlay at $8800; it is a BANK now
+    (docs/ROM-EXPANSION.md), so it seeds like the other banks. Kept under the
+    old name because callers only care that the code behind those commands is
+    present.
+    """
+    _seed_bank(v, "files_bank.bin")
 
 
 def _seed_bank(v, name):
@@ -75,5 +82,5 @@ def seed_edit(v):
 
 
 def seed_picker(v):
-    """color-picker overlay (border/bg/text with no value) -> $8800."""
-    _seed(v, "picker.bin", 0x8800)
+    """The picker rides inside the files bank now -- same image."""
+    seed_files(v)

@@ -62,6 +62,9 @@ def test_status_reports_error(v):
     # Opening a missing file leaves "62,FILE NOT FOUND,00,00" -> "62 FILE NOT
     # FOUND".
     v.run_for(0.3)
+    # `load` lives in the DISK bank while `status` lives in the FILES bank, and
+    # only one bank can be seeded at a time in VICE (they all link to $A000).
+    seed_disk_bank(v)
     _type_cmd(v, "load zznope", clear=True)
     _wait(v, "not found")                       # our load's own message
     seed_files(v)

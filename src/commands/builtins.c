@@ -15,17 +15,8 @@
 /* in c_io.s: reboot through the reset vector; does not return. */
 void soft_reset(void);
 
-/* List every registered command. The 3-column column-major formatting is in
-   the files overlay (cmd 15); this thunk just hands it the dispatch table's
-   base and entry count (the overlay walks the const struct command[]). */
-void cmd_help(int argc, char *argv[])
-{
-    (void)argc; (void)argv;
-    *(unsigned char *)0x02D0 = 15;                              /* FB_CMD */
-    *(unsigned int *)0x02E4 = (unsigned int)&shell_commands[0]; /* table base */
-    *(unsigned char *)0x02E6 = shell_command_count;             /* entry count */
-    run_files_overlay();
-}
+/* (help is a FILES BANK command now -- a dispatch-table row, no resident code.
+   bank_try publishes the table base and count the bank needs to walk it.) */
 
 void cmd_clear(int argc, char *argv[])
 {
@@ -41,7 +32,7 @@ void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Brand + version; kept in step with the boot banner's version (reset.s). */
-    puts_raw("Tardis DOS v0.1.95");
+    puts_raw("Tardis DOS v0.1.96");
     chrout(CR);
 }
 #pragma rodata-name (pop)

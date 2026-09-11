@@ -164,28 +164,6 @@
     },
     {
       "type": "multi",
-      "chips": [
-        {
-          "file": "build/overlays_c.bin",
-          "type": "Chip2364",
-          "cs1": "active_low",
-          "label": "~overlay c"
-        },
-        {
-          "file": "build/overlays_c.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        },
-        {
-          "file": "build/overlays_c.bin",
-          "type": "Chip2364",
-          "cs1": "active_low"
-        }
-      ],
-      "serve_alg": "two_cs_one_addr"
-    },
-    {
-      "type": "multi",
       "serve_alg": "two_cs_one_addr",
       "chips": [
         {
@@ -225,6 +203,29 @@
         },
         {
           "file": "build/banks/util_bank.bin",
+          "type": "Chip2364",
+          "cs1": "active_low"
+        }
+      ]
+    },
+    {
+      "type": "multi",
+      "serve_alg": "two_cs_one_addr",
+      "chips": [
+        {
+          "file": "build/kernal.bin",
+          "type": "Chip2364",
+          "cs1": "active_low",
+          "label": "Bank PoC"
+        },
+        {
+          "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+          "type": "Chip2364",
+          "cs1": "active_low",
+          "size_handling": "duplicate"
+        },
+        {
+          "file": "build/banks/files_bank.bin",
           "type": "Chip2364",
           "cs1": "active_low"
         }

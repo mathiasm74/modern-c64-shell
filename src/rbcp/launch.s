@@ -745,8 +745,11 @@ BANK_ID        = $02CF          ; bank id being called (page-2 scratch)
 ; Flash (loadable ROM) set per bank id. Each is [kernal | char | <bank image>],
 ; the KERNAL and char byte-identical to the base so SWITCH_SLOT is live-safe.
 bank_flash_set:
-        .byte 8                 ; bank 0: disk  (dir/ls/pwd/fload/load)
-        .byte 9                 ; bank 1: util  (tab completion)
+        .byte 7                 ; bank 0: disk  (dir/ls/pwd/fload/load)
+        .byte 8                 ; bank 1: util  (tab completion)
+        .byte 9                 ; bank 2: files (cat/less/cp/mv/rm/cd/status/
+                                ;               border/bg/text/peek/poke/help/
+                                ;               device/devices + the picker)
 
 .export _bank_call
 _bank_call:

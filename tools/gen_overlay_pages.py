@@ -11,7 +11,7 @@ set and the loadable set index, so the resident thunks never hardcode either.
 To rebalance, edit LAYOUT below (and the matching concatenation in the
 Makefile's overlays_a/b.bin rules). Loadable set indices: bootloader=0,
 shell=1, stock=2, JiffyDOS=3, overlays-A=4, overlays-B=5, shell-fontB=6,
-overlays-C=7 (cfg/onerom-stock.json order; plugins don't count).
+then the banks 7/8/9 (cfg/onerom-stock.json order; plugins don't count).
 
 Usage: gen_overlay_pages.py <build-dir>   (writes the header to stdout)
 """
@@ -27,22 +27,21 @@ ovl = os.path.join(build, "overlays")
 # The flash_set numbers are the loadable-ROM-set indices in the firmware config
 # (plugins excluded). They differ per target because the firmware layout does:
 #  - C64 (onerom-stock.json): 0 bootloader, 1 shell, 2 stock, 3 JiffyDOS,
-#    4 overlays_a, 5 overlays_b, 6 shell-fontB, 7 overlays_c.
+#    4 overlays_a, 5 overlays_b, 6 shell-fontB, then the BANKS (7 disk, 8 util,
+#    9 files). Only edit and about are still overlays -- files/picker became the
+#    files bank and dir the disk bank -- so there are two overlay sets, and the
+#    old set C is gone.
 #  - C128 (OVL_C128=1): the U32 firmware is just the served 16KB image (set 0)
-#    plus the three overlay sets, so overlays_a/b/c = sets 1/2/3.
+#    plus the overlay sets, so overlays_a/b = sets 1/2.
 if os.environ.get("OVL_C128"):
     LAYOUT = [
-        ("files.bin", "FILES", "FIRST_PAGE", 1),
-        ("edit.bin",  "EDIT",  "FIRST_PAGE", 2),
-        ("about.bin", "ABOUT", "FIRST_PAGE", 3),
-        ("picker.bin", "PICKER", "FIRST_PAGE", 3),
+        ("edit.bin",  "EDIT",  "FIRST_PAGE", 1),
+        ("about.bin", "ABOUT", "FIRST_PAGE", 2),
     ]
 else:
     LAYOUT = [
-        ("files.bin", "FILES", "FIRST_PAGE", 4),
-        ("edit.bin",  "EDIT",  "FIRST_PAGE", 5),
-        ("about.bin", "ABOUT", "FIRST_PAGE", 7),
-        ("picker.bin", "PICKER", "FIRST_PAGE", 7),
+        ("edit.bin",  "EDIT",  "FIRST_PAGE", 4),
+        ("about.bin", "ABOUT", "FIRST_PAGE", 5),
     ]
 
 

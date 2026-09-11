@@ -263,3 +263,22 @@ def test_tab_quoted_common_prefix(v):
     assert 'zz "my game"' not in v.screen_text(), \
         "ambiguous match should stop at the common prefix"
     _send(v, [CLEAR])
+
+
+def test_tab_quotes_when_any_candidate_has_a_space(v):
+    # The opening quote goes in as soon as a SPACED NAME is among the
+    # candidates -- not only when the common prefix itself contains the space.
+    #
+    # Hardware-reported: with "aaaaa bbbb 1" and "aaaaa bbbb 2" the prefix does
+    # contain the space, so that case worked. Add a third name sharing only
+    # "aaaaa" and the prefix stops short of it, so nothing was quoted -- and
+    # then typing " bb" started a NEW word, leaving completion hunting for a
+    # name beginning "bb". Quoting early keeps the whole name one word, so
+    # completion can continue straight through the space.
+    _seed_tab_cache(v, ["aaaaa", "aaaaa bbbb 1", "aaaaa bbbb 2"])
+    _send(v, _ch("zz aa") + [TAB])
+    v.assert_screen_contains('zz "aaaaa')
+    # ...and typing on past the space still completes, rather than starting over
+    _send(v, _ch(" bb") + [TAB])
+    v.assert_screen_contains('zz "aaaaa bbbb ')
+    _send(v, [CLEAR])
