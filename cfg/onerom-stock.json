@@ -201,7 +201,7 @@
           "size_handling": "duplicate"
         },
         {
-          "file": "build/banks/bank1.bin",
+          "file": "build/banks/disk_bank.bin",
           "type": "Chip2364",
           "cs1": "active_low"
         }

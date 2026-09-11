@@ -14,7 +14,7 @@ contract and the readable reformat are checked here; the no-CR path is
 hardware-verified. All read-only, so this runs on the tracked fixture.
 """
 
-from lib.overlays import seed_files, seed_dir
+from lib.overlays import seed_files, seed_disk_bank
 
 VICE_DISK = "data/test.d64"
 
@@ -47,7 +47,7 @@ def test_status_ok_is_readable(v):
     # A clean directory read leaves the channel at "00, OK,00,00"; status
     # reformats that to "00 OK" and drops the redundant track/sector.
     v.run_for(0.3)
-    seed_dir(v)
+    seed_disk_bank(v)
     _type_cmd(v, "dir", clear=True)
     assert _wait(v, "BLOCKS FREE"), "dir did not finish\n%s" % v.screen_text()
     seed_files(v)                               # status is in the files overlay

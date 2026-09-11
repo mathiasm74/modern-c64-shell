@@ -10,7 +10,7 @@ real drive to answer). Device 9 is deliberately absent. These commands are
 read-only (the probe just opens "$"), so the tracked fixture is fine.
 """
 
-from lib.overlays import seed_dir, seed_files
+from lib.overlays import seed_disk_bank, seed_files
 
 VICE_DISK = "data/test.d64"
 
@@ -50,7 +50,7 @@ def test_absent_device_reports_and_stays_put(v):
     assert pc is not None and (0xA000 <= pc <= 0xBFFF or 0xE000 <= pc <= 0xFFFF), \
         "shell not responsive (PC not in ROM) after the absent-device probe"
 
-    seed_dir(v)
+    seed_disk_bank(v)
     _type(v, "dir", clear=True)
     assert _wait_for(v, "BLOCKS FREE"), \
         "default device 8 broke after the absent-device probe\n%s" % v.screen_text()

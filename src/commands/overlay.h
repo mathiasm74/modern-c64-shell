@@ -15,7 +15,6 @@ void run_files_overlay_quiet(void);     /* boot identify: fetch failure silent *
 void files_run(unsigned char cmd, const char *a1, const char *a2);
 
 /* Fetch (if needed) and run the dir overlay (dir/ls/pwd). */
-void run_dir_overlay(void);
 
 /* Fetch (if needed) and run the color-picker overlay; `which` = 0/1/2. */
 void run_picker(unsigned char which);

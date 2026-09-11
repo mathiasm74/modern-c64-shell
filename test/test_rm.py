@@ -8,7 +8,7 @@ than the committed fixture. The scratch copy is gitignored.
 import os
 import shutil
 
-from lib.overlays import seed_files, seed_dir
+from lib.overlays import seed_files, seed_disk_bank
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 shutil.copy(os.path.join(_HERE, "data", "test.d64"),
@@ -23,7 +23,7 @@ def _type(v, text):
 
 
 def _ls(v):
-    seed_dir(v)              # dir is an overlay
+    seed_disk_bank(v)              # dir is an overlay
     """Clear the screen, run dir (the full listing), wait for it to finish."""
     # `clear` as a COMMAND: since v0.1.57 the CLR keystroke only wipes the
     # input line, and this test needs the previous listing gone ("PROG not

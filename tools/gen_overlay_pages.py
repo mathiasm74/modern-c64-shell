@@ -36,7 +36,6 @@ if os.environ.get("OVL_C128"):
         ("edit.bin",  "EDIT",  "FIRST_PAGE", 2),
         ("about.bin", "ABOUT", "FIRST_PAGE", 3),
         ("picker.bin", "PICKER", "FIRST_PAGE", 3),
-        ("dir.bin",   "DIR",   "FIRST_PAGE", 3),
     ]
 else:
     LAYOUT = [
@@ -44,7 +43,6 @@ else:
         ("edit.bin",  "EDIT",  "FIRST_PAGE", 5),
         ("about.bin", "ABOUT", "FIRST_PAGE", 7),
         ("picker.bin", "PICKER", "FIRST_PAGE", 7),
-        ("dir.bin",   "DIR",   "FIRST_PAGE", 7),
     ]
 
 

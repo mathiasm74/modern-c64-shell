@@ -12,13 +12,23 @@ the no-device timeout fires and the round-trip returns zeros.
 import os
 import re
 
+from lib.overlays import seed_disk_bank
+
 VICE_DISK = "data/test.d64"
 
-_LABELS = os.path.join(os.path.dirname(__file__), "..", "build", "labels.txt")
+# The Epyx code lives in the DISK BANK now (docs/ROM-EXPANSION.md), not in the
+# 16KB ROM, so its symbols come from the bank's own label file and its bytes
+# from the bank image. Everything below still runs in VICE because bank_call's
+# RAM-backed path exists: seed_disk_bank() writes the image into the RAM under
+# the $A000 ROM, and a stub clears LORAM to map it in before calling.
+_BANK = os.path.join(os.path.dirname(__file__), "..", "build", "banks", "disk_bank.bin")
+_LABELS = os.path.join(os.path.dirname(__file__), "..", "build", "banks",
+                       "disk_bank.labels")
+_BANK_BASE = 0xA000
 
 
 def _label_addr(name):
-    """Look up an exported asm label's address from build/labels.txt."""
+    """Look up an exported asm label's address from the bank's label file."""
     with open(_LABELS) as f:
         for line in f:
             parts = line.split()
@@ -27,13 +37,38 @@ def _label_addr(name):
     raise AssertionError("label %r not found in %s" % (name, _LABELS))
 
 
-def _jsr_then_spin(symbol):
-    """Six-byte ML stub: JSR <symbol> ; JMP self."""
+def _bank_bytes(addr, n):
+    """Read n bytes of the bank's ROM image at addr, from the file.
+
+    Not via VICE: with the bank seeded into the RAM under $A000, a monitor read
+    of $A000 still returns the BASIC-half ROM. The image is the source of truth
+    for "is this byte-exact" checks anyway."""
+    with open(_BANK, "rb") as f:
+        img = f.read()
+    off = addr - _BANK_BASE
+    return list(img[off:off + n])
+
+
+# LORAM off/on: map the seeded bank in over the BASIC half, and put it back.
+_MAP_BANK = [0xA9, 0x36, 0x85, 0x01]            # LDA #$36 ; STA $01
+_UNMAP_BANK = [0xA9, 0x37, 0x85, 0x01]          # LDA #$37 ; STA $01
+
+
+def _call_bank(v, symbol, before=None, after=None, park=True):
+    """Build+run a stub at $1000 that maps the bank in, JSRs symbol, unmaps."""
     addr = _label_addr(symbol)
-    return [
-        0x20, addr & 0xFF, (addr >> 8) & 0xFF,    # JSR <addr>
-        0x4C, 0x03, 0x10,                          # JMP $1003 (spin)
-    ]
+    stub = list(before or [])
+    stub += _MAP_BANK
+    stub += [0x20, addr & 0xFF, (addr >> 8) & 0xFF]     # JSR <addr>
+    # `after` runs BEFORE the unmap: restoring $01 needs LDA, which would
+    # destroy the A/X the called routine returned.
+    stub += list(after or [])
+    stub += _UNMAP_BANK
+    if park:
+        pc = 0x1000 + len(stub)
+        stub += [0x4C, pc & 0xFF, pc >> 8]              # JMP self
+    v.write_memory(0x1000, stub)
+    return stub
 
 
 def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
@@ -44,8 +79,8 @@ def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
     bytes out of ROM and check each chunk. (The actual Epyx-mode handoff only
     happens on a real Meatloaf; VICE's 1541 can't model it, so this verifies
     the one thing that must be byte-exact.)"""
-    base = _label_addr("_fastload_epyx_upload")
-    data = v.read_memory(base, 3 * 0x19)
+    seed_disk_bank(v)
+    data = _bank_bytes(_label_addr("_fastload_epyx_upload"), 3 * 0x19)
     want = [0x53, 0xA6, 0x8F]
     for k, expect in enumerate(want):
         chunk = data[k * 0x19:(k + 1) * 0x19]
@@ -69,7 +104,15 @@ def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
 # back from RAM and simulate the fold for all bytes and all constant patterns.
 
 def _descramble(v):
-    v.run_for(0.3)                          # let reset.s fill it post-zerobss
+    """Seed the bank, run its table generator, and read the table back.
+
+    The table is the bank's BSS ($9Dxx, ordinary RAM -- readable directly). It
+    used to be built once at boot by reset.s; the bank rebuilds it on every
+    entry instead (crt0_disk.s bank_init), so here we call the generator the
+    same way a bank entry would."""
+    seed_disk_bank(v)
+    _call_bank(v, "_epyx_gen_descramble")
+    v.run_at(0x1000, 0.5)
     return v.read_memory(_label_addr("descramble"), 256)
 
 
@@ -136,19 +179,20 @@ TMOFL = 0x02AB
 
 
 def test_recv_prg_ready_timeout_fails_and_flags(v):
-    recv = _label_addr("_epyx_recv_prg")
-    stub = [
-        0xAD, 0x00, 0xDD,               # LDA $DD00
-        0x09, 0x10,                     # ORA #$10      (pull CLK low)
-        0x8D, 0x00, 0xDD,               # STA $DD00
-        0x20, recv & 0xFF, recv >> 8,   # JSR _epyx_recv_prg
-        0x8D, 0xF0, 0x10,               # STA $10F0     (end address lo)
-        0x8E, 0xF1, 0x10,               # STX $10F1     (end address hi)
-        0xA9, 0x01,
-        0x8D, 0xF2, 0x10,               # STA $10F2     (done marker)
-        0x4C, 0x16, 0x10,               # JMP self      (park)
-    ]
-    v.write_memory(0x1000, stub)
+    seed_disk_bank(v)
+    _call_bank(
+        v, "_epyx_recv_prg",
+        before=[
+            0xAD, 0x00, 0xDD,               # LDA $DD00
+            0x09, 0x10,                     # ORA #$10      (pull CLK low)
+            0x8D, 0x00, 0xDD,               # STA $DD00
+        ],
+        after=[
+            0x8D, 0xF0, 0x10,               # STA $10F0     (end address lo)
+            0x8E, 0xF1, 0x10,               # STX $10F1     (end address hi)
+            0xA9, 0x01,
+            0x8D, 0xF2, 0x10,               # STA $10F2     (done marker)
+        ])
     v.write_memory(0x10F0, [0xEE, 0xEE, 0xEE])  # sentinels
     v.write_byte(TMOFL, 0xEE)                   # prove recv_prg writes it
     v.run_at(0x1000, 1.0)

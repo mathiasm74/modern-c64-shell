@@ -10,7 +10,6 @@
  */
 #include "shell.h"
 #include "iec.h"
-#include "fastload.h"
 #include "commands/overlay.h"     /* run_files_overlay / files_run, for the thunks */
 
 #define CR    0x0D
@@ -212,11 +211,24 @@ static void report_drive_status(void)
 
 /* (device's bus probe moved into the files overlay -- it uses the KERNAL OPEN
    shim there; see do_device / device_present_ov in src/overlays/files.c.) */
-/* dir / ls / pwd -- the "dir" tardis overlay (src/overlays/dir.c). These need
-   the lower-level IEC bus and the badline-paced Epyx receiver (not KERNAL
-   entry points), so the overlay reaches them through the $FF80 services table
-   (src/svc.s); the resident side is just these thunks, which pass the device
-   and its remembered name in the mailbox at $02D0. */
+/* dir / ls / pwd / fload -- the DISK BANK (src/banks/, docs/ROM-EXPANSION.md).
+   The whole disk cluster -- these three, the Epyx protocol, and the fload/run
+   fast path -- lives in an 8KB image the One ROM serves at $A000 in place of
+   this ROM's BASIC half, so none of it occupies the 16KB budget. The resident
+   side is just these thunks: fill the mailbox at $02D0, then bank_call() the
+   matching $A000 JMP-table entry (src/rbcp/launch.s).
+
+   The commands still reach the bus through the $FF80 services table (src/svc.s)
+   -- while a bank runs, this ROM's BASIC half is swapped out, so the KERNAL
+   half's stubs and services are the only resident code it can call. */
+extern unsigned char __fastcall__ bank_call(unsigned char entry);
+
+static void report_no_bank(void)
+{
+    puts_raw("disk bank unavailable");
+    chrout(CR);
+}
+
 #define DB_CMD  (*(unsigned char *)0x02D0)       /* 0 dir, 1 ls, 2 pwd */
 #define DB_DEV  (*(unsigned char *)0x02D1)
 #define DB_NLEN (*(unsigned char *)0x02D2)
@@ -235,7 +247,11 @@ static void dir_run(unsigned char cmd)
         ++n;
     }
     DB_NLEN = n;
-    run_dir_overlay();
+    /* dir/ls/pwd live in the DISK BANK ($A000 entries 0/1/2), not in this ROM.
+       The mailbox above is the same one the RAM overlay used -- only the way we
+       get there changed. */
+    if (bank_call(cmd) != 0)
+        report_no_bank();
 }
 
 void cmd_dir(int argc, char *argv[]) { (void)argc; (void)argv; dir_run(0); }
@@ -365,63 +381,51 @@ static unsigned char fold_name(unsigned char *buf, const char *src)
    reported (no device / not Epyx-capable / broken stream). Shared by `fload`
    and `run <name>`.
 
+   The protocol itself is in the DISK BANK (entry 3): it was the last resident
+   user of the Epyx code, which is why moving it is what let that code leave the
+   16KB ROM. What stays here is the reporting -- the bank hands back a status
+   code and we print it, reusing the strings and report_no_device() the shell
+   already has -- plus the resident state (load_start/load_end/TAB_CACHE_OK) the
+   bank cannot reach, since this ROM's BASIC half is swapped out while it runs.
+
    No screen-blanking: the receiver (_epyx_recv_byte) paces each byte around
    VIC-II badlines via the raster, so the display stays visible during the
    load. */
-static unsigned int fast_receive_prg(void)
-{
-    unsigned int end = epyx_recv_prg();
+#define FL_NLEN  (*(unsigned char *)0x0370)
+#define FL_NAME  ((unsigned char *)0x0371)
+#define FL_STAT  (*(unsigned char *)0x0381)
+#define FL_START (*(unsigned int *)0x0382)
+#define FL_END   (*(unsigned int *)0x0384)
 
-    if (end == 0)                       /* fewer than 3 bytes -> failure */
-        return 0;
-    load_start = *(unsigned int *)0x02AF;   /* LADRL/LADRH, set by the ASM */
-    load_end = end;
-    if (load_start < 0xCF00 && load_end > 0xCE00)
-        TAB_CACHE_OK = 0;               /* the load overwrote the cache page */
-    return end - 1;
-}
-
-/* Fast-load `name` over the Epyx path into RAM at the PRG's embedded load
-   address; sets load_start/load_end. Returns the last written address (the
-   value `fload`/`run` report), or 0 on any failure -- which it has already
-   reported (no device / not Epyx-capable / broken stream). Shared by `fload`
-   and `run <name>`. */
 static unsigned int fload_program(const char *name)
 {
-    unsigned char namebuf[16];
-    unsigned char namelen;
+    FL_NLEN = fold_name(FL_NAME, name);
+    DB_DEV = default_device;
 
-    namelen = fold_name(namebuf, name);
-
-    fastload_set_device(default_device);
-    fastload_epyx_install();
-    if (iec_status() & ST_NODEV) {
-        report_no_device(default_device);
+    if (bank_call(3) != 0) {
+        report_no_bank();
         return 0;
     }
-    if (fastload_epyx_send_header((const char *)namebuf, namelen) != 0) {
-        fastload_epyx_mark_unsupported();
+    switch (FL_STAT) {
+    case 0:
+        break;
+    case 1:
+        report_no_device(default_device);
+        return 0;
+    case 2:
         puts_raw("fast load not supported");
         chrout(CR);
         return 0;
-    }
-    if (fast_receive_prg() == 0) {
+    default:
         puts_raw("fast load failed");
         chrout(CR);
         return 0;
     }
-    /* The Epyx stream can't tell a dead bus from EOF (a yank reads a clean-
-       looking truncated EOF), so verify the drive is still on the bus before
-       trusting the result: TALK its command channel and check ST. */
-    iec_set_fa(default_device);
-    iec_set_sa(15);
-    iec_chkin();
-    iec_clrchn();
-    if (iec_status() & (ST_NODEV | ST_TIMEOUT)) {
-        puts_raw("fast load failed");
-        chrout(CR);
-        return 0;
-    }
+
+    load_start = FL_START;
+    load_end = FL_END;
+    if (load_start < 0xCF00 && load_end > 0xCE00)
+        TAB_CACHE_OK = 0;               /* the load overwrote the cache page */
     return load_end - 1;
 }
 
@@ -548,23 +552,6 @@ void cmd_sys(int argc, char *argv[])
     run_program(parse_addr(argv[1]));
 }
 
-/* banktest - ROM-expansion PoC (docs/ROM-EXPANSION.md, Option A). Swaps the
-   served BASIC window to a test ROM bank, runs its entry-0 command (which
-   prints "hello from rom bank 1" from ROM at $A000), then switches back to the
-   base. Proves a command body can live OUTSIDE the 16 KB and run from ROM
-   without touching user RAM. `bank_run_test` (launch.s) returns nonzero if the
-   swap couldn't happen (no One ROM / VICE), and importantly does NOT call $A000
-   in that case (it would be the base's own code, not the bank). */
-extern unsigned char bank_run_test(void);
-void cmd_banktest(int argc, char *argv[])
-{
-    (void)argc; (void)argv;
-    if (bank_run_test() != 0) {
-        puts_raw("bank unavailable");
-        chrout(CR);
-    }
-}
-
 /* basic - leave the shell for real stock BASIC by swapping the One ROM to the
    stock C64 ROMs so stock KERNAL/BASIC take over (there's no OS underneath, but
    there IS a real C64 one bank-swap away -- and it lands you at BASIC, hence the
@@ -582,7 +569,7 @@ void cmd_banktest(int argc, char *argv[])
    own shell. Never returns; back to the shell needs a power cycle. In the
    BASIC ROM half (with cmd_font/font_select below) to keep the KERNAL half
    clear of the $FE00 back-channel window -- the bank dispatcher (launch.s
-   _bank_run_test) must live in the static KERNAL half, so it spends the budget
+   _bank_call) must live in the static KERNAL half, so it spends the budget
    there and cmd_basic/font move here to make room. */
 void cmd_basic(int argc, char *argv[])
 {

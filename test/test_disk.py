@@ -11,7 +11,7 @@ match a previous command's output still on screen.
 
 VICE_DISK = "data/test.d64"
 
-from lib.overlays import seed_dir
+from lib.overlays import seed_disk_bank
 
 CLEAR = 0x93
 
@@ -46,7 +46,7 @@ def test_boots_clean_with_drive_attached(v):
 
 def test_dir_lists_directory(v):
     # "dir" is the full 1541-style listing: block counts, names, types, free.
-    seed_dir(v)
+    seed_disk_bank(v)
     _type(v, "dir", clear=True)
     done = _wait_for(v, "BLOCKS FREE")
     txt = v.screen_text()
@@ -59,7 +59,7 @@ def test_dir_lists_directory(v):
 def test_ls_colors_names_by_type(v):
     # "ls" lists just the names in two columns, each colored by type.
     # PROG/README are PRG and DOC is SEQ, so PRG/SEQ names get different colors.
-    seed_dir(v)
+    seed_disk_bank(v)
     _type(v, "ls", clear=True)
     assert _wait_for(v, "DOC"), "ls did not list the files"
     rows = v.screen_rows()
@@ -90,7 +90,7 @@ def test_pwd_prints_disk_name(v):
     # On the 1541 (which SYNTAX-ERRORs the PWD command) pwd falls back to the
     # header and prints just the disk title -- the device/name are already in
     # the prompt, so pwd no longer repeats them.
-    seed_dir(v)
+    seed_disk_bank(v)
     _type(v, "pwd", clear=True)
     assert _wait_for(v, "TEST DISK"), "pwd did not print the disk name"
 
@@ -110,8 +110,8 @@ def test_load_into_memory(v):
 def test_ls_fills_tab_completion_cache(v):
     # docs/TAB-COMPLETION.md: ls fills the $CE00 name cache as it draws and
     # validates it on a clean end; readline completes from it.
-    from lib.overlays import seed_dir
-    seed_dir(v)
+    from lib.overlays import seed_disk_bank
+    seed_disk_bank(v)
     v.write_memory(0xCE00, [0, 0])
     _type(v, "ls")
     _wait_for(v, "prog")
@@ -134,8 +134,8 @@ def test_wedge_aliases(v):
     # JiffyDOS-style wedges are rewritten before parsing: "@$" = dir,
     # "/x" (and "%x") = load x, "@" = status, "@#<n>" = device <n>.
     # ("^x" = run x swaps to the stock ROMs -- hardware-only, not driven here.)
-    from lib.overlays import seed_dir, seed_files
-    seed_dir(v)
+    from lib.overlays import seed_disk_bank, seed_files
+    seed_disk_bank(v)
     _type(v, "@$", clear=True)
     assert _wait_for(v, "BLOCKS FREE"), \
         "@$ did not run dir: %r" % v.screen_text()

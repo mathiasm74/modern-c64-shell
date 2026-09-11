@@ -161,17 +161,6 @@ void run_files_overlay_quiet(void)
         OVL8_ENTRY();
 }
 
-/* Run the dir overlay (dir/ls/pwd). The fs.c thunk fills the mailbox first. */
-void run_dir_overlay(void)
-{
-    unsigned char rc = mp_fetch(DIR_FIRST_PAGE, "dir1", DIR_SET);
-
-    if (rc != 0) {
-        mp_failed(rc);
-        return;
-    }
-    OVL8_ENTRY();
-}
 
 /* Run the color-picker overlay. `which` (0 border, 1 bg, 2 text) goes in the
    $02D1 mailbox the overlay reads. */

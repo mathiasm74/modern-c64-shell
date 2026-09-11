@@ -7,6 +7,8 @@ so seeding the bytes is enough -- no resident state to poke.
 
 The files overlay (cat/less/cp/mv/rm) and the edit overlay share $8800, so a
 test that uses both must re-seed whichever it needs next.
+
+seed_disk_bank is the odd one out -- see its docstring.
 """
 
 import os
@@ -25,9 +27,27 @@ def seed_files(v):
     _seed(v, "files.bin", 0x8800)
 
 
-def seed_dir(v):
-    """dir / ls / pwd overlay -> $8800."""
-    _seed(v, "dir.bin", 0x8800)
+def seed_disk_bank(v):
+    """disk bank (dir / ls / pwd / fload) -> the RAM under the $A000 ROM.
+
+    A bank is not an overlay: it is SERVED as ROM at $A000 by the One ROM, so
+    there is no RAM image for a test to drop in. What makes it testable anyway
+    is that the C64 has RAM *under* that ROM which the shell never uses, and
+    writes to $A000-$BFFF always land in it -- so seeding works exactly like an
+    overlay, and bank_call (src/rbcp/launch.s) falls back to running the bank
+    from there when no One ROM answers. That fallback is what keeps the disk
+    commands covered by this suite after they left the 16KB ROM.
+
+    Only the used part is written: the image is $FF-padded to a full 8KB and
+    pushing all of that through the monitor is needlessly slow.
+    """
+    path = os.path.join(_HERE, "..", "..", "build", "banks", "disk_bank.bin")
+    with open(path, "rb") as f:
+        img = f.read()
+    end = len(img)
+    while end > 0 and img[end - 1] == 0xFF:
+        end -= 1
+    v.write_memory(0xA000, list(img[:end]))
 
 
 def seed_about(v):

@@ -6,7 +6,7 @@ bail and leave the shell responsive. This is the hang that the timeout fixes
 (typing `ls` after `make run` without attaching an image).
 """
 
-from lib.overlays import seed_dir
+from lib.overlays import seed_disk_bank
 
 
 def _type(v, text):
@@ -15,7 +15,7 @@ def _type(v, text):
 
 
 def test_ls_without_disk_stays_responsive(v):
-    seed_dir(v)
+    seed_disk_bank(v)
     _type(v, "ls")
     for _ in range(8):                  # let the read time out and report
         v.run_for(0.5)

@@ -44,7 +44,6 @@
 #pragma rodata-name (push, "RODATA2")
 const struct command shell_commands[] = {
     { "about",  cmd_about  },
-    { "banktest", cmd_banktest },
     { "basic",  cmd_basic  },
     { "bg",     cmd_bg     },
     { "border", cmd_border },

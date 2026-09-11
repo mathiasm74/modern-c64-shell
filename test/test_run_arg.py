@@ -13,9 +13,16 @@ loaded reports it, and `run <name>` enters the fast-load path (the emulated
 load is reported failed) and leaves the shell alive -- proving the filename
 argument is wired to the loader rather than the "nothing loaded" path.
 
+The fast-load path is in the DISK BANK now (docs/ROM-EXPANSION.md), so the
+tests seed it first -- see seed_disk_bank. Without it `run <name>` correctly
+reports "disk bank unavailable", which is a different path than the one under
+test here.
+
 This lives in its own module because the fast-load attempt M-E's the Epyx
 install stub into the drive, which would dirty a VICE shared by other tests.
 """
+
+from lib.overlays import seed_disk_bank
 
 VICE_DISK = "data/test.d64"
 
@@ -48,6 +55,7 @@ def test_run_name_enters_fastload_and_survives(v):
     # and the load is reported failed. The point is the name routed into the
     # fast-load path (NOT "nothing loaded") and the shell came back.
     v.run_for(0.3)
+    seed_disk_bank(v)
     _type(v, "run prog")
     assert _wait_any(v, ["fast load not supported", "fast load failed",
                          "not present", "read error"]), \

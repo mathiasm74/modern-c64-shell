@@ -113,9 +113,9 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s \
-         src/iec_clkwait.s src/fastload_recv.s src/fastload_send.s src/svc.s src/complete.s \
+         src/iec_clkwait.s src/svc.s src/complete.s \
          src/rbcp/rbcp.s src/rbcp/launch.s
-SRC_C := src/shell.c src/parser.c src/fastload.c \
+SRC_C := src/shell.c src/parser.c \
          src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c \
          src/commands/overlay.c
 OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S)) \
@@ -160,7 +160,7 @@ $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 # page order are defined in tools/gen_overlay_pages.py (LAYOUT) and mirrored by
 # the overlays_a/b.bin rules below; build/overlay_pages.h is generated from the
 # .bin sizes so the resident thunks never hardcode a page or set number.
-OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/dir.bin $(BUILD)/overlays/edit.bin $(BUILD)/overlays/picker.bin
+OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/overlays/edit.bin $(BUILD)/overlays/picker.bin
 # Set/page order MUST match LAYOUT in tools/gen_overlay_pages.py. set A keeps
 # files+dir (30 pages); set B holds edit+about+picker (27) -- the two 20-page
 # overlays (files, edit) must stay in different 32-page chips.
@@ -170,7 +170,7 @@ OVERLAYS := $(BUILD)/overlays/about.bin $(BUILD)/overlays/files.bin $(BUILD)/ove
 # font B's loadable set index stays 4; C is loadable set 5.
 OVERLAYS_A := $(BUILD)/overlays/files.bin
 OVERLAYS_B := $(BUILD)/overlays/edit.bin
-OVERLAYS_C := $(BUILD)/overlays/about.bin $(BUILD)/overlays/picker.bin $(BUILD)/overlays/dir.bin
+OVERLAYS_C := $(BUILD)/overlays/about.bin $(BUILD)/overlays/picker.bin
 OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin $(BUILD)/overlays_c.bin
 
 # The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;
@@ -196,18 +196,6 @@ $(BUILD)/overlays/files.bin: $(BUILD)/overlays/crt0_files.o $(BUILD)/overlays/fi
 	$(LD) -C cfg/overlay_files.cfg -o $@ $(BUILD)/overlays/crt0_files.o $(BUILD)/overlays/files_c.o $(RTLIB)
 	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
 	@echo "  files overlay: $$(wc -c < $@) bytes"
-
-# The dir overlay (dir/ls/pwd); calls the resident IEC/Epyx via the $FF80 table
-# (cfg/overlay_dir.cfg binds the svc_* symbols there).
-$(BUILD)/overlays/dir.s: src/overlays/dir.c src/overlays/svc.h | $(BUILD)
-	@mkdir -p $(BUILD)/overlays
-	$(CC) $(CC65FLAGS) -o $@ $<
-$(BUILD)/overlays/dir_c.o: $(BUILD)/overlays/dir.s
-	$(AS) $(ASFLAGS) -o $@ $<
-$(BUILD)/overlays/dir.bin: $(BUILD)/overlays/crt0_dir.o $(BUILD)/overlays/dir_c.o cfg/overlay_dir.cfg
-	$(LD) -C cfg/overlay_dir.cfg -o $@ $(BUILD)/overlays/crt0_dir.o $(BUILD)/overlays/dir_c.o $(RTLIB)
-	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
-	@echo "  dir overlay: $$(wc -c < $@) bytes"
 
 # The about overlay is self-contained asm linked multi-page at $8800
 # (cfg/overlay_about.cfg); padded to a 256 multiple to stay page-aligned.
@@ -276,19 +264,19 @@ $(BUILD)/banks/bk_%.o: src/%.s | $(BUILD)
 $(BUILD)/banks/bk_fastload.s: src/fastload.c | $(BUILD)
 	@mkdir -p $(BUILD)/banks
 	$(CC) $(CC65FLAGS) -o $@ $<
-$(BUILD)/banks/bk_dir.s: src/overlays/dir.c | $(BUILD)
+$(BUILD)/banks/bk_dir.s: src/banks/dir.c src/banks/svc.h | $(BUILD)
 	@mkdir -p $(BUILD)/banks
-	$(CC) $(CC65FLAGS) -I src/overlays -o $@ $<
+	$(CC) $(CC65FLAGS) -I src/banks -o $@ $<
 $(BUILD)/banks/bk_fastload.o $(BUILD)/banks/bk_dir.o: %.o: %.s
 	$(AS) $(ASFLAGS) -D BANK_BUILD=1 -o $@ $<
 
 $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o \
                               $(BANK_SHARED_OBJ) cfg/disk_bank.cfg
 	$(LD) -C cfg/disk_bank.cfg -o $@ $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o \
-	      $(BANK_SHARED_OBJ) $(RTLIB)
+	      $(BANK_SHARED_OBJ) $(RTLIB) -Ln $(BUILD)/banks/disk_bank.labels
 	@echo "  disk_bank.bin : $$(wc -c < $@) bytes"
 
-banks: $(BUILD)/banks/bank1.bin $(BUILD)/banks/disk_bank.bin
+banks: $(BUILD)/banks/disk_bank.bin
 # Generated overlay page-number map (start page of each overlay), derived from
 # the actual .bin sizes. The resident overlay thunks include it; their .s
 # therefore depend on it, and it depends on the overlay .bin -- so the page
@@ -408,7 +396,7 @@ $(BOOTLOADER): $(BOOTLOADER_SRC) tools/build_bootloader.sh | $(BUILD)
 # JiffyDOS is commercial, so unlike the stock ROMs (Zimmers URLs) it stays a
 # local user-supplied file; the C= boot menu (cfg/onerom-stock.json set 3)
 # offers it as a bootable KERNAL.
-ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/bank1.bin stock-roms/JiffyDOS_C64.bin
+ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin stock-roms/JiffyDOS_C64.bin
 onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
 		--config-file cfg/onerom-stock.json $(ONEROM_PLUGINS) \

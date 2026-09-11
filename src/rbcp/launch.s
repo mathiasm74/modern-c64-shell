@@ -685,28 +685,64 @@ _font_apply:
 ; -------------------------------------------------------------------------
 ; Bank dispatch -- ROM-expansion PoC (docs/ROM-EXPANSION.md, Option A).
 ;
-; _bank_run_test: swap the served BASIC window ($A000-$BFFF) to the test bank
-; (loadable ROM set BANK_FLASH_SET, staged into RAM slot BANK_RAM_SLOT), JSR its
-; $A000 JMP-table entry 0, then switch back to the base set in RAM slot 0. The
-; bank set carries a byte-IDENTICAL KERNAL + char to the base, so SWITCH_SLOT is
-; live-safe -- the CPU runs from the unchanging KERNAL half throughout, exactly
-; like the font swap. This routine LIVES in KCODE (that static KERNAL half), so
-; it survives both swaps, and it reuses _font_apply's LOAD_SLOT+SWITCH_SLOT via
-; the FONT_MB mailbox.
+; _bank_call: run one command out of the DISK BANK (docs/ROM-EXPANSION.md).
 ;
-; BANK_RAM_SLOT is the overlay/stock scratch slot (1), which is NEVER the served
-; slot, so overwriting it is always safe (an overlay just reloads on next use).
-; The bank must not touch the RBCP RAM block ($C800-$CDFF) or the swap-back
-; breaks. Returns A=0 if the bank ran, nonzero if the swap-in failed (no One ROM
-; / RBCP error) -- in which case we must NOT JSR $A000, since that's the base's
-; own BASIC-half code, not the bank. Hardware-only (inert without a One ROM).
+; Swaps the served BASIC window ($A000-$BFFF) from the base's own BASIC half to
+; the bank, JSRs the bank's $A000 JMP-table entry A, and swaps back. The bank set
+; carries a byte-IDENTICAL KERNAL + char to the base, so SWITCH_SLOT is live-safe
+; -- the CPU runs from the unchanging KERNAL half throughout, exactly like the
+; font swap. This routine LIVES in KCODE (that static KERNAL half), so it
+; survives both swaps, and it reuses _font_apply's LOAD_SLOT+SWITCH_SLOT via the
+; FONT_MB mailbox.
+;
+; While a bank runs, the base's ENTIRE BASIC half is gone -- so the bank calls
+; only the KERNAL stubs ($FFD2 etc.) and the SVC table ($FF80), both of which
+; live in the static half. Interrupts stay ENABLED on purpose: the IRQ handler is
+; in KCODE too, and the bank's directory pagination waits on GETIN, which needs
+; the keyboard scan to keep running.
+;
+; TWO ways to get the bank mapped, tried in order:
+;
+;  1. SERVED (One ROM, the real path): LOAD_SLOT the bank's flash set into the
+;     scratch RAM slot, then SWITCH_SLOT to it. BANK_RAM_SLOT is the
+;     overlay/stock scratch slot (1), never the served slot, so overwriting it is
+;     always safe (an overlay just reloads on next use).
+;
+;  2. RAM-BACKED (no One ROM -- the VICE test path): the C64 has RAM under the
+;     $A000-$BFFF ROM, and it is otherwise unused by the shell. With LORAM off
+;     the CPU sees it, so a bank image placed there runs in-place. This is what
+;     lets the VICE suite keep testing the disk commands after they left the
+;     16KB ROM -- the harness writes the image to $A000 (writes to $A000-$BFFF
+;     always land in RAM) exactly as it seeds a RAM overlay. Note the $01 poke
+;     must happen HERE, in the static half, for the same reason the swap does.
+;
+; Both paths verify the bank's magic before calling, so a wrong flash set or
+; uninitialized RAM reports "unavailable" instead of executing garbage -- the
+; mis-numbered-set bug the overlays hit as a "stage 5" failure.
+;
+; Returns A = 0 if the bank ran, nonzero if it could not be mapped.
 ; -------------------------------------------------------------------------
-BANK_FLASH_SET = 8              ; loadable ROM set: [kernal | char | bank1]
+BANK_FLASH_SET = 8              ; loadable ROM set: [kernal | char | disk bank]
 BANK_RAM_SLOT  = 1              ; overlay/stock scratch slot (never served)
-BANK_ENTRY     = $A000          ; the bank's JMP-table entry 0
+BANK_BASE      = $A000          ; the bank's JMP table
+BANK_MAGIC     = $A00C          ; "dsk1", right after the 4-entry table
+BANK_VEC       = $02CC          ; computed call target (page-2 scratch)
 
-.export _bank_run_test
-_bank_run_test:
+.export _bank_call
+_bank_call:
+        ; target = BANK_BASE + 3*entry
+        sta BANK_VEC            ; stash entry
+        asl a                   ; 2*entry
+        clc
+        adc BANK_VEC            ; 3*entry
+        clc
+        adc #<BANK_BASE
+        sta BANK_VEC
+        lda #>BANK_BASE
+        adc #0
+        sta BANK_VEC+1
+
+        ; --- path 1: served ROM (One ROM) --------------------------------
         lda #1
         sta FONT_MB_LOAD        ; LOAD the bank set, then SWITCH to it
         lda #BANK_FLASH_SET
@@ -715,15 +751,66 @@ _bank_run_test:
         sta FONT_MB_RAM
         jsr _font_apply
         cmp #0
-        bne @done               ; swap-in failed: A nonzero, do NOT call $A000
-        jsr BANK_ENTRY          ; run the bank command from ROM (base swapped out)
-        lda #0
-        sta FONT_MB_LOAD        ; SWITCH-only back to the base slot 0
-        sta FONT_MB_RAM
-        jsr _font_apply
-        lda #0                  ; ran the bank -> success
-@done:  ldx #0
+        bne @try_ram            ; no One ROM / RBCP error -> try RAM-backed
+        jsr bank_magic_ok
+        bcs @back_fail          ; served, but not the bank we expected
+        jsr bank_gosub
+        jsr bank_restore
+        lda #0                  ; ran
+        ldx #0
         rts
+@back_fail:
+        jsr bank_restore
+        lda #2                  ; swapped in, wrong image
+        ldx #0
+        rts
+
+        ; --- path 2: RAM under the ROM (VICE / no One ROM) ----------------
+@try_ram:
+        lda $01
+        pha
+        and #$FE                ; LORAM off: RAM at $A000-$BFFF, KERNAL stays
+        sta $01
+        jsr bank_magic_ok
+        bcs @no_ram
+        jsr bank_gosub
+        pla
+        sta $01
+        lda #0
+        ldx #0
+        rts
+@no_ram:
+        pla
+        sta $01
+        lda #1                  ; no bank anywhere
+        ldx #0
+        rts
+
+; SWITCH-only back to the base set in RAM slot 0.
+bank_restore:
+        lda #0
+        sta FONT_MB_LOAD
+        sta FONT_MB_RAM
+        jmp _font_apply
+
+; Carry clear if the mapped $A000 window really holds a disk bank ("dsk1").
+bank_magic_ok:
+        ldx #3
+@cmp:   lda BANK_MAGIC,x
+        cmp bank_magic_str,x
+        bne @bad
+        dex
+        bpl @cmp
+        clc
+        rts
+@bad:   sec
+        rts
+bank_magic_str:
+        .byte "dsk1"
+
+; JSR through the computed vector (the table entry is itself a JMP).
+bank_gosub:
+        jmp (BANK_VEC)
 
 .segment "RBCP_CODE"
 rbcp_font_tramp:

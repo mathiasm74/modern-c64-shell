@@ -329,6 +329,65 @@ Remaining increments:
   `banktest` PoC proves the mechanism; the disk-bank cluster and data-driven
   dispatch are the two things that actually move the needle.
 
+## The disk bank — BUILT (v0.1.88)
+
+Built, measured, and green on the full VICE suite. The cluster rule above is
+what made it work, and the measured reclaim beat the ~430–700 B estimate:
+
+| | free before | free after | delta |
+|---|---|---|---|
+| BASIC half | 253 | 301 | **+48** |
+| KERNAL half | 518 | 1688 | **+1170** |
+| total | 771 | 1989 | **+1218** |
+
+What left the 16 KB: the Epyx protocol (`fastload_recv.s` + `fastload_send.s`),
+`fastload.c` (including the M-W/M-E install payload), the `fload`/`run` fast
+path out of `fs.c`, the SVC Epyx entries, and the boot-time descramble-table
+generator in `reset.s`. `dir`/`ls`/`pwd` moved too, but as they were already a
+RAM overlay they freed nothing directly — moving them is what *allowed* the
+protocol to leave, which is the whole point of the cluster rule.
+
+### What it looks like
+
+- `src/banks/` — `crt0_disk.s` (the `$A000` JMP table + per-entry init),
+  `disk_bank.c` (entry glue + the fload body), `dir.c` (moved), `svc.h`,
+  `bank_svc_alias.s`; `cfg/disk_bank.cfg` links them at `$A000` with state in
+  the `$98xx-$9Fxx` RAM the overlays used to run from.
+- `bank_call(entry)` in `launch.s` (KCODE, the static half) does the swap, and
+  `fs.c` keeps only thunks.
+- Firmware set 8 is `[kernal | char | disk_bank]` — KERNAL and char
+  byte-identical to the base, so `SWITCH_SLOT` is live-safe.
+
+### Three things worth knowing before building another bank
+
+**1. Moving a cluster can need zero source changes.** `dir.c` (567 lines) and
+`fastload.c` moved without edits, by binding their names differently at link
+time: `bank_svc_alias.s` aliases the Epyx `svc_*` names onto the bank's own
+local copies (pure symbol aliases — zero bytes, and a direct `jsr`, which the
+cycle-counted receive path needs), while `cfg/disk_bank.cfg` binds the `iec_*`
+names to the resident SVC slots. Prefer this to editing the sources: it keeps
+one copy of code that is shared between two builds.
+
+**2. A bank is still testable in VICE — this was not obvious.** A bank is served
+ROM, so unlike a RAM overlay the harness cannot seed it, which would have made
+every disk command hardware-only and cost the suite its best coverage. The way
+out is that the C64 has RAM *under* the `$A000` ROM which the shell never uses,
+and writes to `$A000-$BFFF` always land in it. So `bank_call` tries the One ROM
+swap first and **falls back to running the bank from that RAM** (LORAM off),
+guarded by a `"dsk1"` magic so garbage RAM reports "unavailable" instead of
+executing. `seed_disk_bank()` writes the image there exactly as it seeds an
+overlay. Result: **143 tests pass, the same count as before the move** — no
+coverage was traded away. Build this fallback into any future bank.
+
+**3. Bank RAM is not yours between calls.** The shell, a loaded program, or an
+overlay may have used `$98xx-$9Fxx` in the meantime, so `bank_init` runs
+`zerobss` + `copydata` + the descramble-table rebuild on *every* entry. The
+resident build generated that table once at boot; a bank cannot assume that.
+
+Still hardware-only to validate: the served path itself (the RAM fallback is
+what VICE exercises). Check `dir`, `ls`, `pwd`, `fload <name>`, and
+`run <name>` on the One ROM.
+
 Order rationale: 2–3 prove the mechanism cheaply and safely; 4 is the payoff but
 the riskiest (timing + `run` coupling + hardware-only), so it goes last, on top
 of a proven dispatcher.
