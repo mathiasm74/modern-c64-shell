@@ -293,6 +293,23 @@ _tab_complete:
         sec
         sbc wl
         bne @extend
+        ; Nothing left to insert -- but if the user has typed a COMPLETE,
+        ; unique name inside an open quote, closing that quote is still useful
+        ; progress: the parser treats an unclosed quote as running to EOL, so
+        ; until it is closed no further argument can be typed (`cp "my game"
+        ; dst`). Fall into the normal insert path with nothing to insert.
+        lda match_n
+        cmp #1
+        bne @tolist             ; ambiguous -> list, as before
+        lda quoted
+        beq @tolist             ; not inside a quote -> genuinely nothing to do
+        lda #0
+        sta kins
+        sta needq
+        lda #1
+        sta extraq
+        jmp @room
+@tolist:
         jmp @list               ; no progress to make: list if ambiguous
 @extend:
         sta kins
@@ -384,11 +401,14 @@ _tab_complete:
         dex
         bne @shift              ; ws >= 1, so X can't wrap
 @insert:
+        ldx ws
         lda kins
+        beq @noins              ; MUST come first: `dec jtmp` from 0 would wrap
+                                ; and copy 256 bytes (the close-quote-only case
+                                ; below arrives here with kins = 0)
         sta jtmp
         ldy wl
         iny
-        ldx ws
 @ins:   lda (firstm),y
         jsr fold_down
         sta _line,x
@@ -396,7 +416,7 @@ _tab_complete:
         iny
         dec jtmp
         bne @ins
-        lda extraq
+@noins: lda extraq
         beq @grown
         lda #'"'
         sta _line,x

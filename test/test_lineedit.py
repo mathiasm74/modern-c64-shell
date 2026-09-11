@@ -282,3 +282,30 @@ def test_tab_quotes_when_any_candidate_has_a_space(v):
     _send(v, _ch(" bb") + [TAB])
     v.assert_screen_contains('zz "aaaaa bbbb ')
     _send(v, [CLEAR])
+
+
+def test_tab_closes_the_quote_on_a_complete_name(v):
+    # TAB on a fully-typed, unique name inside an open quote adds the CLOSING
+    # quote, even though there is nothing left to complete.
+    #
+    # It matters because the parser treats an unclosed quote as running to end
+    # of line: until it is closed, no further argument can be typed. So for
+    # `cp "my game" dst` the user would otherwise have to type the quote by
+    # hand. (Before this, TAB here did nothing at all -- the "no progress"
+    # path skipped the insert entirely.)
+    _seed_tab_cache(v, ["my game", "doc"])
+    _send(v, _ch('zz "my game') + [TAB])
+    v.assert_screen_contains('zz "my game"')
+    _send(v, [CLEAR])
+
+
+def test_tab_on_complete_unquoted_name_is_inert(v):
+    # The converse: a complete unquoted name has nothing to add, and TAB must
+    # not invent a quote around it.
+    _seed_tab_cache(v, ["pirates", "doc"])
+    _send(v, _ch("zz pirates") + [TAB])
+    v.assert_screen_contains("zz pirates")
+    txt = v.screen_text()
+    assert '"' not in txt.split("zz pirates")[1][:3], \
+        "TAB added a quote to a complete unquoted name\n%s" % txt
+    _send(v, [CLEAR])
