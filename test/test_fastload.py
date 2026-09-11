@@ -97,23 +97,21 @@ def test_epyx_upload_matches_meatloaf_v2v3_signature(v):
 #   F = (S0>>6) ^ (S1>>4) ^ (S2>>2) ^ S3
 # then cancels the constant CIA-port bits (A3, captured per block) and looks the
 # result up in a 256-byte table (descramble) that inverts + reorders the data
-# bits back into the byte. To save ROM the table isn't stored -- reset.s
-# generates it into RAM at boot (_epyx_gen_descramble). The timed receive is
-# hardware-only (VICE has no Epyx-transmit drive), but the generated TABLE and
-# the fold math -- where a bug would hide -- are checkable here: read the table
-# back from RAM and simulate the fold for all bytes and all constant patterns.
+# bits back into the byte, assembled into the bank's ROM. The timed receive is
+# hardware-only (VICE has no Epyx-transmit drive), but the TABLE and the fold
+# math -- where a bug would hide -- are checkable here: read the table out of
+# the image and simulate the fold for all bytes and all constant patterns.
 
 def _descramble(v):
-    """Seed the bank, run its table generator, and read the table back.
+    """The descramble table, read out of the bank's ROM image.
 
-    The table is the bank's BSS ($9Dxx, ordinary RAM -- readable directly). It
-    used to be built once at boot by reset.s; the bank rebuilds it on every
-    entry instead (crt0_disk.s bank_init), so here we call the generator the
-    same way a bank entry would."""
-    seed_disk_bank(v)
-    _call_bank(v, "_epyx_gen_descramble")
-    v.run_at(0x1000, 0.5)
-    return v.read_memory(_label_addr("descramble"), 256)
+    It used to be generated into RAM (by reset.s, then by the bank's per-entry
+    init), so this used to have to run the generator on the emulated machine.
+    It is assembled at build time now -- bank ROM is spare, but bank RAM is
+    carved out of the program load area -- so the table is simply data in the
+    image, and `v` is unused.
+    """
+    return _bank_bytes(_label_addr("descramble"), 256)
 
 
 def _a3(const):                             # the per-block constant smear

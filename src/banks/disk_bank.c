@@ -288,7 +288,7 @@ static void report_drive_status(void)
    clobber. (When load was resident this could not happen: a big load hit only
    the dir overlay, which self-heals, since overwriting its magic forces a
    re-fetch.) Refuse cleanly at the boundary instead. */
-#define BANK_RAM_FLOOR 0x9C00
+#define BANK_RAM_FLOOR 0x9D70
 
 void disk_load(void)
 {

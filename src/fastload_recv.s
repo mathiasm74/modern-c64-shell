@@ -204,48 +204,32 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 ; Epyx descramble table (see _epyx_recv_byte). The fold leaves the data bits
 ; inverted and permuted: folded value v has v0=~d7 v1=~d5 v2=~d6 v3=~d4 v4=~d3
 ; v5=~d1 v6=~d2 v7=~d0 (after A3 cancels the constant). descramble[v] inverts and
-; reorders them back into the byte d7..d0. It's a fixed 256-entry permutation, so
-; it lives in RAM, generated at boot (~30 ROM bytes vs a 256-byte ROM table).
-; Generation: invert v (all bits are inverted on the wire), swap input bits 1<->2
-; and 5<->6, then bit-reverse -- which lands inv0..inv7 at the byte's d7..d0.
-.export descramble, _epyx_gen_descramble
+; reorders them back into the byte d7..d0: invert v (all bits are inverted on the
+; wire), swap bits 1<->2 and 5<->6, then bit-reverse.
+;
+; It is a fixed permutation, so it is built HERE, at assembly time, and lives in
+; ROM. It used to be generated into RAM at run time to save ~226 bytes of ROM --
+; a good trade when this code was resident in the 16KB image, and a bad one now
+; that it lives in the disk bank: the bank has ROM to spare but its RAM is carved
+; out of the program load area, so 256 bytes of table cost 256 bytes off the
+; largest program the machine can load. Assembling it also drops the generator
+; and the per-entry call to it in crt0_disk.s (a bank re-inits on EVERY entry, so
+; that was rebuilding the same 256 bytes before every disk command).
+.ifdef BANK_BUILD
+.define RSEG "RODATA"
+.else
+.define RSEG "RODATA2"
+.endif
 
-.segment "BSS"
-descramble: .res 256                    ; RAM descramble table (filled at boot)
+.export descramble
 
-GTMP = $FB                              ; boot-only scratch (reset's string ptr,
-GACC = $FC                              ;   free by the time this runs)
+.segment RSEG
+descramble:
+.repeat 256, v
+        .byte ((((~v) & $01) << 7) | (((~v) & $02) << 4) | (((~v) & $04) << 4) | (((~v) & $08) << 1) | (((~v) & $10) >> 1) | (((~v) & $20) >> 4) | (((~v) & $40) >> 4) | (((~v) & $80) >> 7))
+.endrepeat
 
 .segment CSEG
-; _epyx_gen_descramble - build the 256-entry RAM table. Run once at boot
-; (reset.s, after BSS is cleared and before any fload). C-callable.
-.proc _epyx_gen_descramble
-        ldx #$00
-@l:     txa
-        eor #$FF                        ; inv = ~v (wire inversion)
-        ; swap inv bit1<->bit2 and bit5<->bit6:
-        ;   t = (inv ^ (inv>>1)) & $22 ; inv ^= t ^ (t<<1)
-        sta GTMP                        ; inv
-        lsr a
-        eor GTMP
-        and #$22
-        sta GACC                        ; t (low bit of each pair)
-        asl a                           ; t<<1
-        eor GACC                        ; t ^ (t<<1)
-        eor GTMP                        ; inv' = inv ^ t ^ (t<<1)
-        sta GTMP                        ; reverse source
-        ; bit-reverse inv' into GACC: lsr source, rol dest, x8
-        ldy #$08
-@rev:   lsr GTMP
-        rol GACC
-        dey
-        bne @rev
-        lda GACC
-        sta descramble,x
-        inx
-        bne @l
-        rts
-.endproc
 
 ; ----------------------------------------------------------------------------
 ; _epyx_recv_prg - receive a whole Epyx-streamed PRG into its embedded load

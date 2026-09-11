@@ -25,7 +25,6 @@ __STARTUP__ = 1
 
 .import _disk_dir, _disk_ls, _disk_pwd, _disk_fload, _disk_load
 .import copydata, zerobss
-.import _epyx_gen_descramble
 .importzp sp
 
 CSTACK_TOP = $A000              ; grows down into $9Fxx RAM
@@ -57,21 +56,19 @@ e_fload:
 e_load: jsr bank_init
         jmp _disk_load
 
-; Per-entry init: point the bank's own C stack at $A000, then bring its RAM
-; state up from nothing -- clear BSS, copy DATA down from ROM, and rebuild the
-; Epyx descramble table. All three run on EVERY entry because a bank's RAM is
-; not its own between calls: the shell, a loaded program, or another overlay may
-; have used $98xx-$9Fxx in the meantime. (The resident build generated the
-; descramble table once at boot from reset.s; it lives in the bank's BSS now, so
-; it is rebuilt here instead -- a few hundred cycles against a disk operation.)
+; Per-entry init: point the bank's own C stack at the top of its RAM window, then
+; bring that RAM up from nothing -- clear BSS and copy DATA down from ROM. Both
+; run on EVERY entry because a bank's RAM is not its own between calls: the
+; shell, a loaded program, or another overlay may have used it in the meantime.
+; (The Epyx descramble table used to be rebuilt here too; it is assembled into
+; the bank's ROM now -- see src/fastload_recv.s.)
 bank_init:
         lda #<CSTACK_TOP
         sta sp
         lda #>CSTACK_TOP
         sta sp+1
         jsr zerobss
-        jsr copydata
-        jmp _epyx_gen_descramble        ; tail call; RTSes to our caller
+        jmp copydata            ; tail call; copydata RTSes to our caller
 
 ; --- KERNAL entry shims -----------------------------------------------------
 ; The bank is linked standalone, so the machine is reached through the fixed
