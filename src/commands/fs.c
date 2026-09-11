@@ -149,9 +149,16 @@ static void usage(const char *rest)
    half's stubs and services are the only resident code it can call. */
 extern unsigned char __fastcall__ bank_call(unsigned char entry);
 
-static void report_no_bank(void)
+/* bank_call already distinguishes WHY it failed; say so rather than throwing it
+   away. 1 = nothing answered (no One ROM, or LOAD/SWITCH_SLOT refused), 2 = a
+   set WAS switched in but carried the wrong image (mis-numbered flash set).
+   The two have completely different causes, and on hardware this line is the
+   only evidence available. */
+static void report_no_bank(unsigned char rc)
 {
-    puts_raw("disk bank unavailable");
+    puts_raw("bank unavailable (");
+    chrout('0' + rc);
+    chrout(')');
     chrout(CR);
 }
 
@@ -218,8 +225,10 @@ unsigned char bank_try(unsigned char entry, int argc, char *argv[])
 
 void bank_dispatch(unsigned char entry, int argc, char *argv[])
 {
-    if (bank_try(entry, argc, argv) != 0)
-        report_no_bank();
+    unsigned char rc = bank_try(entry, argc, argv);
+
+    if (rc != 0)
+        report_no_bank(rc);
 }
 
 

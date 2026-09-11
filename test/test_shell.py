@@ -109,7 +109,7 @@ def test_bank_command_is_known_not_unknown(v):
         if "unavailable" in v.screen_text():
             break
     txt = v.screen_text()
-    assert "disk bank unavailable" in txt, \
+    assert "bank unavailable" in txt, \
         "a bank command with no bank should report it is unavailable\n%s" % txt
     assert "Command not found" not in txt, \
         "a bank command must not report as unknown -- it IS a known command\n%s" % txt
