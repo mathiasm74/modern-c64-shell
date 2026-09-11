@@ -89,3 +89,27 @@ def test_scroll_does_not_duplicate_lines(v):
             if r.lstrip().startswith("Command not found:")]
     assert seen == sorted(seen) and len(seen) == len(set(seen)), \
         "scroll duplicated or reordered lines; letters seen: %r" % "".join(seen)
+
+
+def test_bank_command_is_known_not_unknown(v):
+    """A BANK_CMD row is a KNOWN command that may be unreachable.
+
+    Data-driven dispatch (shell.h) lets a table row name a bank entry instead of
+    a resident function, so a bank command has no resident code at all -- only
+    its row. Keeping the row (rather than moving the name into the bank too) is
+    what makes this distinction possible: with no One ROM answering, `ls` must
+    say the bank is unavailable, NOT "Command not found", which would wrongly
+    tell the user the command does not exist.
+
+    No seed_disk_bank() here on purpose -- that is the point of the test.
+    """
+    _send(v, [CLEAR] + [ord(c) for c in "ls"] + [CR])
+    for _ in range(10):
+        v.run_for(0.5)
+        if "unavailable" in v.screen_text():
+            break
+    txt = v.screen_text()
+    assert "disk bank unavailable" in txt, \
+        "a bank command with no bank should report it is unavailable\n%s" % txt
+    assert "Command not found" not in txt, \
+        "a bank command must not report as unknown -- it IS a known command\n%s" % txt

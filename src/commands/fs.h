@@ -2,11 +2,6 @@
 #ifndef FS_H
 #define FS_H
 
-void cmd_dir(int argc, char *argv[]);    /* full 1541-style directory       */
-void cmd_ls(int argc, char *argv[]);     /* file names, colored by type     */
-void cmd_pwd(int argc, char *argv[]);    /* print the disk name             */
-void cmd_load(int argc, char *argv[]);   /* read a PRG into memory          */
-void cmd_fload(int argc, char *argv[]);  /* experimental Epyx fast load      */
 void cmd_run(int argc, char *argv[]);    /* run the loaded program          */
 void cmd_sys(int argc, char *argv[]);    /* JSR into ML at <addr>, SYS-style */
 void cmd_basic(int argc, char *argv[]);  /* swap to stock C64 ROMs (leave shell)*/

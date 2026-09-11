@@ -388,6 +388,56 @@ Still hardware-only to validate: the served path itself (the RAM fallback is
 what VICE exercises). Check `dir`, `ls`, `pwd`, `fload <name>`, and
 `run <name>` on the One ROM.
 
+## Data-driven dispatch — BUILT (v0.1.92)
+
+Lever (b), the one that addresses the *ongoing* pressure rather than another
+one-off. A dispatch-table row can now name a **bank entry** instead of a
+resident function, so a bank command has **no resident code at all** — only its
+row:
+
+```c
+    { "ls",     BANK_CMD(1) },     /* 4-byte row + "ls\0". No thunk. */
+```
+
+`BANK_CMD(n)` stores the small entry index in the handler slot; real code never
+lives in page zero, so a handler below `$0100` is unambiguously an index
+(`IS_BANK_CMD`). `dispatch()` routes those through one shared
+`bank_dispatch()` (fs.c), which publishes the default device, its remembered
+name, and **argc/argv** — so the bank parses its own arguments and reports its
+own errors.
+
+**Cost of a new bank command: a 4-byte row plus its name.** Previously each also
+needed a resident thunk (11–170 bytes) to marshal arguments and report.
+
+Reclaimed by converting the five existing bank commands (dir/ls/pwd/fload/load):
+
+| | free before | free after | delta |
+|---|---|---|---|
+| BASIC half | 955 | 1131 | **+176** |
+| KERNAL half | 1563 | 2132 | **+569** |
+| total | 2518 | 3263 | **+745** |
+
+Gone: `dir_run`, the three dir thunks, `cmd_load`, `cmd_fload`, `fload_program`,
+`fold_name`, and the resident `print_hex16`/`report_no_device`/
+`report_drive_status` they kept alive. `run` stays resident (it drives the stock
+swap) and simply calls entry 3 for its fast load.
+
+### Why the NAME stays resident
+
+The tempting next step is to move the name table into the bank too, for a
+literal zero-byte command. Don't, for two reasons:
+
+1. **`help` stays one sorted list.** It walks the resident table; split the
+   names and it must merge two sources with a column layout, or print two
+   groups.
+2. **"Unknown" and "unavailable" are different answers.** With the row resident,
+   `ls` on a machine with no One ROM reports *disk bank unavailable* — true and
+   actionable. With the name in the bank it would report *Command not found*,
+   which is simply false. `test_shell::test_bank_command_is_known_not_unknown`
+   pins this.
+
+A 4-byte row is a cheap price for both.
+
 Order rationale: 2–3 prove the mechanism cheaply and safely; 4 is the payoff but
 the riskiest (timing + `run` coupling + hardware-only), so it goes last, on top
 of a proven dispatcher.

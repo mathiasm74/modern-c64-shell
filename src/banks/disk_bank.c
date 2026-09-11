@@ -36,9 +36,13 @@ static void puts_bank(const char *s)
 #define MB_CMD  (*(unsigned char *)0x02D0)      /* 0 dir, 1 ls, 2 pwd */
 #define MB_DEV  (*(unsigned char *)0x02D1)
 
-void disk_dir(void) { MB_CMD = 0; dir_main(); }
-void disk_ls(void)  { MB_CMD = 1; dir_main(); }
-void disk_pwd(void) { MB_CMD = 2; dir_main(); }
+/* Data-driven dispatch (shell.h, and bank_dispatch() in fs.c): the resident
+   dispatcher publishes argc and argv here and calls our entry directly, so a
+   bank command reads its OWN arguments and reports its OWN errors -- there is
+   no resident thunk to do either. argv entries point into the shell's `line`
+   buffer in RAM, which we can follow. */
+#define BD_ARGC (*(unsigned char *)0x03A0)
+#define BD_ARGV (*(char ***)0x03A1)
 
 /* --- the fload/run fast path ------------------------------------------------
  *
@@ -58,7 +62,7 @@ void disk_pwd(void) { MB_CMD = 2; dir_main(); }
  *   $0371-$0398 name (<=40)        $039A  load_start     $039C  load_end
  */
 #define DM_NLEN  (*(unsigned char *)0x0370)
-#define DM_NAME  ((const char *)0x0371)
+#define DM_NAME  ((unsigned char *)0x0371)
 #define DM_STAT  (*(unsigned char *)0x0399)
 #define DM_START (*(unsigned int *)0x039A)
 #define DM_END   (*(unsigned int *)0x039C)
@@ -71,6 +75,72 @@ void disk_pwd(void) { MB_CMD = 2; dir_main(); }
 #define DM_UNSUPPORTED 2
 #define DM_FAILED      3
 #define DM_REPORTED    4
+
+static void usage(const char *rest)
+{
+    puts_bank("usage: ");
+    puts_bank(rest);
+    k_chrout(CR);
+}
+
+static void report_no_device(void)
+{
+    unsigned char d = MB_DEV;
+
+    puts_bank("device ");
+    if (d >= 10) {
+        k_chrout('0' + d / 10);
+        d %= 10;
+    }
+    k_chrout('0' + d);
+    puts_bank(" not present");
+    k_chrout(CR);
+}
+
+static void print_hex_nybble(unsigned char n)
+{
+    n &= 0x0F;
+    k_chrout(n < 10 ? '0' + n : 'a' + (n - 10));
+}
+
+static void print_hex16(unsigned int v)
+{
+    print_hex_nybble(v >> 12);
+    print_hex_nybble(v >> 8);
+    print_hex_nybble(v >> 4);
+    print_hex_nybble(v);
+}
+
+/* Report "<what> $start-$end" for a completed load. */
+static void report_loaded(const char *what)
+{
+    puts_bank(what);
+    print_hex16(DM_START);
+    puts_bank("-$");
+    print_hex16(DM_END - 1);
+    k_chrout(CR);
+}
+
+/* CBM filenames are uppercase PETSCII; fold as we copy into the mailbox.
+   Moved here from fs.c with the commands that use it. */
+static unsigned char fold_name(unsigned char *buf, const char *src)
+{
+    unsigned char n = 0;
+    unsigned char c;
+
+    while ((c = (unsigned char)src[n]) != 0 && n < 16) {
+        if (c >= 'a' && c <= 'z')
+            c -= 32;
+        buf[n] = c;
+        ++n;
+    }
+    return n;
+}
+
+void disk_dir(void) { MB_CMD = 0; dir_main(); }
+void disk_ls(void)  { MB_CMD = 1; dir_main(); }
+void disk_pwd(void) { MB_CMD = 2; dir_main(); }
+
 
 #define ST_TIMEOUT 0x02
 #define ST_EOI     0x40
@@ -94,23 +164,33 @@ unsigned int __fastcall__ epyx_recv_prg(void);
 void disk_fload(void)
 {
     unsigned int end;
+    char **argv = BD_ARGV;
 
     DM_STAT = DM_FAILED;
+    if (BD_ARGC < 2) {
+        usage("fload <name>");
+        return;
+    }
+    DM_NLEN = fold_name(DM_NAME, argv[1]);
 
     fastload_set_device(MB_DEV);
     fastload_epyx_install();
     if (iec_status() & ST_NODEV) {
-        DM_STAT = DM_NO_DEVICE;
+        report_no_device();
         return;
     }
-    if (fastload_epyx_send_header(DM_NAME, DM_NLEN) != 0) {
+    if (fastload_epyx_send_header((const char *)DM_NAME, DM_NLEN) != 0) {
         fastload_epyx_mark_unsupported();
-        DM_STAT = DM_UNSUPPORTED;
+        puts_bank("fast load not supported");
+        k_chrout(CR);
         return;
     }
     end = epyx_recv_prg();
-    if (end == 0)                       /* fewer than 3 bytes -> failure */
+    if (end == 0) {                     /* fewer than 3 bytes -> failure */
+        puts_bank("fast load failed");
+        k_chrout(CR);
         return;
+    }
     DM_START = *(unsigned int *)0x02AF; /* LADRL/LADRH, set by the ASM */
     DM_END = end;
 
@@ -121,10 +201,14 @@ void disk_fload(void)
     iec_set_sa(15);
     iec_chkin();
     iec_clrchn();
-    if (iec_status() & (ST_NODEV | ST_TIMEOUT))
+    if (iec_status() & (ST_NODEV | ST_TIMEOUT)) {
+        puts_bank("fast load failed");
+        k_chrout(CR);
         return;
+    }
 
     DM_STAT = DM_OK;
+    report_loaded("Fast-loaded $");
 }
 
 
@@ -208,17 +292,30 @@ static void report_drive_status(void)
 
 void disk_load(void)
 {
-    unsigned char lo, hi, bc;
+    unsigned char lo, hi, bc, n = 0;
     unsigned char *p;
+    char **argv = BD_ARGV;
 
     DM_STAT = DM_REPORTED;
+    if (BD_ARGC < 2) {
+        usage("load <name>");
+        return;
+    }
+    /* Not fold_name'd: `load` passes the name as typed (the IEC layer folds it
+       on the way out), and it may be longer than a 16-char CBM name. */
+    while (argv[1][n] && n < 40) {
+        DM_NAME[n] = argv[1][n];
+        ++n;
+    }
+    DM_NAME[n] = 0;
+    DM_NLEN = n;
 
     iec_set_fa(MB_DEV);
     iec_set_sa(0);              /* channel 0: a program load */
-    iec_setname(DM_NAME);
+    iec_setname((const char *)DM_NAME);
     iec_open();
     if (iec_status() & ST_NODEV) {
-        DM_STAT = DM_NO_DEVICE;
+        report_no_device();
         return;
     }
     iec_chkin();
@@ -270,4 +367,5 @@ void disk_load(void)
 
     DM_END = (unsigned int)p;
     DM_STAT = DM_OK;
+    report_loaded("loaded $");
 }

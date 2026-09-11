@@ -119,29 +119,8 @@ static void usage(const char *rest)
     chrout(CR);
 }
 
-static void print_hex_nybble(unsigned char n)
-{
-    n &= 0x0F;
-    chrout(n < 10 ? '0' + n : 'a' + (n - 10));
-}
 
-/* Print a 16-bit value as four hex digits. */
-static void print_hex16(unsigned int v)
-{
-    print_hex_nybble(v >> 12);
-    print_hex_nybble(v >> 8);
-    print_hex_nybble(v >> 4);
-    print_hex_nybble(v);
-}
 
-/* Report that a device didn't answer on the bus, naming the unit. */
-static void report_no_device(unsigned char dev)
-{
-    puts_raw("device ");
-    print_uint(dev);
-    puts_raw(" not present");
-    chrout(CR);
-}
 
 /* (device's bus probe moved into the files overlay -- it uses the KERNAL OPEN
    shim there; see do_device / device_present_ov in src/overlays/files.c.) */
@@ -180,12 +159,25 @@ static void report_no_bank(void)
 #define DB_NLEN (*(unsigned char *)0x02D2)
 #define DB_NAME ((unsigned char *)0x02D3)
 
-static void dir_run(unsigned char cmd)
+/* Run bank entry `entry`, the one piece of resident code every bank command
+   shares (data-driven dispatch -- see shell.h). It publishes what a bank
+   command cannot reach for itself:
+
+     - the default device and its remembered name, which stay resident because
+       every disk command and the prompt read them;
+     - argc and a pointer to argv, so the bank parses its OWN arguments. argv
+       entries point into `line` in RAM, which the bank can follow.
+
+   With this, a bank command needs no resident thunk at all: just its row in
+   the dispatch table. */
+#define BD_ARGC (*(unsigned char *)0x03A0)
+#define BD_ARGV (*(char ***)0x03A1)
+
+void bank_dispatch(unsigned char entry, int argc, char *argv[])
 {
     const char *name;
     unsigned char n = 0;
 
-    DB_CMD = cmd;
     DB_DEV = default_device;
     name = current_device_name();
     while (name[n] && n < 16) {
@@ -193,176 +185,14 @@ static void dir_run(unsigned char cmd)
         ++n;
     }
     DB_NLEN = n;
-    /* dir/ls/pwd live in the DISK BANK ($A000 entries 0/1/2), not in this ROM.
-       The mailbox above is the same one the RAM overlay used -- only the way we
-       get there changed. */
-    if (bank_call(cmd) != 0)
+
+    BD_ARGC = (unsigned char)argc;
+    BD_ARGV = argv;
+
+    if (bank_call(entry) != 0)
         report_no_bank();
 }
 
-void cmd_dir(int argc, char *argv[]) { (void)argc; (void)argv; dir_run(0); }
-void cmd_ls(int argc, char *argv[])  { (void)argc; (void)argv; dir_run(1); }
-void cmd_pwd(int argc, char *argv[]) { (void)argc; (void)argv; dir_run(2); }
-
-
-/* load <name> - read a PRG into memory at the load address stored in its
-   first two bytes, and report the range. The program is not started. Lives in
-   CODE2/RODATA2 (KERNAL ROM) so its code and strings don't push the smaller
-   BASIC ROM over budget. */
-#pragma code-name (push, "CODE2")
-#pragma rodata-name (push, "RODATA2")
-static unsigned char fold_name(unsigned char *buf, const char *src);
-
-/* load <name> - read a PRG into memory at the load address stored in its first
-   two bytes, and report the range. The program is not started.
-
-   The body is in the DISK BANK (entry 4) with the rest of the disk cluster.
-   report_drive_status went with it and HAD to: reporting the drive's own reason
-   for a failure means reading its error channel, which the bank must do before
-   handing control back. The success message stays here (it reuses the shell's
-   print_hex16), as does load_start/load_end, which the bank cannot reach. */
-void cmd_load(int argc, char *argv[])
-{
-    unsigned char n = 0;
-
-    if (argc < 2) {
-        usage("load <name>");
-        return;
-    }
-    while (argv[1][n] && n < DM_NAME_MAX) {
-        DM_NAME[n] = argv[1][n];
-        ++n;
-    }
-    DM_NAME[n] = 0;
-    DM_NLEN = n;
-    DB_DEV = default_device;
-
-    if (bank_call(4) != 0) {
-        report_no_bank();
-        return;
-    }
-    if (DM_STAT == DM_NO_DEVICE) {
-        report_no_device(default_device);
-        return;
-    }
-    if (DM_STAT != DM_OK)
-        return;                 /* the bank printed the drive's own reason */
-
-    load_start = DM_START;
-    load_end = DM_END;
-    if (load_start < 0xCF00 && load_end > 0xCE00)
-        TAB_CACHE_OK = 0;               /* the load overwrote the cache page */
-
-    puts_raw("loaded $");
-    print_hex16(load_start);
-    puts_raw("-$");
-    print_hex16(load_end - 1);
-    chrout(CR);
-}
-#pragma rodata-name (pop)
-#pragma code-name (pop)
-
-/* fload <name> - experimental Epyx fast load (Phase 7). Installs the Epyx
-   handshake, requests the file, and receives it over the timed 2-bit protocol;
-   leaves it in RAM at its PRG load address (so `run` works afterwards). Kept
-   SEPARATE from `load` during bring-up: M-E $01A9 on a drive that isn't Epyx-
-   aware would run our fingerprint filler as drive code, so only point this at a
-   Meatloaf (or other Epyx-emulating drive). Uses device 8 (the fast loader's
-   fixed FA). The 2-bit receive timing still needs hardware calibration -- see
-   the PAD note in src/fastload_recv.s; until then this may return garbage.
-   Lives in CODE2/RODATA2 (KERNAL ROM). */
-#pragma code-name (push, "CODE2")
-#pragma rodata-name (push, "RODATA2")
-/* Fold a filename to uppercase PETSCII (CBM convention) into buf[16];
-   returns the length. */
-static unsigned char fold_name(unsigned char *buf, const char *src)
-{
-    unsigned char n = 0, i;
-    char c;
-
-    for (i = 0; src[i] != 0 && n < 16; ++i) {
-        c = src[i];
-        if (c >= 'a' && c <= 'z')
-            c = (char)(c - 32);
-        buf[n++] = (unsigned char)c;
-    }
-    return n;
-}
-
-/* Receive a PRG over the Epyx stream into its embedded load address. The whole
-   per-byte loop -- block framing, store, count, progress dots -- runs in tight
-   ASM (epyx_recv_prg, fastload_recv.s) instead of a cc65 loop: the drive blocks
-   on our DATA-high before every byte, so cc65's per-byte overhead was directly
-   slowing the transfer. Sets load_start/load_end; returns the last written
-   address, or 0 if fewer than 3 bytes arrived. Caller already sent the header. */
-/* Fast-load `name` over the Epyx path into RAM at the PRG's embedded load
-   address; sets load_start/load_end. Returns the last written address (the
-   value `fload`/`run` report), or 0 on any failure -- which it has already
-   reported (no device / not Epyx-capable / broken stream). Shared by `fload`
-   and `run <name>`.
-
-   The protocol itself is in the DISK BANK (entry 3): it was the last resident
-   user of the Epyx code, which is why moving it is what let that code leave the
-   16KB ROM. What stays here is the reporting -- the bank hands back a status
-   code and we print it, reusing the strings and report_no_device() the shell
-   already has -- plus the resident state (load_start/load_end/TAB_CACHE_OK) the
-   bank cannot reach, since this ROM's BASIC half is swapped out while it runs.
-
-   No screen-blanking: the receiver (_epyx_recv_byte) paces each byte around
-   VIC-II badlines via the raster, so the display stays visible during the
-   load. */
-
-static unsigned int fload_program(const char *name)
-{
-    DM_NLEN = fold_name(DM_NAME, name);
-    DB_DEV = default_device;
-
-    if (bank_call(3) != 0) {
-        report_no_bank();
-        return 0;
-    }
-    switch (DM_STAT) {
-    case 0:
-        break;
-    case 1:
-        report_no_device(default_device);
-        return 0;
-    case 2:
-        puts_raw("fast load not supported");
-        chrout(CR);
-        return 0;
-    default:
-        puts_raw("fast load failed");
-        chrout(CR);
-        return 0;
-    }
-
-    load_start = DM_START;
-    load_end = DM_END;
-    if (load_start < 0xCF00 && load_end > 0xCE00)
-        TAB_CACHE_OK = 0;               /* the load overwrote the cache page */
-    return load_end - 1;
-}
-
-void cmd_fload(int argc, char *argv[])
-{
-    unsigned int end;
-
-    if (argc < 2) {
-        usage("fload <name>");
-        return;
-    }
-    end = fload_program(argv[1]);
-    if (end == 0)
-        return;                 /* fload_program already reported the failure */
-    puts_raw("Fast-loaded $");
-    print_hex16(load_start);
-    puts_raw("-$");
-    print_hex16(end);
-    chrout(CR);
-}
-#pragma rodata-name (pop)
-#pragma code-name (pop)
 
 /* run - call the most recently loaded program like SYS. It returns here (and
    the shell reprompts) if the program ends in RTS; a program that loops or
@@ -415,8 +245,16 @@ void cmd_run(int argc, char *argv[])
        the stock swap targets flash set 4 (the stock C64 set the firmware
        carries), so this works the same as on the C64. */
     if (argc > 1) {
-        if (fload_program(argv[1]) == 0)
-            return;                     /* load failed: already reported */
+        /* The fast load is bank entry 3 -- the same code `fload` runs, which is
+           why `run <name>` == `fload <name>` then `run`. The bank reports its
+           own failures, so we only have to notice and stop. */
+        bank_dispatch(3, argc, argv);
+        if (DM_STAT != DM_OK)
+            return;                     /* already reported */
+        load_start = DM_START;
+        load_end = DM_END;
+        if (load_start < 0xCF00 && load_end > 0xCE00)
+            TAB_CACHE_OK = 0;           /* the load overwrote the cache page */
     } else if (load_start == 0) {
         puts_raw("nothing loaded");
         chrout(CR);

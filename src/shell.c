@@ -37,7 +37,8 @@
 #define HIST_N   8              /* commands remembered for up/down recall   */
 
 /* The command table: name -> handler, walked in order both for dispatch and
-   by `help`. Sorted alphabetically so `help` (which displays it column-major
+   by `help`. A row is either a resident function or a BANK_CMD(n) entry index
+   (see shell.h) -- the bank commands have NO resident code, only their row. Sorted alphabetically so `help` (which displays it column-major
    over three columns) reads naturally down each column. Lives in ROM and
    spends its bytes in the KERNAL ROM (RODATA2) to leave room in the smaller
    BASIC ROM, where the rest of the cc65 output sits. */
@@ -54,18 +55,18 @@ const struct command shell_commands[] = {
     { "dev",    cmd_device },
     { "device", cmd_device },
     { "devices", cmd_devices },
-    { "dir",    cmd_dir    },
+    { "dir",    BANK_CMD(0) },
     { "edit",   cmd_edit   },
-    { "fload",  cmd_fload  },
+    { "fload",  BANK_CMD(3) },
     { "font",   cmd_font   },
     { "help",   cmd_help   },
     { "less",   cmd_less   },
-    { "load",   cmd_load   },
-    { "ls",     cmd_ls     },
+    { "load",   BANK_CMD(4) },
+    { "ls",     BANK_CMD(1) },
     { "mv",     cmd_mv     },
     { "peek",   cmd_peek   },
     { "poke",   cmd_poke   },
-    { "pwd",    cmd_pwd    },
+    { "pwd",    BANK_CMD(2) },
     { "reset",  cmd_reset  },
     { "rm",     cmd_rm     },
     { "run",    cmd_run    },
@@ -400,7 +401,14 @@ static void dispatch(struct command_line *cl)
 
     for (i = 0; i < shell_command_count; ++i) {
         if (streq(cl->argv[0], shell_commands[i].name)) {
-            shell_commands[i].handler(cl->argc, cl->argv);
+            /* Data-driven dispatch: a row can name a BANK entry instead of a
+               resident function, in which case there is no resident code for
+               the command at all -- just this row. */
+            if (IS_BANK_CMD(shell_commands[i].handler))
+                bank_dispatch((unsigned char)(unsigned int)shell_commands[i].handler,
+                              cl->argc, cl->argv);
+            else
+                shell_commands[i].handler(cl->argc, cl->argv);
             return;
         }
     }
