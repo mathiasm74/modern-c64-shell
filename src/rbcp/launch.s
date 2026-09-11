@@ -755,18 +755,23 @@ _bank_call:
         jsr bank_magic_ok
         bcs @back_fail          ; served, but not the bank we expected
         jsr bank_gosub
-        jsr bank_restore
+        jsr bank_ensure_base
         lda #0                  ; ran
         ldx #0
         rts
 @back_fail:
-        jsr bank_restore
+        jsr bank_ensure_base
         lda #2                  ; swapped in, wrong image
         ldx #0
         rts
 
         ; --- path 2: RAM under the ROM (VICE / no One ROM) ----------------
 @try_ram:
+        ; The swap-in reported failure -- but the device may have switched
+        ; anyway (a glitched response frame). Settle that before touching $01,
+        ; or the fallback runs with the bank served underneath it. Costs one
+        ; $A000 compare when there is no One ROM at all, the usual case here.
+        jsr bank_ensure_base
         lda $01
         pha
         and #$FE                ; LORAM off: RAM at $A000-$BFFF, KERNAL stays
@@ -785,6 +790,43 @@ _bank_call:
         lda #1                  ; no bank anywhere
         ldx #0
         rts
+
+; bank_ensure_base: GUARANTEE the base BASIC half is served again before we
+; return to shell code.
+;
+; This is the one step in a bank call that cannot be allowed to fail. A failed
+; swap-IN is recoverable -- report it and carry on -- but returning into a shell
+; whose entire BASIC half is still the bank means the next resident call runs
+; garbage: an intermittent, patternless hang that strikes the command AFTER the
+; one that actually glitched. (v0.1.88 shipped without this and hung exactly
+; that way on hardware.)
+;
+; It does not trust what the protocol reported, because that report is the thing
+; that glitches. Instead it reads the truth directly: if $A000 still answers
+; "dsk1", the bank is served, whatever any status byte said. Four bytes of
+; compare, and it is equally correct on the no-One-ROM path (the base BASIC half
+; never matches, so this returns immediately).
+;
+; If the switch will not come back at all, reset rather than run garbage: the
+; boot path re-normalizes the served slot, so the user sees a reboot instead of
+; a dead machine. Every other RBCP user already retries (overlay.c retries a
+; whole fetch) -- frames glitch on real hardware, and this one is unrecoverable.
+BANK_RESTORE_TRIES = 8
+
+bank_ensure_base:
+        ldy #BANK_RESTORE_TRIES
+@try:   jsr bank_magic_ok
+        bcs @ok                 ; $A000 is not the bank -> the base is back
+        tya
+        pha
+        jsr bank_restore
+        pla
+        tay
+        dey
+        bne @try
+        jmp ($FFFC)             ; unrecoverable -- reboot beats a garbage hang
+
+@ok:    rts
 
 ; SWITCH-only back to the base set in RAM slot 0.
 bank_restore:
