@@ -850,8 +850,36 @@ bank_magic_ok:
 bank_magic_str:
         .byte "dsk1"
 
-; JSR through the computed vector (the table entry is itself a JMP).
+; JSR through the computed vector (the table entry is itself a JMP), then
+; invalidate the RAM overlay cache.
+;
+; WHY the invalidate: the bank's per-entry init writes $9800-$9FFF (its DATA,
+; BSS and C stack), and that region is the TAIL of every RAM overlay -- the
+; files overlay's last 7 code pages ($8800+$1700 reaches $9EFF) and its BSS at
+; $9F00, edit's upper pages and BSS, picker's BSS at $9D00. But the overlay
+; cache is validated ONLY by the 4-byte magic at $8803 (mp_cached in
+; overlay.c), which sits below $9800 and therefore SURVIVES intact. So without
+; this, the next overlay command sees a "valid" cache whose upper third is
+; rubble and calls into it.
+;
+; That is the v0.1.89 hardware symptom exactly: `cd` failed most of the time
+; while `bg`/`border`/`text`/`help` -- the SAME overlay, but lower in it --
+; worked, and `edit` worked because its different magic forced a re-fetch
+; anyway. Clearing the magic makes the next overlay command re-fetch, which is
+; simply the truth: the bank really did destroy it.
+;
+; The reverse direction is already safe: an overlay clobbers the bank's RAM
+; just as thoroughly, which is why bank_init re-runs zerobss + copydata + the
+; descramble rebuild on EVERY entry rather than trusting what it left behind.
+OVL_MAGIC = $8803               ; the 4-byte magic mp_cached() checks
+
 bank_gosub:
+        jsr bank_jmp
+        lda #0
+        sta OVL_MAGIC           ; force the next overlay command to re-fetch
+        rts
+
+bank_jmp:
         jmp (BANK_VEC)
 
 .segment "RBCP_CODE"

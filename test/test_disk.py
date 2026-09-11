@@ -150,3 +150,32 @@ def test_wedge_aliases(v):
     _type(v, "@#9", clear=True)
     assert _wait_for(v, "device 9 not present"), \
         "@#9 did not run device: %r" % v.screen_text()
+
+
+def test_bank_call_invalidates_the_overlay_cache(v):
+    """A bank call must invalidate the RAM overlay cached at $8800.
+
+    The bank's per-entry init writes $9800-$9FFF (its DATA, BSS and C stack),
+    which is the TAIL of every RAM overlay -- but the cache is validated only by
+    the magic at $8803, BELOW that, so it survives intact. Without the explicit
+    invalidate in bank_gosub (src/rbcp/launch.s) the next overlay command trusts
+    a cache whose upper third is rubble and calls into it.
+
+    This was a real hardware bug (v0.1.89): `cd` failed most of the time while
+    `bg`/`border`/`text`/`help` -- the same overlay, but lower in it -- worked.
+    VICE never caught it because tests re-seed between commands, so assert the
+    invalidation directly.
+    """
+    from lib.overlays import seed_files
+
+    seed_files(v)
+    v.run_for(0.2)
+    assert bytes(v.read_memory(0x8803, 4)) == b"fil1", "seeding did not take"
+
+    seed_disk_bank(v)
+    _type(v, "pwd", clear=True)
+    _wait_for(v, ":")                   # let the bank call run
+
+    assert bytes(v.read_memory(0x8803, 4)) != b"fil1", \
+        "overlay magic survived a bank call -- the next overlay command would " \
+        "run a cache whose $9800+ pages the bank just overwrote"
