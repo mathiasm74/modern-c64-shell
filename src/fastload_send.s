@@ -32,7 +32,16 @@ DDST   = $FC            ; our current $DD00 output bits (CLK/DATA we drive)
 OPCNT = $FD            ; op-routine byte counter (reset boot scratch; free now)
 OPSUM = $FE            ; the checksum byte to send last
 
-.segment "CODE2"        ; KERNAL ROM half (the BASIC ROM is full)
+; Segment: the KERNAL half normally, but the DISK BANK links this same source
+; into its own image at $A000 (docs/ROM-EXPANSION.md), where CODE2 does not
+; exist. One source, two homes -- see src/iec_clkwait.s for the same pattern.
+.ifdef BANK_BUILD
+.define CSEG "CODE"
+.else
+.define CSEG "CODE2"
+.endif
+
+.segment CSEG
 
 ; ---------------------------------------------------------------------------
 ; _epyx_send_begin - the "ready for header" handshake. The drive pulls CLK low

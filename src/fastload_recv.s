@@ -35,7 +35,16 @@ A3TMP = $02A9           ; scratch while computing A3LOC (unused page-3 KERNAL RA
 RETRY = $02AA           ; wait_ready retry countdown (memory: wait_clk_hi eats X)
 RES = $FB               ; assembled byte scratch (reset's boot pointer; free now)
 
-.segment "CODE2"        ; KERNAL ROM half
+; Segment: the KERNAL half normally, but the DISK BANK links this same source
+; into its own image at $A000 (docs/ROM-EXPANSION.md), where CODE2 does not
+; exist. One source, two homes -- see src/iec_clkwait.s for the same pattern.
+.ifdef BANK_BUILD
+.define CSEG "CODE"
+.else
+.define CSEG "CODE2"
+.endif
+
+.segment CSEG
 
 ; ----------------------------------------------------------------------------
 ; _epyx_wait_ready - wait for the drive's block "ready" signal: CLK goes low
@@ -207,7 +216,7 @@ descramble: .res 256                    ; RAM descramble table (filled at boot)
 GTMP = $FB                              ; boot-only scratch (reset's string ptr,
 GACC = $FC                              ;   free by the time this runs)
 
-.segment "CODE2"
+.segment CSEG
 ; _epyx_gen_descramble - build the 256-entry RAM table. Run once at boot
 ; (reset.s, after BSS is cleared and before any fload). C-callable.
 .proc _epyx_gen_descramble

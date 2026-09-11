@@ -113,7 +113,7 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s \
-         src/fastload_recv.s src/fastload_send.s src/svc.s src/complete.s \
+         src/iec_clkwait.s src/fastload_recv.s src/fastload_send.s src/svc.s src/complete.s \
          src/rbcp/rbcp.s src/rbcp/launch.s
 SRC_C := src/shell.c src/parser.c src/fastload.c \
          src/commands/builtins.c src/commands/fs.c src/commands/mem.c src/commands/config.c \
@@ -252,8 +252,24 @@ $(BUILD)/banks/disk_bank.s: src/banks/disk_bank.c | $(BUILD)
 	$(CC) $(CC65FLAGS) -o $@ $<
 $(BUILD)/banks/disk_bank_c.o: $(BUILD)/banks/disk_bank.s
 	$(AS) $(ASFLAGS) -o $@ $<
-$(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o cfg/disk_bank.cfg
-	$(LD) -C cfg/disk_bank.cfg -o $@ $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o $(RTLIB)
+# Sources shared with the main ROM, assembled a second time INTO the bank image.
+# -D BANK_BUILD=1 is what redirects their segment ("CODE2"/"KCODE" in the KERNAL
+# half -> the bank's own "CODE" at $A000); the bk_ prefix keeps these objects
+# distinct from the same-named main-ROM ones. The alternative -- calling the
+# resident copies through the SVC table -- was rejected for the Epyx paths: they
+# are cycle-counted, and the extra indirection is the kind of jitter the
+# receiver's badline pacing exists to remove.
+BANK_SHARED_OBJ := $(BUILD)/banks/bk_iec_clkwait.o \
+                   $(BUILD)/banks/bk_fastload_recv.o $(BUILD)/banks/bk_fastload_send.o
+
+$(BUILD)/banks/bk_%.o: src/%.s | $(BUILD)
+	@mkdir -p $(BUILD)/banks
+	$(AS) $(ASFLAGS) -D BANK_BUILD=1 -o $@ $<
+
+$(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o \
+                              $(BANK_SHARED_OBJ) cfg/disk_bank.cfg
+	$(LD) -C cfg/disk_bank.cfg -o $@ $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o \
+	      $(BANK_SHARED_OBJ) $(RTLIB)
 	@echo "  disk_bank.bin : $$(wc -c < $@) bytes"
 
 banks: $(BUILD)/banks/bank1.bin $(BUILD)/banks/disk_bank.bin

@@ -24,7 +24,7 @@
 .export _iec_open, _iec_command, _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
 .export _iec_chkout, _iec_putbyte, _iec_puteoi, _iec_unlisten
 .export _iec_status
-.export wait_clk_lo, wait_clk_hi        ; used by the Epyx host transmit (fastload_send.s)
+.import wait_clk_lo, wait_clk_hi        ; src/iec_clkwait.s (shared with the disk bank)
 
 DD00   = $DD00
 DDR2   = $DD02
@@ -134,51 +134,6 @@ iec_wait_dev:
         rts
 @present:
         clc
-        rts
-
-; Wait until CLK in is high / low, with a ~1.4s timeout. Carry clear once the
-; line reaches the wanted state, carry set on timeout. The bound is generous
-; because the talker may pause to read a disk sector; it exists only so a
-; dead or disk-less drive can't wedge the shell. Clobbers A, X, Y, TMOUT.
-;
-; wait_clk_hi CONTRACT (relied on by iec_getbyte): on success (carry clear) the
-; N flag holds DATA in ($DD00 bit 7) sampled by the same `bit DD00` that saw CLK
-; go high -- the receive loop uses that instead of a separate read, so there's
-; no edge-to-sample gap for a badline to corrupt. Keep @ok flag-preserving
-; (clc/rts) so N survives.
-wait_clk_hi:
-        lda #$02
-        sta TMOUT
-@z:     ldx #$00
-@x:     ldy #$00
-@y:     bit DD00
-        bvs @ok                 ; CLK high
-        dey
-        bne @y
-        dex
-        bne @x
-        dec TMOUT
-        bne @z
-        sec                     ; timed out
-        rts
-@ok:    clc
-        rts
-wait_clk_lo:
-        lda #$02
-        sta TMOUT
-@z:     ldx #$00
-@x:     ldy #$00
-@y:     bit DD00
-        bvc @ok                 ; CLK low
-        dey
-        bne @y
-        dex
-        bne @x
-        dec TMOUT
-        bne @z
-        sec
-        rts
-@ok:    clc
         rts
 
 ; wait_clk_lo_short - like wait_clk_lo but with a SHORT (~75ms) timeout, used
