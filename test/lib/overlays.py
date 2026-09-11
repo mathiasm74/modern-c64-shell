@@ -82,8 +82,11 @@ def seed_about(v):
 
 
 def seed_edit(v):
-    """edit overlay -> $8800."""
-    _seed(v, "edit.bin", 0x8800)
+    """edit bank -> the RAM under the $A000 ROM.
+
+    The editor outgrew the $8800 overlay region and became a bank; only `about`
+    is still an overlay."""
+    _seed_bank(v, "edit_bank.bin")
 
 
 def seed_picker(v):

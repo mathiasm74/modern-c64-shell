@@ -155,8 +155,8 @@ def test_wedge_aliases(v):
 def test_bank_call_invalidates_the_overlay_cache(v):
     """A bank call must invalidate the RAM overlay cached at $8800.
 
-    A bank's per-entry init writes its RAM window ($9D70-$9FFF), which overlaps
-    the tail of a RAM overlay -- edit's BSS sits at $9D00. But the overlay cache
+    A bank's per-entry init writes its RAM window ($9D00-$9FFF), which overlaps
+    the tail of a RAM overlay. But the overlay cache
     is validated only by the magic at $8803, well BELOW that, so it survives
     intact: without the explicit invalidate in bank_gosub (src/rbcp/launch.s)
     the next overlay command would trust a cache whose upper pages the bank just
@@ -165,19 +165,21 @@ def test_bank_call_invalidates_the_overlay_cache(v):
     This was a real hardware bug (v0.1.89), found when `cd` failed while
     `bg`/`text`/`help` -- then the same overlay, but lower in it -- still
     worked. VICE never caught it because tests re-seed between commands, so
-    assert the invalidation directly. (`edit` is the subject now: files and
-    picker became banks, so edit is the tallest RAM overlay left.)
+    assert the invalidation directly. (`about` is the subject now -- files,
+    picker and edit all became banks, so it is the only RAM overlay left.)
     """
-    from lib.overlays import seed_edit
+    from lib.overlays import seed_about
 
-    seed_edit(v)
+    v.run_for(0.3)                      # let the boot settle before seeding
+    seed_about(v)
     v.run_for(0.2)
-    assert bytes(v.read_memory(0x8803, 4)) == b"edt1", "seeding did not take"
+    got = bytes(v.read_memory(0x8800, 8))
+    assert got[3:7] == b"abt1", "seeding did not take: %r" % (got,)
 
     seed_disk_bank(v)
     _type(v, "pwd", clear=True)
     _wait_for(v, ":")                   # let the bank call run
 
-    assert bytes(v.read_memory(0x8803, 4)) != b"edt1", \
+    assert bytes(v.read_memory(0x8803, 4)) != b"abt1", \
         "overlay magic survived a bank call -- the next overlay command would " \
         "run a cache whose upper pages the bank just overwrote"

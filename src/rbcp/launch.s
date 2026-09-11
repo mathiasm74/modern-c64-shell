@@ -47,7 +47,8 @@
 ; after the boot normalize in reset.s, or slot 2 for font B -- never 1.)
 .ifdef TARGET_C128
 ; C128/C64C firmware layout (tools/build_c128.sh, build_c64c.sh):
-;   0 Tardis (served), 1/2 overlays_a/b, 3/4/5 disk/util/files banks, 6 stock C64.
+;   0 Tardis (served), 1 overlays_a (about), 2 edit bank, 3/4/5 disk/util/files
+;   banks, 6 stock C64.
 ; `basic`/`run` swap to that stock C64 set (the 325182-style [BASIC][KERNAL]
 ; 16KB image) so C64 mode becomes real stock C64 BASIC.
 RBCP_STOCK_FLASH_SLOT = 6
@@ -753,12 +754,18 @@ bank_flash_set:
         .byte 3                 ; bank 0: disk
         .byte 4                 ; bank 1: util
         .byte 5                 ; bank 2: files
+        .byte 2                 ; bank 3: edit -- took the slot the second
+                                ;         overlay set vacated, so nothing else
+                                ;         renumbered when the editor moved out
+                                ;         of RAM
 .else
         .byte 7                 ; bank 0: disk  (dir/ls/pwd/fload/load)
         .byte 8                 ; bank 1: util  (tab completion)
         .byte 9                 ; bank 2: files (cat/less/cp/mv/rm/cd/status/
                                 ;               border/bg/text/peek/poke/help/
                                 ;               device/devices + the picker)
+        .byte 5                 ; bank 3: edit -- took the slot the second
+                                ;         overlay set vacated (see above)
 .endif
 
 .export _bank_call

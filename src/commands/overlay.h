@@ -3,7 +3,6 @@
 #define OVERLAY_H
 
 void cmd_about(int argc, char *argv[]);  /* the about screen (multi-page overlay) */
-void cmd_edit(int argc, char *argv[]);   /* nano-like editor (multi-page) */
 
 /* Fetch (if needed) and run the files overlay; thunks fill the mailbox at
    $02D0 first. */

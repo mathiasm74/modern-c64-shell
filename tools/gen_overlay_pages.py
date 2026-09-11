@@ -35,13 +35,11 @@ ovl = os.path.join(build, "overlays")
 #    plus the overlay sets, so overlays_a/b = sets 1/2.
 if os.environ.get("OVL_C128"):
     LAYOUT = [
-        ("edit.bin",  "EDIT",  "FIRST_PAGE", 1),
-        ("about.bin", "ABOUT", "FIRST_PAGE", 2),
+        ("about.bin", "ABOUT", "FIRST_PAGE", 1),
     ]
 else:
     LAYOUT = [
-        ("edit.bin",  "EDIT",  "FIRST_PAGE", 4),
-        ("about.bin", "ABOUT", "FIRST_PAGE", 5),
+        ("about.bin", "ABOUT", "FIRST_PAGE", 4),
     ]
 
 

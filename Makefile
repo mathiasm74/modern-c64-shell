@@ -164,31 +164,16 @@ $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 # page order are defined in tools/gen_overlay_pages.py (LAYOUT) and mirrored by
 # the overlays_a/b.bin rules below; build/overlay_pages.h is generated from the
 # .bin sizes so the resident thunks never hardcode a page or set number.
-OVERLAYS := $(BUILD)/overlays/edit.bin $(BUILD)/overlays/about.bin
+OVERLAYS := $(BUILD)/overlays/about.bin
 # Set/page order MUST match LAYOUT in tools/gen_overlay_pages.py.
 #
 # Only TWO overlays are left -- files and picker became the files bank, dir the
 # disk bank -- so there are two sets: A = edit, B = about. The old set C is gone
 # from onerom-stock.json, which renumbered the loadable sets after it (the banks
 # are 7/8/9; see bank_flash_set in src/rbcp/launch.s).
-OVERLAYS_A := $(BUILD)/overlays/edit.bin
-OVERLAYS_B := $(BUILD)/overlays/about.bin
-OVERLAY_SETS := $(BUILD)/overlays_a.bin $(BUILD)/overlays_b.bin
+OVERLAYS_A := $(BUILD)/overlays/about.bin
+OVERLAY_SETS := $(BUILD)/overlays_a.bin
 
-# The edit overlay is cc65-compiled C linked standalone at $8800 (multi-page;
-# cfg/overlay_edit.cfg). crt0 must link first so the header sits at the base.
-# The binary is padded to a 256 multiple so later overlays stay page-aligned.
-$(BUILD)/overlays/edit.s: src/overlays/edit.c | $(BUILD)
-	@mkdir -p $(BUILD)/overlays
-	$(CC) $(CC65FLAGS) -o $@ $<
-$(BUILD)/overlays/edit_c.o: $(BUILD)/overlays/edit.s
-	$(AS) $(ASFLAGS) -o $@ $<
-$(BUILD)/overlays/edit.bin: $(BUILD)/overlays/crt0.o $(BUILD)/overlays/edit_c.o cfg/overlay_edit.cfg
-	$(LD) -C cfg/overlay_edit.cfg -o $@ $(BUILD)/overlays/crt0.o $(BUILD)/overlays/edit_c.o $(RTLIB)
-	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
-	@echo "  edit overlay: $$(wc -c < $@) bytes"
-
-# The files overlay (cat/less/cp/mv/rm), same multi-page C recipe as edit.
 # The about overlay is self-contained asm linked multi-page at $8800
 # (cfg/overlay_about.cfg); padded to a 256 multiple to stay page-aligned.
 $(BUILD)/overlays/about.bin: $(BUILD)/overlays/about.o cfg/overlay_about.cfg
@@ -275,13 +260,20 @@ $(BUILD)/banks/fb_%.o: $(BUILD)/banks/fb_%.s
 FILES_BANK_OBJ := $(BUILD)/banks/crt0_files_bank.o $(BUILD)/banks/fb_files_entry.o \
                   $(BUILD)/banks/fb_files.o $(BUILD)/banks/fb_picker.o
 
+EDIT_BANK_OBJ := $(BUILD)/banks/crt0_edit.o $(BUILD)/banks/fb_edit.o
+
+$(BUILD)/banks/edit_bank.bin: $(EDIT_BANK_OBJ) cfg/edit_bank.cfg
+	$(LD) -C cfg/edit_bank.cfg -o $@ $(EDIT_BANK_OBJ) $(RTLIB) \
+	      -Ln $(BUILD)/banks/edit_bank.labels
+	@echo "  edit_bank.bin : $$(wc -c < $@) bytes"
+
 $(BUILD)/banks/files_bank.bin: $(FILES_BANK_OBJ) cfg/files_bank.cfg
 	$(LD) -C cfg/files_bank.cfg -o $@ $(FILES_BANK_OBJ) $(RTLIB) \
 	      -Ln $(BUILD)/banks/files_bank.labels
 	@echo "  files_bank.bin: $$(wc -c < $@) bytes"
 
 BANK_BINS := $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin \
-             $(BUILD)/banks/files_bank.bin
+             $(BUILD)/banks/files_bank.bin $(BUILD)/banks/edit_bank.bin
 
 banks: $(BANK_BINS)
 # Generated overlay page-number map (start page of each overlay), derived from
@@ -313,8 +305,6 @@ endef
 $(BUILD)/overlays_a.bin: $(OVERLAYS_A) Makefile
 	$(call pack_overlay_set,$(OVERLAYS_A))
 
-$(BUILD)/overlays_b.bin: $(OVERLAYS_B) Makefile
-	$(call pack_overlay_set,$(OVERLAYS_B))
 
 
 # C is compiled to assembly by cc65, then assembled by ca65 (keep the .s so a
@@ -403,7 +393,7 @@ $(BOOTLOADER): $(BOOTLOADER_SRC) tools/build_bootloader.sh | $(BUILD)
 # JiffyDOS is commercial, so unlike the stock ROMs (Zimmers URLs) it stays a
 # local user-supplied file; the C= boot menu (cfg/onerom-stock.json set 3)
 # offers it as a bootable KERNAL.
-ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin $(BUILD)/banks/files_bank.bin stock-roms/JiffyDOS_C64.bin
+ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin $(BUILD)/banks/files_bank.bin $(BUILD)/banks/edit_bank.bin stock-roms/JiffyDOS_C64.bin
 onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
 		--config-file $(ONEROM_STOCK_CFG) $(ONEROM_PLUGINS) \

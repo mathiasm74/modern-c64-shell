@@ -11,6 +11,11 @@
 #   readme (PRG) - a short payload, just a second directory entry.
 #   doc    (SEQ) - 30 lines "l00".."l29"; long enough that `less` pages it
 #                  and `cat` scrolls.
+#   bas    (PRG) - a real tokenized BASIC V2 program (loads at $0801). The
+#                  editor detokenizes it for display, so it needs to be
+#                  genuinely tokenized -- with a string containing a keyword
+#                  ("PRINT") to prove the expander does not tokenize inside
+#                  quotes, and a REM to prove it does outside them.
 #
 # Requires c1541 (ships with VICE). Run from anywhere; writes next to itself.
 set -e
@@ -43,10 +48,35 @@ open(os.path.join(tmp, "readme.prg"), "wb").write(
     bytes([0x00, 0x20]) + b"C64 SHELL TEST DISK")
 doc = "".join("l%02d\r" % i for i in range(30))   # 30 lines, CR-separated
 open(os.path.join(tmp, "doc.seq"), "wb").write(doc.encode("ascii"))
+
+# A genuine tokenized BASIC V2 program:
+#   10 PRINT "HI PRINT"        <- the keyword inside the quotes stays literal
+#   20 REM DONE
+# Lines are: link(2) line#(2) tokens... $00, ending with a $0000 link.
+def basic(lines, start=0x0801):
+    out, addr = b"", start
+    body = []
+    for num, toks in lines:
+        chunk = bytes([num & 0xFF, num >> 8]) + toks + b"\x00"
+        body.append(chunk)
+    for chunk in body:
+        addr += 2 + len(chunk) - 2          # link + line#/tokens/terminator
+    addr = start
+    for chunk in body:
+        nxt = addr + 2 + len(chunk)
+        out += bytes([nxt & 0xFF, nxt >> 8]) + chunk
+        addr = nxt
+    return bytes([start & 0xFF, start >> 8]) + out + b"\x00\x00"
+
+PRINT, REM = b"\x99", b"\x8f"
+open(os.path.join(tmp, "bas.prg"), "wb").write(
+    basic([(10, PRINT + b' "HI PRINT"'),
+           (20, REM + b" DONE")]))
 PY
 
 c1541 -format "test disk,01" d64 "$here/test.d64" \
       -write "$tmp/prog.prg"  "prog,p" \
       -write "$tmp/readme.prg" "readme,p" \
-      -write "$tmp/doc.seq"   "doc,s"
+      -write "$tmp/doc.seq"   "doc,s" \
+      -write "$tmp/bas.prg"   "bas,p"
 echo "wrote $here/test.d64"

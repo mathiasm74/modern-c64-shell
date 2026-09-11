@@ -30,6 +30,7 @@ struct command {
 #define BANK_DISK        0
 #define BANK_UTIL        1
 #define BANK_FILES       2
+#define BANK_EDIT        3
 #define BANK_CMD(b, e)   ((void (*)(int, char **))(((b) << 5) | (e)))
 #define IS_BANK_CMD(fn)  ((unsigned int)(fn) < 0x0100)
 

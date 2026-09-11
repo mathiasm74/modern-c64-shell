@@ -43,7 +43,12 @@ unsigned char k_chrin(void);
 #define CLIPSZ   0x0800U
 #define SCREEN   ((unsigned char *)0x0400)
 #define STREG    (*(volatile unsigned char *)0x90)
-#define FNMB     ((unsigned char *)0x02D0)
+/* The editor reads its own argument now that it is a bank: the resident
+   dispatcher publishes argc/argv (bank_dispatch in fs.c) and we pull the
+   filename straight out, so `edit` needs no resident thunk at all -- just its
+   dispatch-table row. */
+#define BD_ARGC  (*(unsigned char *)0x03A0)
+#define BD_ARGV  (*(char ***)0x03A1)
 
 #define CR_CH    0x0D
 #define K_DEL    0x14
@@ -408,6 +413,11 @@ static unsigned char prompt_name(void)
     return 1;
 }
 
+/* Set when the buffer holds a listing expanded from a tokenized BASIC program
+   (see load_file). save_file refuses while it is set: there is no tokenizer
+   yet, so writing the listing back would replace the program with its source. */
+static unsigned char basic_mode;
+
 static char msgbuf[24];
 
 static unsigned char save_file(void)
@@ -415,6 +425,13 @@ static unsigned char save_file(void)
     unsigned int i, dl = doclen();
     unsigned char n;
 
+    /* No tokenizer yet: writing this listing back as text would replace a
+       working program with its own source text, which BASIC cannot run. Refuse
+       rather than destroy the file. */
+    if (basic_mode) {
+        msg("basic: read-only");
+        return 0;
+    }
     if (fnlen == 0 && !prompt_name())
         return 0;
     n = build_iocmd(",s,w", 1);
@@ -446,11 +463,124 @@ static unsigned char save_file(void)
     return 1;
 }
 
+
+/* --- BASIC V2 detokenizer ---------------------------------------------------
+ *
+ * A tokenized BASIC program is not text, so without this the editor could not
+ * open one at all: it opens files as SEQ, and a PRG would simply not be found.
+ *
+ * Layout, from the load address ($0801) onward, per line:
+ *     link lo/hi   address of the next line; $0000 ends the program
+ *     line# lo/hi
+ *     bytes...     < $80 literal PETSCII, >= $80 a keyword token
+ *     $00          end of line
+ *
+ * We have to carry our own keyword table: the stock BASIC ROM is exactly what
+ * this shell replaced, so there is nothing to borrow at runtime. Tokens run
+ * $80..$CB contiguously, so the table is just the keywords in order -- each
+ * stored with the high bit set on its LAST character, which is how Commodore
+ * stored it too and saves a separator byte per entry.
+ *
+ * Bytes inside quotes are NOT tokens (BASIC does not tokenize inside a string),
+ * so the walk tracks quote state and passes those through untouched.
+ */
+/* Raw file bytes are staged high in the buffer and the listing expands DOWN
+   from 0, so the two never meet: detokenized text is 2-3x the size of the
+   tokens it came from. */
+#define RAWOFF   0x5000U
+#define RAWMAX   (BUFSZ - RAWOFF)
+
+#define TOK_FIRST 0x80
+#define TOK_LAST  0xCB
+#define TOK_PI    0xFF
+
+static const char basic_kw[] =
+    "EN\xC4" "FO\xD2" "NEX\xD4" "DAT\xC1" "INPUT\xA3" "INPU\xD4" "DI\xCD"
+    "REA\xC4" "LE\xD4" "GOT\xCF" "RU\xCE" "I\xC6" "RESTOR\xC5" "GOSU\xC2"
+    "RETUR\xCE" "RE\xCD" "STO\xD0" "O\xCE" "WAI\xD4" "LOA\xC4" "SAV\xC5"
+    "VERIF\xD9" "DE\xC6" "POK\xC5" "PRINT\xA3" "PRIN\xD4" "CON\xD4"
+    "LIS\xD4" "CL\xD2" "CM\xC4" "SY\xD3" "OPE\xCE" "CLOS\xC5" "GE\xD4"
+    "NE\xD7" "TAB\xA8" "T\xCF" "F\xCE" "SPC\xA8" "THE\xCE" "NO\xD4"
+    "STE\xD0" "\xAB" "\xAD" "\xAA" "\xAF" "\xDE" "AN\xC4" "O\xD2"
+    "\xBE" "\xBD" "\xBC" "SG\xCE" "IN\xD4" "AB\xD3" "US\xD2" "FR\xC5"
+    "PO\xD3" "SQ\xD2" "RN\xC4" "LO\xC7" "EX\xD0" "CO\xD3" "SI\xCE"
+    "TA\xCE" "AT\xCE" "PEE\xCB" "LE\xCE" "STR\xA4" "VA\xCC" "AS\xC3"
+    "CHR\xA4" "LEFT\xA4" "RIGHT\xA4" "MID\xA4" "G\xCF";
+
+/* Append one character of listing text, never running into the staged raw. */
+static void emit(unsigned char c)
+{
+    if (gs < RAWOFF)
+        BUF[gs++] = c;
+}
+
+/* Append one keyword to the buffer. */
+static void put_keyword(unsigned char tok)
+{
+    const char *p = basic_kw;
+    unsigned char n = tok - TOK_FIRST;
+    unsigned char c;
+
+    while (n) {                         /* skip n entries; each ends high-bit set */
+        while ((*p++ & 0x80) == 0)
+            ;
+        --n;
+    }
+    for (;;) {
+        c = (unsigned char)*p++;
+        emit((unsigned char)(c & 0x7F));
+        if (c & 0x80)
+            return;
+    }
+}
+
+/* Expand a tokenized program in place: raw bytes are read from `raw` (length
+   `n`), the listing text is written through the gap buffer. */
+static void detokenize(unsigned char *raw, unsigned int n)
+{
+    unsigned int off = 2, line;
+    unsigned char c, quoted;
+    char num[6];
+    unsigned char i;
+
+    for (;;) {
+        if (off + 3 >= n)
+            break;
+        if ((raw[off] | raw[off + 1]) == 0)
+            break;                      /* $0000 link: end of program */
+        off += 2;
+        line = raw[off] | ((unsigned int)raw[off + 1] << 8);
+        off += 2;
+
+        print_u16(num, line);
+        for (i = 0; num[i]; ++i)
+            emit((unsigned char)num[i]);
+        emit(' ');
+
+        quoted = 0;
+        while (off < n && (c = raw[off++]) != 0) {
+            if (c == '"')
+                quoted ^= 1;
+            if (!quoted && c >= TOK_FIRST && c <= TOK_LAST)
+                put_keyword(c);
+            else
+                emit(c);
+        }
+        emit(CR_CH);
+    }
+}
+
 static void load_file(void)
 {
+    unsigned int raw = 0, i, link;
     unsigned char n, c, st;
 
-    n = build_iocmd(",s,r", 0);
+    basic_mode = 0;
+    /* Open by NAME ONLY, no ",s,r": the type suffix restricted this to SEQ, so
+       a tokenized program could not be opened at all -- the drive reports the
+       file as missing rather than as the wrong type. By name, the drive hands
+       over whatever it is, and we decide below. */
+    n = build_iocmd("", 0);
     STREG = 0;
     k_setlfs(8, 2);
     k_setnam((const char *)iocmd, n);
@@ -460,24 +590,44 @@ static void load_file(void)
         k_close();
         return;
     }
+    /* Stage the file high in the buffer; the listing expands down from 0. */
     for (;;) {
         c = k_chrin();
         st = STREG;
         if (st & 0x83)
             break;              /* device gone / timeout: drop c */
         if (st & 0x40) {        /* EOI = last byte. A 1541 clocks out a real   */
-            if (c && gs < ge)   /* final byte; Meatloaf ends the stream with a  */
-                BUF[gs++] = c;  /* synthetic $00 (no byte) -- storing it would  */
-            break;              /* show a trailing '?' (scrc($00) = '?').       */
+            if (c && raw < RAWMAX)  /* final byte; Meatloaf ends the stream with */
+                BUF[RAWOFF + raw++] = c;  /* a synthetic $00 (no byte) -- storing */
+            break;              /* it would show a trailing '?' (scrc($00)='?'). */
         }
-        if (gs < ge)
-            BUF[gs++] = c;
+        if (raw < RAWMAX)
+            BUF[RAWOFF + raw++] = c;
     }
     k_clrchn();
     k_close();
+
+    /* Is it a tokenized BASIC program? The load address must be $0801 AND the
+       first line link must point forward past it -- the address alone would
+       also match data that merely begins $01,$08. (A full chain walk is the
+       stronger test, but this is the part that matters before we commit to
+       expanding, and a bad guess only produces a garbled listing, never a
+       crash: unknown bytes pass through as characters. That is what a real
+       LIST does with an ML program carrying a BASIC loader, too.) */
+    link = (raw >= 6) ? (BUF[RAWOFF + 2] | ((unsigned int)BUF[RAWOFF + 3] << 8)) : 0;
+    if (raw >= 6 && BUF[RAWOFF] == 0x01 && BUF[RAWOFF + 1] == 0x08 && link > 0x0801) {
+        basic_mode = 1;
+        detokenize(BUF + RAWOFF, raw);
+    } else {
+        for (i = 0; i < raw; ++i)       /* plain text: copy down as-is */
+            emit(BUF[RAWOFF + i]);
+    }
+
     move_to(0);
     if (doclen() == 0)
         msg("new file");
+    else if (basic_mode)
+        msg("basic (read-only)");
 }
 
 /* --- key handling ----------------------------------------------------------- */
@@ -515,9 +665,15 @@ void edit_main(void)
     msg_hold = 0;
     chain = 0;
     build_sctab();
-    fnlen = FNMB[0] <= 16 ? FNMB[0] : 16;
-    for (i = 0; i < fnlen; ++i)
-        fname[i] = FNMB[1 + i];
+    fnlen = 0;
+    if (BD_ARGC > 1) {
+        char **argv = BD_ARGV;
+        while (argv[1][fnlen] && fnlen < 16) {
+            fname[fnlen] = argv[1][fnlen];
+            ++fnlen;
+        }
+    }
+    (void)i;
     if (fnlen)
         load_file();
 

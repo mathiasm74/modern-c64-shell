@@ -18,14 +18,13 @@ Disk-writing tests run against a throwaway copy of the fixture.
 import os
 import shutil
 
-from lib.overlays import seed_files, seed_disk_bank
+from lib.overlays import seed_files, seed_disk_bank, seed_edit
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 shutil.copy(os.path.join(_HERE, "data", "test.d64"),
             os.path.join(_HERE, "data", "_scratch_edit.d64"))
 VICE_DISK = "data/_scratch_edit.d64"
 
-_EDIT_BIN = os.path.join(_HERE, "..", "build", "overlays", "edit.bin")
 
 CTRL_X = 0x18
 CTRL_O = 0x0F
@@ -40,9 +39,9 @@ HOME = 0x13
 
 
 def _seed(v):
-    with open(_EDIT_BIN, "rb") as f:
-        data = list(f.read())
-    v.write_memory(0x8800, data)
+    """The editor is a BANK now, not a $8800 overlay -- it outgrew that region
+    (see cfg/edit_bank.cfg), so it seeds into the RAM under the $A000 ROM."""
+    seed_edit(v)
 
 
 def _keys(v, codes):
@@ -260,3 +259,38 @@ def test_saved_file_appears_in_ls(v):
     _wait(v, "ME.TXT")
     assert "ME.TXT" in v.screen_text(), \
         "editor-saved file missing from ls\n%s" % v.screen_text()
+
+
+def test_edit_lists_a_basic_program(v):
+    """Opening a tokenized BASIC program shows it as a listing, not as bytes.
+
+    Two things this proves beyond "it expanded something":
+      - the keyword INSIDE the quoted string stays literal, because BASIC does
+        not tokenize inside strings and neither may we;
+      - the editor refuses to save it. There is no tokenizer yet, so writing
+        the listing back would replace a working program with its own source
+        text -- data loss, silently.
+    """
+    v.run_for(0.3)
+    _seed(v)
+    _keys(v, "edit bas")
+    _keys(v, [CR])
+    assert _wait(v, "10 PRINT"), \
+        "BASIC program was not detokenized\n%s" % v.screen_text()
+    txt = v.screen_text()
+    # The keyword inside the quotes must survive as text, not be re-expanded.
+    assert '"HI PRINT"' in txt, \
+        "the quoted string was altered -- tokens must not expand inside quotes\n%s" % txt
+    assert "20 REM DONE" in txt, \
+        "second line missing (link chain walk stopped early?)\n%s" % txt
+
+    # ...and saving is refused while there is no tokenizer
+    _keys(v, [CTRL_O])
+    assert _wait(v, "read-only"), \
+        "editor must refuse to save a detokenized listing\n%s" % v.screen_text()
+
+    # Leave the editor so the next test in this module starts from the prompt.
+    # No discard prompt to answer: the save was refused, so nothing was
+    # modified and ^X exits straight away.
+    _keys(v, [CTRL_X])
+    _wait(v, "8>")

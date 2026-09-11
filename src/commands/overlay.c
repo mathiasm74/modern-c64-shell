@@ -52,7 +52,6 @@ unsigned char overlay_fetch_multi(void);
  * come from the generated overlay_pages.h, not a hardcoded number.        */
 #define OVL8_BASE  ((unsigned char *)0x8800)
 #define OVL8_ENTRY ((void (*)(void))0x8800)
-#define EDIT_FN_MB ((unsigned char *)0x02D0)    /* len, then chars */
 
 static unsigned char mp_cached(const char *magic)
 {
@@ -115,30 +114,6 @@ void cmd_about(int argc, char *argv[])
     OVL8_ENTRY();
 }
 
-void cmd_edit(int argc, char *argv[])
-{
-    unsigned char rc, n;
-    const char *name;
-
-    rc = mp_fetch(EDIT_FIRST_PAGE, "edt1", EDIT_SET);
-    if (rc != 0) {
-        mp_failed(rc);
-        return;
-    }
-    /* hand the filename (if any) to the overlay via the mailbox */
-    n = 0;
-    if (argc > 1) {
-        name = argv[1];
-        while (name[n] && n < 16) {
-            EDIT_FN_MB[1 + n] = name[n];
-            ++n;
-        }
-    }
-    EDIT_FN_MB[0] = n;
-    OVL8_ENTRY();
-}
-
-/* (The files and picker overlays became the FILES BANK -- served ROM, no fetch
-   and no RAM footprint; see docs/ROM-EXPANSION.md. Only edit and about are
-   still fetched into $8800.) */
+/* (files, picker and now edit are BANKS -- served ROM, no fetch and no RAM
+   footprint; see docs/ROM-EXPANSION.md. `about` is the only overlay left.) */
 
