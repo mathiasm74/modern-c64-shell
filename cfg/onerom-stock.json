@@ -1,7 +1,7 @@
 {
   "version": 1,
   "name": "C64 Shell ROM + Stock Fallback",
-  "description": "C= boot-menu firmware: r107sl's c64-bootloader (set 0) shows a GRUB-style menu when C=/RUN-STOP/Q is held at power-on and otherwise auto-boots the last choice (it remembers it at NV offset 1, which is why the shell's settings blob lives at NV offset 16). Loadable ROM sets: 0 = bootloader, 1 = Tardis DOS shell + US charset (boot default), 2 = stock BASIC/KERNAL, 3 = JiffyDOS, 4/5 = overlays_a/b, 6 = shell + Swedish charset (font B), 7 = overlays_c. The bootloader leaves the chosen set serving from RAM slot 1; the shell re-normalizes to slot 0 at boot (reset.s) so its staging-slot assumptions hold. Overlay sets carry the same 8KB image on all three chips: firmware 0.7.x sizes RAM slots to the served (multi-ROM) type and LOAD_SLOT refuses a size mismatch (Piers' workaround, hardware-validated on 0.7.1).",
+  "description": "C= boot-menu firmware: r107sl's c64-bootloader (set 0) shows a GRUB-style menu when C=/RUN-STOP/Q is held at power-on and otherwise auto-boots the last choice (it remembers it at NV offset 1, which is why the shell's settings blob lives at NV offset 16). Loadable ROM sets: 0 = bootloader, 1 = Tardis DOS shell + US charset (boot default), 2 = stock BASIC/KERNAL, 3 = JiffyDOS, 4/5 = overlays_a/b (edit, about), 6 = shell + Swedish charset (font B), 7/8/9 = the disk / util / files BANKS, which the shell serves at $A000 in place of its own BASIC half to run commands from ROM without spending the 16KB budget. Sets labelled '~' are hidden from the menu. The bootloader leaves the chosen set serving from RAM slot 1; the shell re-normalizes to slot 0 at boot (reset.s) so its staging-slot assumptions hold. Overlay and bank sets carry the same 8KB image on all three chips: firmware 0.7.x sizes RAM slots to the served (multi-ROM) type and LOAD_SLOT refuses a size mismatch (Piers' workaround, hardware-validated on 0.7.1).",
   "chip_sets": [
     {
       "type": "multi",
@@ -170,7 +170,7 @@
           "file": "build/kernal.bin",
           "type": "Chip2364",
           "cs1": "active_low",
-          "label": "Bank PoC"
+          "label": "~disk bank"
         },
         {
           "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
@@ -193,7 +193,7 @@
           "file": "build/kernal.bin",
           "type": "Chip2364",
           "cs1": "active_low",
-          "label": "Bank PoC"
+          "label": "~util bank"
         },
         {
           "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
@@ -216,7 +216,7 @@
           "file": "build/kernal.bin",
           "type": "Chip2364",
           "cs1": "active_low",
-          "label": "Bank PoC"
+          "label": "~files bank"
         },
         {
           "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",

@@ -21,6 +21,10 @@ CFG    := cfg/rom.cfg
 ONEROM       := tools/onerom
 ONEROM_BOARD ?= fire-24-e
 ONEROM_CFG   := cfg/onerom.json
+# The stock-fallback config. Overridable so a RELEASE can be built from a config
+# that carries no third-party ROM we may not redistribute, without touching the
+# local development one: ONEROM_STOCK_CFG=/path/to/release.json make onerom-stock
+ONEROM_STOCK_CFG ?= cfg/onerom-stock.json
 
 # PINNED firmware version. Firmware 0.7.x sizes RAM slots by ROM type (a
 # single 2364 = 8KB, a multi-ROM set = 64KB; pre-0.7.0 everything was 64KB,
@@ -276,8 +280,10 @@ $(BUILD)/banks/files_bank.bin: $(FILES_BANK_OBJ) cfg/files_bank.cfg
 	      -Ln $(BUILD)/banks/files_bank.labels
 	@echo "  files_bank.bin: $$(wc -c < $@) bytes"
 
-banks: $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin \
-       $(BUILD)/banks/files_bank.bin
+BANK_BINS := $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin \
+             $(BUILD)/banks/files_bank.bin
+
+banks: $(BANK_BINS)
 # Generated overlay page-number map (start page of each overlay), derived from
 # the actual .bin sizes. The resident overlay thunks include it; their .s
 # therefore depend on it, and it depends on the overlay .bin -- so the page
@@ -360,7 +366,10 @@ run: all
 # Full suite: `make test`. Fast iteration: `make test M=fastload` (or
 # M="disk rm") runs only the modules whose name contains the substring(s).
 # VICE_JOBS=N overrides the parallel worker count.
-test: all $(OVERLAY_SETS)
+# The banks are prerequisites too: the VICE tests seed them into the RAM under
+# $A000 (most commands live in a bank now), so a test run straight after a
+# clean would otherwise fail with a confusing FileNotFoundError.
+test: all $(OVERLAY_SETS) $(BANK_BINS)
 	$(PYTHON) test/run_tests.py $(M)
 
 # Build a One ROM firmware image holding both halves as a single multi-ROM set
@@ -397,7 +406,7 @@ $(BOOTLOADER): $(BOOTLOADER_SRC) tools/build_bootloader.sh | $(BUILD)
 ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin $(BUILD)/banks/files_bank.bin stock-roms/JiffyDOS_C64.bin
 onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
-		--config-file cfg/onerom-stock.json $(ONEROM_PLUGINS) \
+		--config-file $(ONEROM_STOCK_CFG) $(ONEROM_PLUGINS) \
 		--out $(ONEROM_STOCK_OUT)
 	@echo "  onerom fw : $$(wc -c < $(ONEROM_STOCK_OUT)) bytes -> $(ONEROM_STOCK_OUT)"
 
@@ -411,7 +420,7 @@ onerom-stock: $(ONEROM_STOCK_DEPS)
 onerom-flash: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
 		--board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
-		--config-file cfg/onerom-stock.json $(ONEROM_PLUGINS) \
+		--config-file $(ONEROM_STOCK_CFG) $(ONEROM_PLUGINS) \
 		--out $(ONEROM_STOCK_OUT)
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') reboot
 

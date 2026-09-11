@@ -36,7 +36,9 @@ set -e
 
 BOARD="${ONEROM_BOARD:-fire-28-a}"
 FW="${ONEROM_FW_VERSION:-0.7.1}"
-VER=$(grep -o 'v0\.1\.[0-9]*' src/commands/builtins.c | head -1)
+# Generic on purpose: this was pinned to v0.1.* and silently produced an
+# unversioned filename the moment the version rolled to v0.2.00.
+VER=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' src/commands/builtins.c | head -1)
 OUT="build/c64c-tardis-dos-${VER}-for-onerom-${BOARD}.bin"
 
 # CS polarities for the 251913 (23128) in the C64C's ROM socket: the CBM 23128
@@ -54,7 +56,8 @@ STOCK_OUT="build/stock-c64-combined.bin"
 echo "== clean + build combined image + overlays (TARGET_C128 = combined-ROM layout) =="
 make clean >/dev/null
 make EXTRA_DEFS='-D TARGET_C128' \
-     build/rom16k.bin build/overlays_a.bin build/overlays_b.bin build/overlays_c.bin
+     build/rom16k.bin build/overlays_a.bin build/overlays_b.bin \
+     build/banks/disk_bank.bin build/banks/util_bank.bin build/banks/files_bank.bin
 
 if [ ! -f "$STOCK_BASIC" ] || [ ! -f "$STOCK_KERNAL" ]; then
     echo "ERROR: stock C64 ROMs not found ($STOCK_BASIC / $STOCK_KERNAL)." >&2
@@ -70,7 +73,9 @@ tools/onerom firmware build --board "$BOARD" --version "$FW" \
   --slot "file=build/rom16k.bin,type=23128,$CS" \
   --slot "file=build/overlays_a.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=build/overlays_b.bin,type=23128,$CS,size_handling=duplicate" \
-  --slot "file=build/overlays_c.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/disk_bank.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/util_bank.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/files_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=${STOCK_OUT},type=23128,$CS" \
   --out "$OUT"
 echo "  c64c fw : $(wc -c < "$OUT" | tr -d ' ') bytes -> $OUT"

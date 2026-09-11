@@ -20,7 +20,9 @@ set -e
 
 BOARD="${ONEROM_BOARD:-fire-28-c}"
 FW="${ONEROM_FW_VERSION:-0.7.1}"
-OUT="build/tardis-c128-${BOARD}.bin"
+# Versioned like every other artifact, so a release asset needs no renaming.
+VER=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' src/commands/builtins.c | head -1)
+OUT="build/tardis-c128-${VER}-for-onerom-${BOARD}.bin"
 
 # CS polarities for the 325182 (23128) in the C128 U32 socket, same as the
 # C64C's 251913 (same CBM 23128 mask): cs1/cs2 active-low, cs3 active-high.
@@ -36,7 +38,8 @@ STOCK_C64="https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c128/c128_
 echo "== clean + build C128 shell (TARGET_C128) =="
 make clean >/dev/null
 make EXTRA_DEFS='-D TARGET_C128' \
-     build/rom16k.bin build/overlays_a.bin build/overlays_b.bin build/overlays_c.bin
+     build/rom16k.bin build/overlays_a.bin build/overlays_b.bin \
+     build/banks/disk_bank.bin build/banks/util_bank.bin build/banks/files_bank.bin
 
 echo "== assembling firmware ${OUT} (board ${BOARD}, fw ${FW}) =="
 tools/onerom firmware build --board "$BOARD" --version "$FW" \
@@ -44,7 +47,9 @@ tools/onerom firmware build --board "$BOARD" --version "$FW" \
   --slot "file=build/rom16k.bin,type=23128,$CS" \
   --slot "file=build/overlays_a.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=build/overlays_b.bin,type=23128,$CS,size_handling=duplicate" \
-  --slot "file=build/overlays_c.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/disk_bank.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/util_bank.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/files_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=${STOCK_C64},type=23128,$CS" \
   --out "$OUT"
 echo "  c128 fw : $(wc -c < "$OUT" | tr -d ' ') bytes -> $OUT"

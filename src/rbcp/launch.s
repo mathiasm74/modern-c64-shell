@@ -46,10 +46,11 @@
 ; device isn't serving and switch to it. (Serving is RAM slot 0 for font A
 ; after the boot normalize in reset.s, or slot 2 for font B -- never 1.)
 .ifdef TARGET_C128
-; C128 firmware layout: 0 Tardis (served), 1/2/3 overlays_a/b/c, 4 stock C64.
+; C128/C64C firmware layout (tools/build_c128.sh, build_c64c.sh):
+;   0 Tardis (served), 1/2 overlays_a/b, 3/4/5 disk/util/files banks, 6 stock C64.
 ; `basic`/`run` swap to that stock C64 set (the 325182-style [BASIC][KERNAL]
 ; 16KB image) so C64 mode becomes real stock C64 BASIC.
-RBCP_STOCK_FLASH_SLOT = 4
+RBCP_STOCK_FLASH_SLOT = 6
 .else
 RBCP_STOCK_FLASH_SLOT = 2
 .endif
@@ -744,12 +745,21 @@ BANK_ID        = $02CF          ; bank id being called (page-2 scratch)
 
 ; Flash (loadable ROM) set per bank id. Each is [kernal | char | <bank image>],
 ; the KERNAL and char byte-identical to the base so SWITCH_SLOT is live-safe.
+; The set numbers differ per target because the firmware layouts do -- see
+; RBCP_STOCK_FLASH_SLOT above. Keep these in step with the --slot order in
+; tools/build_c128.sh / build_c64c.sh and with cfg/onerom-stock.json.
 bank_flash_set:
+.ifdef TARGET_C128
+        .byte 3                 ; bank 0: disk
+        .byte 4                 ; bank 1: util
+        .byte 5                 ; bank 2: files
+.else
         .byte 7                 ; bank 0: disk  (dir/ls/pwd/fload/load)
         .byte 8                 ; bank 1: util  (tab completion)
         .byte 9                 ; bank 2: files (cat/less/cp/mv/rm/cd/status/
                                 ;               border/bg/text/peek/poke/help/
                                 ;               device/devices + the picker)
+.endif
 
 .export _bank_call
 _bank_call:
