@@ -13,9 +13,12 @@
 #                  and `cat` scrolls.
 #   bas    (PRG) - a real tokenized BASIC V2 program (loads at $0801). The
 #                  editor detokenizes it for display, so it needs to be
-#                  genuinely tokenized -- with a string containing a keyword
-#                  ("PRINT") to prove the expander does not tokenize inside
-#                  quotes, and a REM to prove it does outside them.
+#                  genuinely tokenized. It carries the three cases that catch
+#                  a wrong tokenizer: a keyword inside a STRING, a keyword's
+#                  letters inside a REM ("DONE" contains ON), and the same
+#                  inside DATA ("ONE"). BASIC stops tokenizing after REM (to
+#                  end of line) and after DATA (to the next colon), so all
+#                  three must survive as plain text.
 #
 # Requires c1541 (ships with VICE). Run from anywhere; writes next to itself.
 set -e
@@ -69,9 +72,11 @@ def basic(lines, start=0x0801):
     return bytes([start & 0xFF, start >> 8]) + out + b"\x00\x00"
 
 PRINT, REM = b"\x99", b"\x8f"
+DATA = b"\x83"
 open(os.path.join(tmp, "bas.prg"), "wb").write(
     basic([(10, PRINT + b' "HI PRINT"'),
-           (20, REM + b" DONE")]))
+           (20, DATA + b" ONE,TWO"),
+           (30, REM + b" DONE")]))
 PY
 
 c1541 -format "test disk,01" d64 "$here/test.d64" \

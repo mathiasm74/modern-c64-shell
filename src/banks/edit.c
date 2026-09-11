@@ -418,51 +418,6 @@ static unsigned char prompt_name(void)
    yet, so writing the listing back would replace the program with its source. */
 static unsigned char basic_mode;
 
-static char msgbuf[24];
-
-static unsigned char save_file(void)
-{
-    unsigned int i, dl = doclen();
-    unsigned char n;
-
-    /* No tokenizer yet: writing this listing back as text would replace a
-       working program with its own source text, which BASIC cannot run. Refuse
-       rather than destroy the file. */
-    if (basic_mode) {
-        msg("basic: read-only");
-        return 0;
-    }
-    if (fnlen == 0 && !prompt_name())
-        return 0;
-    n = build_iocmd(",s,w", 1);
-    STREG = 0;
-    k_setlfs(8, 2);
-    k_setnam((const char *)iocmd, n);
-    if (k_open()) {
-        msg("open failed");
-        return 0;
-    }
-    if (k_chkout()) {
-        k_close();
-        msg("write failed");
-        return 0;
-    }
-    for (i = 0; i < dl; ++i)
-        k_chrout(chat(i));
-    k_clrchn();
-    k_close();
-    if (STREG & 0x83) {
-        msg("write error");
-        return 0;
-    }
-    modified = 0;
-    msgbuf[0] = 'w'; msgbuf[1] = 'r'; msgbuf[2] = 'o'; msgbuf[3] = 't';
-    msgbuf[4] = 'e'; msgbuf[5] = ' ';
-    print_u16(msgbuf + 6, dl);
-    msg(msgbuf);
-    return 1;
-}
-
 
 /* --- BASIC V2 detokenizer ---------------------------------------------------
  *
@@ -569,6 +524,230 @@ static void detokenize(unsigned char *raw, unsigned int n)
         emit(CR_CH);
     }
 }
+
+/* --- BASIC V2 tokenizer -----------------------------------------------------
+ *
+ * The inverse of detokenize(): turn the edited listing back into a program.
+ * Without this, a loaded program could only be viewed -- writing the listing
+ * back as text would replace it with its own source, which BASIC cannot run.
+ *
+ * Keyword matching is FIRST-MATCH IN TABLE ORDER, which is what BASIC does and
+ * why the table's order matters: "INPUT#" precedes "INPUT" and "PRINT#"
+ * precedes "PRINT", so the longer form wins where one is a prefix of another.
+ * Input is folded to uppercase while comparing, so a listing typed in the
+ * shell's lowercase reads the same as one that came from a real program.
+ *
+ * Inside quotes nothing is tokenized and nothing is folded: a string may
+ * legitimately contain the letters of a keyword, and it may contain control
+ * codes (cursor moves, colour changes) that must survive byte-for-byte.
+ *
+ * Two statements suspend tokenizing the same way BASIC's own CRUNCH does:
+ * after REM to the end of the line, and after DATA to the next colon. Without
+ * that, any keyword's letters appearing inside the text get eaten -- "DONE"
+ * became D,<ON>,E -- which both changes the bytes of a program that merely
+ * round-trips through the editor and breaks what READ returns from a DATA
+ * item.
+ */
+#define TOK_DATA  0x83
+#define TOK_REM   0x8F
+
+/* Match a keyword at document offset i. Returns the token and sets *len to the
+   characters consumed, or 0 if no keyword starts here. */
+static unsigned char match_keyword(unsigned int i, unsigned int dl,
+                                   unsigned char *len)
+{
+    const char *p = basic_kw;
+    unsigned char tok = TOK_FIRST;
+    unsigned char n, c, k;
+
+    for (;;) {
+        n = 0;
+        for (;;) {
+            k = (unsigned char)p[n];
+            c = (i + n < dl) ? (unsigned char)chat(i + n) : 0;
+            if (c >= 'a' && c <= 'z')
+                c -= 32;
+            if ((k & 0x7F) != c) {
+                n = 0xFF;               /* mismatch: try the next keyword */
+                break;
+            }
+            if (k & 0x80) {             /* high bit marks the last character */
+                *len = n + 1;
+                return tok;
+            }
+            ++n;
+        }
+        if (n == 0xFF) {
+            while ((*p++ & 0x80) == 0)  /* skip this entry */
+                ;
+            if (tok == TOK_LAST)
+                return 0;
+            ++tok;
+        }
+    }
+}
+
+/* Tokenize the whole document into dst (at most `room` bytes). Returns the
+   length written, or 0 after reporting why. */
+static unsigned int tokenize(unsigned char *dst, unsigned int room)
+{
+    unsigned int i = 0, dl = doclen(), n = 0;
+    unsigned int line, prev = 0, prevlink = 0xFFFF, addr;
+    unsigned char c, quoted, tok, klen, digits, first = 1, literal;
+
+    while (i < dl) {
+        while (i < dl && ((c = chat(i)) == ' ' || c == CR_CH))
+            ++i;                        /* blank lines and indentation */
+        if (i >= dl)
+            break;
+
+        line = 0;
+        digits = 0;
+        while (i < dl) {
+            c = chat(i);
+            if (c < '0' || c > '9')
+                break;
+            /* line = line*10, as shifts: a 16-bit multiply would pull cc65's
+               mul runtime into this bank for one expression. */
+            line = (line << 3) + (line << 1) + (unsigned int)(c - '0');
+            ++digits;
+            ++i;
+        }
+        if (!digits) {
+            msg("needs line numbers");
+            return 0;
+        }
+        /* BASIC stores lines in ascending order and the link chain assumes it.
+           Refuse rather than write a program that lists wrongly. */
+        if (!first && line <= prev) {
+            msg("lines out of order");
+            return 0;
+        }
+        prev = line;
+        first = 0;
+        if (i < dl && chat(i) == ' ')
+            ++i;                        /* the space after the number */
+
+        if (n + 5 >= room) {
+            msg("too large");
+            return 0;
+        }
+        if (prevlink != 0xFFFF) {       /* previous line links to this one */
+            addr = 0x0801 + n;
+            dst[prevlink] = (unsigned char)(addr & 0xFF);
+            dst[prevlink + 1] = (unsigned char)(addr >> 8);
+        }
+        prevlink = n;
+        dst[n++] = 0;                   /* link, patched when the next starts */
+        dst[n++] = 0;
+        dst[n++] = (unsigned char)(line & 0xFF);
+        dst[n++] = (unsigned char)(line >> 8);
+
+        quoted = 0;
+        literal = 0;                    /* 1 = until ':' (DATA), 2 = to EOL (REM) */
+        while (i < dl && (c = chat(i)) != CR_CH) {
+            if (n + 2 >= room) {
+                msg("too large");
+                return 0;
+            }
+            if (c == '"') {
+                quoted ^= 1;
+            } else if (!quoted && !literal) {
+                tok = match_keyword(i, dl, &klen);
+                if (tok) {
+                    dst[n++] = tok;
+                    i += klen;
+                    if (tok == TOK_REM)
+                        literal = 2;
+                    else if (tok == TOK_DATA)
+                        literal = 1;
+                    continue;
+                }
+            }
+            if (literal == 1 && c == ':')
+                literal = 0;            /* DATA ends at the statement break */
+            dst[n++] = c;
+            ++i;
+        }
+        dst[n++] = 0;                   /* end of line */
+        if (i < dl)
+            ++i;                        /* consume the CR */
+    }
+
+    if (prevlink != 0xFFFF) {           /* last line links to the terminator */
+        addr = 0x0801 + n;
+        dst[prevlink] = (unsigned char)(addr & 0xFF);
+        dst[prevlink + 1] = (unsigned char)(addr >> 8);
+    }
+    if (n + 2 >= room) {
+        msg("too large");
+        return 0;
+    }
+    dst[n++] = 0;                       /* $0000 link: end of program */
+    dst[n++] = 0;
+    return n;
+}
+
+static char msgbuf[24];
+
+static unsigned char save_file(void)
+{
+    unsigned int i, dl = doclen();
+    unsigned char n;
+    unsigned int blen = 0;
+    unsigned char *stage = 0;
+
+    if (fnlen == 0 && !prompt_name())
+        return 0;
+
+    /* A listing goes back out as a PROGRAM, not as its own source text.
+       Tokenize into the gap -- the gap buffer's free middle is exactly the
+       scratch space we need, and chat() never reads it, so the document stays
+       readable while we build. Tokenized output is always smaller than the
+       text it came from, so if the document fits, so does the program. */
+    if (basic_mode) {
+        stage = BUF + gs;
+        blen = tokenize(stage, (unsigned int)(ge - gs));
+        if (blen == 0)
+            return 0;                   /* tokenize() said why */
+    }
+    n = build_iocmd(basic_mode ? ",p,w" : ",s,w", 1);
+    STREG = 0;
+    k_setlfs(8, 2);
+    k_setnam((const char *)iocmd, n);
+    if (k_open()) {
+        msg("open failed");
+        return 0;
+    }
+    if (k_chkout()) {
+        k_close();
+        msg("write failed");
+        return 0;
+    }
+    if (basic_mode) {
+        k_chrout(0x01);                 /* PRG load address $0801 */
+        k_chrout(0x08);
+        for (i = 0; i < blen; ++i)
+            k_chrout(stage[i]);
+        dl = blen + 2;                  /* what the "wrote" message reports */
+    } else {
+        for (i = 0; i < dl; ++i)
+            k_chrout(chat(i));
+    }
+    k_clrchn();
+    k_close();
+    if (STREG & 0x83) {
+        msg("write error");
+        return 0;
+    }
+    modified = 0;
+    msgbuf[0] = 'w'; msgbuf[1] = 'r'; msgbuf[2] = 'o'; msgbuf[3] = 't';
+    msgbuf[4] = 'e'; msgbuf[5] = ' ';
+    print_u16(msgbuf + 6, dl);
+    msg(msgbuf);
+    return 1;
+}
+
 
 static void load_file(void)
 {

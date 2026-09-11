@@ -281,16 +281,58 @@ def test_edit_lists_a_basic_program(v):
     # The keyword inside the quotes must survive as text, not be re-expanded.
     assert '"HI PRINT"' in txt, \
         "the quoted string was altered -- tokens must not expand inside quotes\n%s" % txt
-    assert "20 REM DONE" in txt, \
-        "second line missing (link chain walk stopped early?)\n%s" % txt
+    assert "30 REM DONE" in txt, \
+        "last line missing (link chain walk stopped early?)\n%s" % txt
 
-    # ...and saving is refused while there is no tokenizer
-    _keys(v, [CTRL_O])
-    assert _wait(v, "read-only"), \
-        "editor must refuse to save a detokenized listing\n%s" % v.screen_text()
-
-    # Leave the editor so the next test in this module starts from the prompt.
-    # No discard prompt to answer: the save was refused, so nothing was
-    # modified and ^X exits straight away.
+    # leave the editor so the next test in this module starts from the prompt
     _keys(v, [CTRL_X])
     _wait(v, "8>")
+
+
+def test_edit_basic_roundtrip_is_byte_exact(v):
+    """Load a BASIC program, save it, and check the BYTES came back identical.
+
+    This is the invariant the tokenizer has to hold: tokenize(detokenize(x)) ==
+    x. Checking the listing looks right is not enough -- a program that lists
+    correctly can still be wrong in its link chain or its string bytes, and
+    BASIC would refuse to run it.
+
+    The expected image is built here rather than read from the fixture so the
+    test states what a correct program looks like, byte for byte.
+    """
+    _seed(v)
+    v.run_for(0.3)
+    _keys(v, "edit bas")
+    _keys(v, [CR])
+    assert _wait(v, "10 PRINT"), "listing did not appear\n%s" % v.screen_text()
+
+    _keys(v, [CTRL_O])                  # save: tokenize back to a PRG
+    assert _wait(v, "wrote"), \
+        "save was refused or failed\n%s" % v.screen_text()
+    _keys(v, [CTRL_X])
+    _wait(v, "8>")
+
+    # Read it back with `load` and compare the bytes in memory.
+    seed_disk_bank(v)
+    _keys(v, "load bas")
+    _keys(v, [CR])
+    assert _wait(v, "loaded $"), "could not load back\n%s" % v.screen_text()
+
+    # The three cases a wrong tokenizer gets wrong, as BASIC V2 stores them:
+    # a keyword inside a string, and keyword letters inside DATA and REM
+    # ("ONE"/"DONE" both contain ON), which BASIC does not tokenize.
+    want = []
+    addr = 0x0801
+    for num, body in ((10, bytes([0x99]) + b' "HI PRINT"'),
+                      (20, bytes([0x83]) + b" ONE,TWO"),
+                      (30, bytes([0x8F]) + b" DONE")):
+        chunk = bytes([num & 0xFF, num >> 8]) + body + b"\x00"
+        addr += 2 + len(chunk)
+        want += [addr & 0xFF, addr >> 8] + list(chunk)
+    want += [0, 0]
+
+    got = v.read_memory(0x0801, len(want))
+    assert got == want, \
+        "tokenized bytes differ\n got: %s\nwant: %s" % (
+            " ".join("%02X" % b for b in got),
+            " ".join("%02X" % b for b in want))
