@@ -187,7 +187,11 @@ void disk_fload(void)
     }
     end = epyx_recv_prg();
     if (end == 0) {                     /* fewer than 3 bytes -> failure */
-        puts_bank("fast load failed");
+        /* $03A4: the receiver stopped because the program reached this bank's
+           own RAM. Say so -- "fast load failed" would send the user hunting a
+           bus problem that isn't there. */
+        puts_bank(*(unsigned char *)0x03A4 ? "program too large"
+                                           : "fast load failed");
         k_chrout(CR);
         return;
     }
@@ -288,7 +292,7 @@ static void report_drive_status(void)
    clobber. (When load was resident this could not happen: a big load hit only
    the dir overlay, which self-heals, since overwriting its magic forces a
    re-fetch.) Refuse cleanly at the boundary instead. */
-#define BANK_RAM_FLOOR 0x9D70
+#define BANK_RAM_FLOOR 0x9D00
 
 void disk_load(void)
 {

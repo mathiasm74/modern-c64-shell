@@ -257,6 +257,10 @@ TOTH  = $02AD
 DOTS  = $02AE           ; progress dots printed so far (one per 1024 bytes)
 LADRL = $02AF           ; PRG load address, read back by the C wrapper
 LADRH = $02B0
+BIGFL = $03A4           ; set when the stream ran into the bank's own RAM
+BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
+                        ; The banks share one window, so this is the ceiling for
+                        ; ANY loaded program.
 
 .proc _epyx_recv_prg
         lda #0
@@ -265,6 +269,7 @@ LADRH = $02B0
         sta TOTL
         sta TOTH
         sta TMOFL
+        sta BIGFL
         ; --- load address: the first two data bytes set the destination ------
         jsr next_byte
         bcs @fail
@@ -283,12 +288,24 @@ LADRH = $02B0
         ldy #$00
         sta (DST),y
         inc DST
-        bne :+
+        bne @count
         inc DST+1
-:       inc TOTL
+        ; Crossed into a new page: is it the bank's own RAM? `load` (C, in the
+        ; bank) checks this per byte, but this loop is the fast path, so the
+        ; test rides the page crossing instead -- free on 255 of every 256
+        ; bytes. Without it a large program overwrites the DATA/BSS/C stack of
+        ; the very bank running this code, mid-transfer.
+        lda DST+1
+        cmp #BANKPG
+        bcs @toobig
+@count: inc TOTL
         bne @loop
         inc TOTH
         jmp @loop
+@toobig:
+        lda #1
+        sta BIGFL               ; the caller reports it; this is just failure
+        jmp @fail
 @eof:
         lda TMOFL
         bne @fail                       ; timeout EOF = truncated -> failure

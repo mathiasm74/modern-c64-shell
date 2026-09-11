@@ -13,6 +13,7 @@ separate diagnosis -- the protocol part is in the vendored library.
 """
 
 import os
+import re
 
 _LABELS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "..", "build", "labels.txt")
@@ -139,3 +140,56 @@ def test_back_channel_window_is_free_fill(v):
     assert not bad, \
         "back-channel window has %d non-$FF bytes (first at $%04X) -- " \
         "code/data grew into device-writable ROM" % (len(bad), 0xFE00 + bad[0])
+
+
+# --- the bank RAM ceiling and the loader guards that enforce it -------------
+# A bank's DATA/BSS/C stack are carved out of the program load area, and
+# `load`/`fload` run FROM a bank -- so a program growing into that window
+# overwrites the loader underneath itself, mid-transfer. Two guards stop it:
+# the C `load` compares per byte (BANK_RAM_FLOOR), and the Epyx receiver tests
+# the destination's high byte when it crosses a page (BANKPG), which is free on
+# 255 of every 256 bytes but only EXACT if the window is page-aligned.
+#
+# The realistic way this rots is someone moving the bank's RAM and not moving
+# the guards, so check all three agree. No VICE needed.
+
+_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+
+
+def _read(*parts):
+    with open(os.path.join(_ROOT, *parts)) as f:
+        return f.read()
+
+
+def _bank_ram_start(cfg):
+    m = re.search(r"DATARUN:\s*file\s*=\s*\"\",\s*start\s*=\s*\$([0-9A-Fa-f]{4})",
+                  _read("cfg", cfg))
+    assert m, "no DATARUN line in cfg/%s" % cfg
+    return int(m.group(1), 16)
+
+
+def test_bank_ram_ceiling_and_loader_guards_agree(v):
+    (void) = v                          # static check; no machine needed
+
+    disk = _bank_ram_start("disk_bank.cfg")
+    files = _bank_ram_start("files_bank.cfg")
+    assert disk == files, \
+        "banks must SHARE one RAM window (only one is served at a time): " \
+        "disk $%04X vs files $%04X" % (disk, files)
+
+    assert disk & 0xFF == 0, \
+        "the bank RAM window must be PAGE-ALIGNED ($%04X): the Epyx receiver's " \
+        "guard tests only the destination's high byte" % disk
+
+    m = re.search(r"^BANKPG\s*=\s*\$([0-9A-Fa-f]{2})",
+                  _read("src", "fastload_recv.s"), re.M)
+    assert m, "BANKPG missing from src/fastload_recv.s"
+    assert int(m.group(1), 16) == disk >> 8, \
+        "Epyx receiver guard page $%02X != bank RAM page $%02X -- a fast load " \
+        "would overrun the bank's own stack" % (int(m.group(1), 16), disk >> 8)
+
+    m = re.search(r"#define BANK_RAM_FLOOR\s+0x([0-9A-Fa-f]{4})",
+                  _read("src", "banks", "disk_bank.c"))
+    assert m, "BANK_RAM_FLOOR missing from src/banks/disk_bank.c"
+    assert int(m.group(1), 16) == disk, \
+        "`load` floor $%04X != bank RAM start $%04X" % (int(m.group(1), 16), disk)
