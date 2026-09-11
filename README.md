@@ -28,8 +28,8 @@ There's **no BASIC interpreter** — that's a deliberate trade to reclaim 8 KB o
 
 ## Hardware
 
-- A **Commodore 64** (PAL — see [Status](#status--caveats) for NTSC).
-- A **[OneROM](https://onerom.org/)** flashed with the Tardis DOS firmware, in the C64's ROM sockets.
+- A **Commodore 64** or **128** (PAL — see [Status](#status--caveats) for NTSC).
+- A **[OneROM](https://onerom.org/)** flashed with the Tardis DOS firmware, in the ROM socket.
 - Optional but recommended: a **[Meatloaf](https://github.com/idolpx/meatloaf)** (or any IEC drive) for loading software.
 
 ## Getting it onto your C64
