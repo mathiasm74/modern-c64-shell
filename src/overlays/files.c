@@ -516,12 +516,16 @@ static void do_help(void)
 }
 
 /* device <n> [name] (cmd 16): switch the default IEC unit. default_device and
-   device_name[8][11] STAY resident (read by every disk command + pwd); the
+   device_name[8][DEVNAME_ROW] STAY resident (read by every disk command + pwd); the
    thunk passes their addresses ($02F4 / $02F6) so we update them in place.
    Probe via KERNAL OPEN ("$" on the unit -> ST_NODEV if nothing answers). */
 #define DEVADDR        (*(unsigned char **)0x02F4)   /* &default_device */
 #define DNADDR         (*(char **)0x02F6)            /* &device_name[0][0] */
-#define DEVNAME_STRIDE 11                            /* DEVNAME_MAX(10) + 1 */
+/* MUST match DEVNAME_ROW in src/commands/fs.c, which owns the array. It is a
+   power of two so that the resident side's indexing is a shift instead of a
+   16-bit multiply (which pulled cc65's mul runtime into the 16KB ROM); the
+   stride here has to follow, or the two sides address different rows. */
+#define DEVNAME_STRIDE 16
 
 /* Fetch the drive's identity and derive a short prompt name into slot[].
    "UI" (warm reset, the quick one) re-arms the DOS power-on status whose

@@ -19,7 +19,19 @@
  * bank is served.
  */
 
-void dir_main(void);                    /* src/overlays/dir.c */
+void dir_main(void);                    /* src/banks/dir.c */
+
+/* crt0_disk.s -- the KERNAL entry points, the only screen output a bank has
+   (the shell's own puts_raw/chrout are in the swapped-out BASIC half). */
+void __fastcall__ k_chrout(unsigned char c);
+
+#define CR 0x0D
+
+static void puts_bank(const char *s)
+{
+    while (*s)
+        k_chrout(*s++);
+}
 
 #define MB_CMD  (*(unsigned char *)0x02D0)      /* 0 dir, 1 ls, 2 pwd */
 #define MB_DEV  (*(unsigned char *)0x02D1)
@@ -39,25 +51,36 @@ void disk_pwd(void) { MB_CMD = 2; dir_main(); }
  * bank bytes to save none. The name arrives already uppercase-folded for the
  * same reason (fold_name is resident and shared).
  *
- * Mailbox in the unused tape buffer, clear of cd's $0340 path scratch:
- *   $0370       name length        $0381  status (see FL_* below)
- *   $0371-$0380 name (<=16)        $0382  load_start     $0384  load_end
+ * Mailbox in the unused tape buffer, clear of cd's $0340 path scratch. Shared
+ * by fload and load; the name field is 40 wide because `load` passes the name
+ * as typed (fload's is fold_name'd to <=16):
+ *   $0370       name length        $0399  status (see DM_* below)
+ *   $0371-$0398 name (<=40)        $039A  load_start     $039C  load_end
  */
-#define FL_NLEN  (*(unsigned char *)0x0370)
-#define FL_NAME  ((const char *)0x0371)
-#define FL_STAT  (*(unsigned char *)0x0381)
-#define FL_START (*(unsigned int *)0x0382)
-#define FL_END   (*(unsigned int *)0x0384)
+#define DM_NLEN  (*(unsigned char *)0x0370)
+#define DM_NAME  ((const char *)0x0371)
+#define DM_STAT  (*(unsigned char *)0x0399)
+#define DM_START (*(unsigned int *)0x039A)
+#define DM_END   (*(unsigned int *)0x039C)
 
-#define FL_OK          0
-#define FL_NO_DEVICE   1
-#define FL_UNSUPPORTED 2
-#define FL_FAILED      3
+/* Status handed back to the resident thunk, which owns the reporting -- except
+   DM_REPORTED, where the drive's own error-channel message can only be read
+   here and has already been printed. */
+#define DM_OK          0
+#define DM_NO_DEVICE   1
+#define DM_UNSUPPORTED 2
+#define DM_FAILED      3
+#define DM_REPORTED    4
 
 #define ST_TIMEOUT 0x02
+#define ST_EOI     0x40
 #define ST_NODEV   0x80
 
 void __fastcall__ iec_set_fa(unsigned char dev);
+void __fastcall__ iec_setname(const char *name);
+void iec_open(void);
+void iec_close(void);
+unsigned char iec_getbyte(void);
 void __fastcall__ iec_set_sa(unsigned char sa);
 void iec_chkin(void);
 void iec_clrchn(void);
@@ -72,24 +95,24 @@ void disk_fload(void)
 {
     unsigned int end;
 
-    FL_STAT = FL_FAILED;
+    DM_STAT = DM_FAILED;
 
     fastload_set_device(MB_DEV);
     fastload_epyx_install();
     if (iec_status() & ST_NODEV) {
-        FL_STAT = FL_NO_DEVICE;
+        DM_STAT = DM_NO_DEVICE;
         return;
     }
-    if (fastload_epyx_send_header(FL_NAME, FL_NLEN) != 0) {
+    if (fastload_epyx_send_header(DM_NAME, DM_NLEN) != 0) {
         fastload_epyx_mark_unsupported();
-        FL_STAT = FL_UNSUPPORTED;
+        DM_STAT = DM_UNSUPPORTED;
         return;
     }
     end = epyx_recv_prg();
     if (end == 0)                       /* fewer than 3 bytes -> failure */
         return;
-    FL_START = *(unsigned int *)0x02AF; /* LADRL/LADRH, set by the ASM */
-    FL_END = end;
+    DM_START = *(unsigned int *)0x02AF; /* LADRL/LADRH, set by the ASM */
+    DM_END = end;
 
     /* The Epyx stream can't tell a dead bus from EOF (a yank reads a clean-
        looking truncated EOF), so verify the drive is still on the bus before
@@ -101,5 +124,150 @@ void disk_fload(void)
     if (iec_status() & (ST_NODEV | ST_TIMEOUT))
         return;
 
-    FL_STAT = FL_OK;
+    DM_STAT = DM_OK;
+}
+
+
+/* --- load ------------------------------------------------------------------
+ *
+ * Standard IEC load: per-byte handshaked, so it is bit-perfect. The Epyx fast
+ * path is `fload` above -- its timed 2-bit receiver is only reliable on some
+ * drives/links, and on the user's Meatloaf it jitters bits and scatters
+ * corruption through the file (bogus BASIC line numbers, mangled tokens),
+ * which a per-byte program then trips over. `load` stays the safe, always-
+ * correct default, so `run` builds on a clean program.
+ *
+ * Moved here from src/commands/fs.c with its two private helpers: the progress
+ * dots, and report_drive_status -- which HAS to be here, because reporting the
+ * drive's own reason means reading its error channel, and the failure paths
+ * need it before the resident side regains control. The success message stays
+ * resident (it reuses the shell's print_hex16).
+ */
+static unsigned char prog_dots;
+
+static void progress(unsigned int total)
+{
+    unsigned char want = (unsigned char)(total >> 10);   /* a dot per 1024 bytes */
+
+    while (prog_dots < want) {
+        k_chrout('.');
+        ++prog_dots;
+    }
+}
+
+/* Read the drive's command/error channel (15) and print "<code> <message>" (the
+   ,track,sector tail dropped), so a failed load shows the drive's real reason:
+   a Meatloaf that's offline reports "74 drive not ready" (distinct from a
+   genuinely missing file, "62 file not found"); a 1541 with no disk likewise
+   says "74 drive not ready". Falls back to "read error" if no status comes
+   back (a truly unresponsive drive). */
+static void report_drive_status(void)
+{
+    unsigned char b, field = 0, got = 0, eat_sp = 0;
+
+    iec_set_fa(MB_DEV);
+    iec_set_sa(15);
+    iec_setname("");
+    iec_open();
+    if (!(iec_status() & ST_NODEV)) {
+        iec_chkin();
+        for (;;) {
+            b = iec_getbyte();
+            if (iec_status() & ST_TIMEOUT)
+                break;
+            if (b == ',') {
+                if (++field == 2)   /* stop after code + message */
+                    break;
+                k_chrout(' ');      /* "<code> <message>" */
+                eat_sp = 1;         /* swallow the message's own leading space(s) */
+            } else if (b != CR && b != 0) {
+                if (eat_sp && b == ' ')
+                    continue;
+                eat_sp = 0;
+                k_chrout(b);
+                got = 1;
+            }
+            if (iec_status() & ST_EOI)
+                break;
+        }
+    }
+    iec_close();
+    iec_clrchn();
+    if (!got)
+        puts_bank("read error");
+    k_chrout(CR);
+}
+
+/* The bank's own DATA/BSS/C-stack floor (cfg/disk_bank.cfg). `load` runs FROM
+   the bank, so a program allowed to grow past this would overwrite the live C
+   stack underneath the loader -- a crash mid-transfer rather than a survivable
+   clobber. (When load was resident this could not happen: a big load hit only
+   the dir overlay, which self-heals, since overwriting its magic forces a
+   re-fetch.) Refuse cleanly at the boundary instead. */
+#define BANK_RAM_FLOOR 0x9C00
+
+void disk_load(void)
+{
+    unsigned char lo, hi, bc;
+    unsigned char *p;
+
+    DM_STAT = DM_REPORTED;
+
+    iec_set_fa(MB_DEV);
+    iec_set_sa(0);              /* channel 0: a program load */
+    iec_setname(DM_NAME);
+    iec_open();
+    if (iec_status() & ST_NODEV) {
+        DM_STAT = DM_NO_DEVICE;
+        return;
+    }
+    iec_chkin();
+
+    lo = iec_getbyte();         /* the file's load address */
+    /* An immediate EOI with no timeout means the drive opened the channel but
+       streamed back no data: the file does not exist. (A genuine read fault --
+       no disk, etc. -- sets the timeout bit instead and is reported as "read
+       error" below.) Without this check a missing file reads as load address
+       $0000 and prints a bogus "loaded $0000-$0000". */
+    if ((iec_status() & ST_EOI) && !(iec_status() & ST_TIMEOUT)) {
+        iec_close();
+        iec_clrchn();
+        report_drive_status();          /* the drive's reason (offline vs missing) */
+        return;
+    }
+    hi = iec_getbyte();
+    p = (unsigned char *)(lo | ((unsigned int)hi << 8));
+    DM_START = (unsigned int)p;
+
+    prog_dots = 0;
+    bc = 0;
+    for (;;) {                  /* the last byte arrives with EOI set */
+        if ((unsigned int)p >= BANK_RAM_FLOOR) {
+            iec_close();
+            iec_clrchn();
+            if (prog_dots)
+                k_chrout(CR);
+            puts_bank("program too large");
+            k_chrout(CR);
+            return;             /* DM_STAT is still DM_REPORTED */
+        }
+        *p++ = iec_getbyte();
+        if (iec_status() & ST_EOI)
+            break;
+        if ((++bc & 63) == 0)   /* sample the running total every 64 bytes */
+            progress((unsigned int)p - DM_START);
+    }
+    if (prog_dots)
+        k_chrout(CR);           /* fresh line for the result message */
+
+    iec_close();
+    iec_clrchn();
+
+    if (iec_status() & ST_TIMEOUT) {
+        report_drive_status();      /* the drive's reason (no disk / offline / ...) */
+        return;
+    }
+
+    DM_END = (unsigned int)p;
+    DM_STAT = DM_OK;
 }

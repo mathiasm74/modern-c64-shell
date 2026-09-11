@@ -50,7 +50,13 @@ static unsigned char default_device = 8;
 #define DEV_MIN     8
 #define DEV_MAX     15
 #define DEVNAME_MAX 10
-static char device_name[DEV_MAX - DEV_MIN + 1][DEVNAME_MAX + 1];
+/* Row size is a POWER OF TWO (not DEVNAME_MAX + 1 = 11) so indexing is a shift
+   rather than a 16-bit multiply -- an 11-byte row pulled cc65's mul runtime
+   into the resident ROM. The extra 5 bytes/row of BSS is the cheaper trade.
+   The files overlay walks these rows through the $02F6 pointer, so DEVNAME_ROW
+   is also the stride it must use. */
+#define DEVNAME_ROW 16
+static char device_name[DEV_MAX - DEV_MIN + 1][DEVNAME_ROW];
 
 /* The remembered name for the current default device, or "" (none / out of
    the 8..15 range). */
@@ -79,35 +85,6 @@ void print_device_prefix(void)
         puts_raw(name);
     }
 }
-
-/* --- load progress: a row of dots ------------------------------------------
- * One dot per kilobyte loaded. The caller passes the running byte total; we
- * print dots until the count of printed dots matches (total >> 10), so both
- * load (standard IEC) and fload (Epyx) get the same density regardless of how
- * they chunk the transfer (load by byte, fload by drive block). */
-static unsigned char prog_dots;
-
-static void progress_begin(void)
-{
-    prog_dots = 0;
-}
-
-static void progress(unsigned int total)
-{
-    unsigned char want = (unsigned char)(total >> 10);   /* a dot per 1024 bytes */
-
-    while (prog_dots < want) {
-        chrout('.');
-        ++prog_dots;
-    }
-}
-
-static void progress_end(void)
-{
-    if (prog_dots)
-        chrout(CR);                      /* fresh line for the result message */
-}
-
 
 /* Print an unsigned int in decimal. Done by repeated subtraction of powers of
    ten rather than n/10 % 10: a 16-bit divide would pull cc65's udiv/umod (~96
@@ -166,49 +143,6 @@ static void report_no_device(unsigned char dev)
     chrout(CR);
 }
 
-/* Read the drive's command/error channel (15) and print "<code> <message>" (the
-   ,track,sector tail dropped), so a failed load shows the drive's real reason:
-   a Meatloaf that's offline reports "74 drive not ready" (distinct from a
-   genuinely missing file, "62 file not found"); a 1541 with no disk likewise
-   says "74 drive not ready". Falls back to "read error" if no status comes
-   back (a truly unresponsive drive). */
-static void report_drive_status(void)
-{
-    unsigned char b, field = 0, got = 0, eat_sp = 0;
-
-    iec_set_fa(default_device);
-    iec_set_sa(15);
-    iec_setname("");
-    iec_open();
-    if (!(iec_status() & ST_NODEV)) {
-        iec_chkin();
-        for (;;) {
-            b = iec_getbyte();
-            if (iec_status() & ST_TIMEOUT)
-                break;
-            if (b == ',') {
-                if (++field == 2)   /* stop after code + message */
-                    break;
-                chrout(' ');        /* "<code> <message>" */
-                eat_sp = 1;         /* swallow the message's own leading space(s) */
-            } else if (b != CR && b != 0) {
-                if (eat_sp && b == ' ')
-                    continue;
-                eat_sp = 0;
-                chrout(b);
-                got = 1;
-            }
-            if (iec_status() & ST_EOI)
-                break;
-        }
-    }
-    iec_close();
-    iec_clrchn();
-    if (!got)
-        puts_raw("read error");
-    chrout(CR);
-}
-
 /* (device's bus probe moved into the files overlay -- it uses the KERNAL OPEN
    shim there; see do_device / device_present_ov in src/overlays/files.c.) */
 /* dir / ls / pwd / fload -- the DISK BANK (src/banks/, docs/ROM-EXPANSION.md).
@@ -228,6 +162,18 @@ static void report_no_bank(void)
     puts_raw("disk bank unavailable");
     chrout(CR);
 }
+
+/* Shared disk-bank mailbox in the unused tape buffer, clear of cd's $0340 path
+   scratch. See src/banks/disk_bank.c, which must agree byte for byte. */
+#define DM_NLEN     (*(unsigned char *)0x0370)
+#define DM_NAME     ((unsigned char *)0x0371)
+#define DM_NAME_MAX 40
+#define DM_STAT     (*(unsigned char *)0x0399)
+#define DM_START    (*(unsigned int *)0x039A)
+#define DM_END      (*(unsigned int *)0x039C)
+
+#define DM_OK        0
+#define DM_NO_DEVICE 1
 
 #define DB_CMD  (*(unsigned char *)0x02D0)       /* 0 dir, 1 ls, 2 pwd */
 #define DB_DEV  (*(unsigned char *)0x02D1)
@@ -267,76 +213,50 @@ void cmd_pwd(int argc, char *argv[]) { (void)argc; (void)argv; dir_run(2); }
 #pragma rodata-name (push, "RODATA2")
 static unsigned char fold_name(unsigned char *buf, const char *src);
 
+/* load <name> - read a PRG into memory at the load address stored in its first
+   two bytes, and report the range. The program is not started.
+
+   The body is in the DISK BANK (entry 4) with the rest of the disk cluster.
+   report_drive_status went with it and HAD to: reporting the drive's own reason
+   for a failure means reading its error channel, which the bank must do before
+   handing control back. The success message stays here (it reuses the shell's
+   print_hex16), as does load_start/load_end, which the bank cannot reach. */
 void cmd_load(int argc, char *argv[])
 {
-    unsigned char lo, hi, bc;
-    unsigned char *p;
+    unsigned char n = 0;
 
     if (argc < 2) {
         usage("load <name>");
         return;
     }
+    while (argv[1][n] && n < DM_NAME_MAX) {
+        DM_NAME[n] = argv[1][n];
+        ++n;
+    }
+    DM_NAME[n] = 0;
+    DM_NLEN = n;
+    DB_DEV = default_device;
 
-    /* Standard IEC load: per-byte handshaked, so it is bit-perfect. The Epyx
-       fast path is split out into `fload` -- its timed 2-bit receiver is only
-       reliable on some drives/links, and on the user's Meatloaf it jitters
-       bits and scatters corruption through the file (bogus BASIC line numbers,
-       mangled tokens), which a per-byte program then trips over. `load` stays
-       the safe, always-correct default, so `run` builds on a clean program. */
-
-    iec_set_fa(default_device);
-    iec_set_sa(0);              /* channel 0: a program load */
-    iec_setname(argv[1]);
-    iec_open();
-    if (iec_status() & ST_NODEV) {
+    if (bank_call(4) != 0) {
+        report_no_bank();
+        return;
+    }
+    if (DM_STAT == DM_NO_DEVICE) {
         report_no_device(default_device);
         return;
     }
-    iec_chkin();
+    if (DM_STAT != DM_OK)
+        return;                 /* the bank printed the drive's own reason */
 
-    lo = iec_getbyte();         /* the file's load address */
-    /* An immediate EOI with no timeout means the drive opened the channel but
-       streamed back no data: the file does not exist. (A genuine read fault --
-       no disk, etc. -- sets the timeout bit instead and is reported as "read
-       error" below.) Without this check a missing file reads as load address
-       $0000 and prints a bogus "loaded $0000-$0000". */
-    if ((iec_status() & ST_EOI) && !(iec_status() & ST_TIMEOUT)) {
-        iec_close();
-        iec_clrchn();
-        report_drive_status();          /* the drive's reason (offline vs missing) */
-        return;
-    }
-    hi = iec_getbyte();
-    p = (unsigned char *)(lo | ((unsigned int)hi << 8));
-    load_start = (unsigned int)p;
-
-    progress_begin();
-    bc = 0;
-    for (;;) {                  /* the last byte arrives with EOI set */
-        *p++ = iec_getbyte();
-        if (iec_status() & ST_EOI)
-            break;
-        if ((++bc & 63) == 0)   /* sample the running total every 64 bytes */
-            progress((unsigned int)p - load_start);
-    }
-    progress_end();
-
-    iec_close();
-    iec_clrchn();
-
-    if (iec_status() & ST_TIMEOUT) {
-        report_drive_status();      /* the drive's reason (no disk / offline / ...) */
-        return;
-    }
-
-    load_end = (unsigned int)p;
+    load_start = DM_START;
+    load_end = DM_END;
     if (load_start < 0xCF00 && load_end > 0xCE00)
         TAB_CACHE_OK = 0;               /* the load overwrote the cache page */
 
     puts_raw("loaded $");
     print_hex16(load_start);
     puts_raw("-$");
-    print_hex16((unsigned int)(p - 1));
+    print_hex16(load_end - 1);
     chrout(CR);
 }
 #pragma rodata-name (pop)
@@ -391,22 +311,17 @@ static unsigned char fold_name(unsigned char *buf, const char *src)
    No screen-blanking: the receiver (_epyx_recv_byte) paces each byte around
    VIC-II badlines via the raster, so the display stays visible during the
    load. */
-#define FL_NLEN  (*(unsigned char *)0x0370)
-#define FL_NAME  ((unsigned char *)0x0371)
-#define FL_STAT  (*(unsigned char *)0x0381)
-#define FL_START (*(unsigned int *)0x0382)
-#define FL_END   (*(unsigned int *)0x0384)
 
 static unsigned int fload_program(const char *name)
 {
-    FL_NLEN = fold_name(FL_NAME, name);
+    DM_NLEN = fold_name(DM_NAME, name);
     DB_DEV = default_device;
 
     if (bank_call(3) != 0) {
         report_no_bank();
         return 0;
     }
-    switch (FL_STAT) {
+    switch (DM_STAT) {
     case 0:
         break;
     case 1:
@@ -422,8 +337,8 @@ static unsigned int fload_program(const char *name)
         return 0;
     }
 
-    load_start = FL_START;
-    load_end = FL_END;
+    load_start = DM_START;
+    load_end = DM_END;
     if (load_start < 0xCF00 && load_end > 0xCE00)
         TAB_CACHE_OK = 0;               /* the load overwrote the cache page */
     return load_end - 1;
@@ -521,27 +436,12 @@ void cmd_run(int argc, char *argv[])
    trashes the stack) takes the shell with it -- reset to recover, exactly like
    SYS. The address is decimal by default, hex with a '$' prefix (the peek/poke
    convention), so `sys 54301` matches the number you'd type in BASIC. */
-static unsigned int parse_addr(const char *s)
-{
-    unsigned int v = 0;
-    unsigned char c;
-
-    if (*s == '$') {
-        ++s;
-        while ((c = (unsigned char)*s++) != 0) {
-            v <<= 4;
-            if (c >= '0' && c <= '9')      v |= (unsigned char)(c - '0');
-            else if (c >= 'a' && c <= 'f') v |= (unsigned char)(c - 'a' + 10);
-            else if (c >= 'A' && c <= 'F') v |= (unsigned char)(c - 'A' + 10);
-        }
-    } else {
-        /* v = v*10 + digit, but *10 as (v<<3)+(v<<1) so cc65 doesn't pull in
-           its 16-bit multiply runtime (~190 bytes) just for a number parse. */
-        while ((c = (unsigned char)*s++) >= '0' && c <= '9')
-            v = (v << 3) + (v << 1) + (unsigned char)(c - '0');
-    }
-    return v;
-}
+/* in src/parse_addr.s: decimal by default, hex with a '$' prefix (the C64
+   convention, so `sys 54301` matches the number a BASIC user would type and
+   `sys $d41d` is the same register). Assembly because cc65 compiled the same
+   ~20 lines of C into 251 bytes -- the 16-bit shifts and the x10 -- which made
+   it the largest helper in the resident ROM after the stock-swap glue. */
+extern unsigned int __fastcall__ parse_addr(const char *s);
 
 void cmd_sys(int argc, char *argv[])
 {

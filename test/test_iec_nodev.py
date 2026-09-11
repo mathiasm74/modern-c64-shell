@@ -16,6 +16,8 @@ the empty-bus probe must come back fast with NODEV and release every line.
 
 import os
 
+from lib.overlays import seed_disk_bank   # `load` lives in the disk bank now
+
 VICE_ARGS = ["-drive8type", "0"]
 
 _LABELS = os.path.join(os.path.dirname(__file__), "..", "build", "labels.txt")
@@ -70,6 +72,7 @@ def test_presence_probe_fails_fast_and_releases_lines(v):
 
 
 def test_load_reports_no_device_promptly(v):
+    seed_disk_bank(v)
     # `load` is resident and drives IEC directly (`ls`/`dir` are overlay
     # commands and die at the RBCP fetch on VICE before touching the bus).
     _wait_boot(v)

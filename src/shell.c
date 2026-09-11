@@ -84,8 +84,17 @@ char line[LINEMAX + 1];         /* non-static: complete.s imports _line */
 
 /* Command history: a ring of the last HIST_N submitted (non-empty) lines.
    `hist_next` is where the next one goes; `hist_count` is how many are valid.
-   Up/down arrows in readline browse it. */
-static char hist[HIST_N][LINEMAX + 1];
+   Up/down arrows in readline browse it.
+
+   HIST_ROW is a POWER OF TWO on purpose. Indexing a 2-D array multiplies the
+   row index by the row size, and a non-power-of-two row (this was LINEMAX + 1 =
+   81) makes cc65 emit a 16-bit multiply -- which dragged mul.o + mul8.o, ~127
+   bytes of runtime, into the resident ROM for four call sites here. A power of
+   two is a shift instead, and 64-byte rows also use 136 bytes LESS RAM than 81
+   did. Recalled lines are therefore capped at HIST_ROW - 1 characters, which
+   costs nothing in practice: the NV blob already caps saved entries at 22. */
+#define HIST_ROW 64             /* must stay a power of two -- see above */
+static char hist[HIST_N][HIST_ROW];
 static unsigned char hist_next;
 static unsigned char hist_count;
 
@@ -94,7 +103,7 @@ static void history_add(const char *s)
 {
     unsigned char i = 0;
 
-    while (s[i] && i < LINEMAX) {
+    while (s[i] && i < HIST_ROW - 1) {
         hist[hist_next][i] = s[i];
         ++i;
     }

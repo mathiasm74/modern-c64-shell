@@ -13,6 +13,8 @@ test_keyboard checks the keytab). The stub's execution is hardware-tested.
 
 import os
 
+from lib.overlays import seed_disk_bank   # `load` lives in the disk bank now
+
 VICE_DISK = "data/test.d64"
 
 _LABELS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -43,6 +45,7 @@ def _wait_for(v, needle, tries=8, chunk=0.5):
 
 
 def test_load_completes(v):
+    seed_disk_bank(v)
     v.run_for(0.3)
     _type(v, "load prog")
     assert _wait_for(v, "loaded $"), \
@@ -55,6 +58,7 @@ def test_load_missing_reports_not_found(v):
     "loaded $0000-$0000". It now reports the drive's own error-channel status,
     so a 1541 says "62 FILE NOT FOUND" (a networked Meatloaf that's offline says
     "74 DRIVE NOT READY" instead -- hardware-only)."""
+    seed_disk_bank(v)
     v.run_for(0.3)
     _type(v, "load nosuchfile")
     found = _wait_for(v, "FILE NOT FOUND")

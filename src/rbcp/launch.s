@@ -725,7 +725,7 @@ _font_apply:
 BANK_FLASH_SET = 8              ; loadable ROM set: [kernal | char | disk bank]
 BANK_RAM_SLOT  = 1              ; overlay/stock scratch slot (never served)
 BANK_BASE      = $A000          ; the bank's JMP table
-BANK_MAGIC     = $A00C          ; "dsk1", right after the 4-entry table
+BANK_MAGIC     = $A00F          ; "dsk1", right after the 5-entry table
 BANK_VEC       = $02CC          ; computed call target (page-2 scratch)
 
 .export _bank_call

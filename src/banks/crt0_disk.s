@@ -23,7 +23,7 @@
 .export __STARTUP__ : absolute
 __STARTUP__ = 1
 
-.import _disk_dir, _disk_ls, _disk_pwd, _disk_fload
+.import _disk_dir, _disk_ls, _disk_pwd, _disk_fload, _disk_load
 .import copydata, zerobss
 .import _epyx_gen_descramble
 .importzp sp
@@ -37,7 +37,8 @@ CSTACK_TOP = $A000              ; grows down into $9Fxx RAM
         jmp e_ls                ; $A003  entry 1
         jmp e_pwd               ; $A006  entry 2
         jmp e_fload             ; $A009  entry 3
-        .byte "dsk1"            ; $A00C  identity, checked by bank_call before it
+        jmp e_load              ; $A00C  entry 4
+        .byte "dsk1"            ; $A00F  identity, checked by bank_call before it
                                 ; calls in -- so a mis-numbered flash set or
                                 ; uninitialized RAM reports "unavailable"
                                 ; instead of executing garbage
@@ -53,6 +54,8 @@ e_pwd:  jsr bank_init
 e_fload:
         jsr bank_init
         jmp _disk_fload
+e_load: jsr bank_init
+        jmp _disk_load
 
 ; Per-entry init: point the bank's own C stack at $A000, then bring its RAM
 ; state up from nothing -- clear BSS, copy DATA down from ROM, and rebuild the

@@ -88,3 +88,4 @@ def test_reset_reboots(v):
     _send(v, [CLEAR] + _ch("zq") + [CR])
     v.assert_screen_contains("Command not found: zq")
 
+
