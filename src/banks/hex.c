@@ -39,6 +39,7 @@ unsigned char __fastcall__ svc_scr_display(unsigned char c);
 
 #define SCREEN   ((unsigned char *)0x0400)
 #define CRAM     ((unsigned char *)0xD800)
+#define TEXT_COLOR (*(unsigned char *)0x0286)   /* the shell's current colour */
 #define COLS     40
 #define ROWS     23                     /* screen rows 1..23 hold the dump */
 #define BPR      8                      /* bytes per row */
@@ -129,43 +130,55 @@ static void draw_help(void)
     put_str(SCREEN + 24 * COLS, "^x exit ^o save tab pane  0-9a-f edit");
 }
 
+/* Also single-pass -- it is redrawn on every cursor move (the "at" field), so
+   a clear-then-fill here would blink the title on every keystroke. */
 static void draw_title(void)
 {
     unsigned char *t = SCREEN;
     unsigned char i;
 
-    clear_row(t);
     put_str(t, "hex: ");
     for (i = 0; i < fnlen; ++i)
         t[5 + i] = svc_scr_display(fname[i]);
+    for (i = (unsigned char)(5 + fnlen); i < 23; ++i)
+        t[i] = 0x20;
     put_str(t + 23, "at ");
     put_hex16(t + 26, pos);
+    t[30] = 0x20;
     put_str(t + 31, "of ");
     put_hex16(t + 34, flen);
-    if (modified)
-        t[39] = svc_scr_display('*');
+    t[38] = 0x20;
+    t[39] = modified ? svc_scr_display('*') : 0x20;
 }
 
 /* One dump row: ADDR then BPR bytes in hex, then the same bytes as PETSCII. */
+/* Every cell is written EXACTLY ONCE, with its final value. It used to
+   clear_row() first and then fill, and that transient blank is what the eye
+   catches: the VIC is reading the screen the whole time we write it, so a
+   cleared-then-refilled row flashes. Writing each cell once cannot flash. */
 static void render_row(unsigned char r, unsigned int off)
 {
     unsigned char *row = SCREEN + (r + 1) * COLS;
-    unsigned char i, b;
+    unsigned char i, b, blank;
 
-    clear_row(row);
-    if (off >= flen && off != 0 && flen != 0)
-        return;                         /* past the end: leave it blank */
-    if (off > flen)
+    if (off > flen || (off >= flen && off != 0 && flen != 0)) {
+        clear_row(row);                 /* past the end: blank, one pass */
         return;
-    put_hex16(row, off);
-    for (i = 0; i < BPR; ++i) {
-        if (off + i >= flen)
-            break;
-        b = BUF[off + i];
-        row[5 + i * 3] = svc_scr_display(hexd((unsigned char)(b >> 4)));
-        row[6 + i * 3] = svc_scr_display(hexd(b));
-        row[30 + i] = svc_scr_display(b);
     }
+    put_hex16(row, off);
+    row[4] = 0x20;
+    for (i = 0; i < BPR; ++i) {
+        blank = (unsigned char)(off + i >= flen);
+        b = blank ? 0 : BUF[off + i];
+        row[5 + i * 3] = blank ? 0x20
+                               : svc_scr_display(hexd((unsigned char)(b >> 4)));
+        row[6 + i * 3] = blank ? 0x20 : svc_scr_display(hexd(b));
+        row[7 + i * 3] = 0x20;          /* separator; i = BPR-1 lands on col 28 */
+        row[30 + i] = blank ? 0x20 : svc_scr_display(b);
+    }
+    row[29] = 0x20;
+    row[38] = 0x20;
+    row[39] = 0x20;
 }
 
 /* Column of the cursor cell on its row, per pane. */
@@ -176,6 +189,29 @@ static unsigned char cursor_col(void)
     if (pane)
         return (unsigned char)(30 + i);
     return (unsigned char)(5 + i * 3 + nib);
+}
+
+/* The cell currently drawn in reverse. Remembering it is what lets a cursor
+   move touch TWO cells instead of repainting the screen. */
+static unsigned char cur_r, cur_c, cur_shown;
+
+static void cursor_off(void)
+{
+    if (cur_shown)
+        SCREEN[(cur_r + 1) * COLS + cur_c] &= 0x7F;
+    cur_shown = 0;
+}
+
+static void cursor_on(void)
+{
+    unsigned char r = (unsigned char)((pos - top) / BPR);
+
+    if (r >= ROWS)
+        return;
+    cur_r = r;
+    cur_c = cursor_col();
+    cur_shown = 1;
+    SCREEN[(r + 1) * COLS + cur_c] |= 0x80;
 }
 
 static void render(void)
@@ -190,18 +226,21 @@ static void render(void)
     }
     if (!msg_hold)
         draw_help();
-    /* cursor: the cell drawn in reverse, like the text editor's */
-    r = (unsigned char)((pos - top) / BPR);
-    if (r < ROWS)
-        SCREEN[(r + 1) * COLS + cursor_col()] |= 0x80;
+    cur_shown = 0;                      /* the repaint wiped the reverse bit */
+    cursor_on();
 }
 
 static void fill_color(void)
 {
     unsigned int i;
 
+    /* The shell's CURRENT text colour, not a guess. This used to hardcode $0E
+       (light blue), which read as "the default" but is the bare machine's
+       default, not this shell's -- against the dark-red background Tardis boots
+       with, blue on red is nearly unreadable (hardware-reported). Taking $0286
+       also means `text <n>` now applies to the editor like everywhere else. */
     for (i = 0; i < 1000; ++i)
-        CRAM[i] = 0x0E;                 /* light blue, like the shell's default */
+        CRAM[i] = TEXT_COLOR;
 }
 
 /* Keep the cursor's row on screen. */
@@ -312,7 +351,8 @@ static unsigned char save_file(void)
 
 void hex_main(void)
 {
-    unsigned char c, v, i;
+    unsigned char c, v, i, edited = 0, erow = 0;
+    unsigned int old_top;
     char **argv = BD_ARGV;
 
     flen = 0;
@@ -377,6 +417,8 @@ void hex_main(void)
             render();
             continue;
         }
+        old_top = top;
+        edited = 0;
         if (c == K_LEFT) {
             if (pane == 0 && nib) {
                 nib = 0;
@@ -414,6 +456,8 @@ void hex_main(void)
             else
                 BUF[pos] = (unsigned char)((BUF[pos] & 0xF0) | v);
             modified = 1;
+            edited = 1;
+            erow = (unsigned char)((pos - top) / BPR);
             if (nib == 0) {
                 nib = 1;
             } else {
@@ -427,11 +471,24 @@ void hex_main(void)
                 continue;
             BUF[pos] = c;
             modified = 1;
-            if (pos + 1 < flen)
-                ++pos;
+            edited = 1;
+            erow = (unsigned char)((pos - top) / BPR);
         }
         ensure_visible();
-        render();
+
+        /* A cursor move changes TWO cells (the old reverse cell and the new
+           one) plus the title's "at" field. Repainting all 22 dump rows for
+           that made the whole screen flicker on every keypress -- reported from
+           hardware. Only a SCROLL actually moves the dump, so only a scroll
+           earns a full repaint; an edit redraws the one row it changed. */
+        if (top != old_top) {
+            render();
+        } else {
+            cursor_off();
+            if (edited && erow < ROWS)
+                render_row(erow, top + (unsigned int)erow * BPR);
+            draw_title();
+            cursor_on();
+        }
     }
-    (void)i;
 }

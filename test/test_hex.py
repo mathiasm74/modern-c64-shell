@@ -31,7 +31,7 @@ def _keys(v, codes):
         chunk, codes = codes[:8], codes[8:]
         v.write_memory(0x0277, chunk)
         v.write_byte(0x00C6, len(chunk))
-        for _ in range(30):
+        for _ in range(80):             # ~4s: generous, since it exits early
             v.run_for(0.05)
             if v.read_byte(0x00C6) == 0:
                 break
@@ -45,6 +45,27 @@ def _wait(v, needle, tries=40, chunk=0.15):
     return needle in v.screen_text()
 
 
+def _to_prompt(v):
+    """Get back to the shell, wherever the last test left us.
+
+    These tests share one VICE, and the editor blocks: if a previous test failed
+    mid-edit, or its ^X hit the "discard changes?" prompt, the machine is still
+    IN the editor -- and then this test's command line is typed into the editor
+    instead of the shell, editing the fixture's bytes and failing for a reason
+    that has nothing to do with what it checks. Leaving that to luck is what made
+    this module fail as a block under host load.
+    """
+    for _ in range(3):
+        text = v.screen_text()
+        if "discard" in text:
+            _keys(v, "y")
+        elif text.startswith("hex:"):
+            _keys(v, [CTRL_X])
+        else:
+            return
+        v.run_for(0.3)
+
+
 def _open_hex(v, name):
     """Open a file, from a known-clean screen.
 
@@ -54,12 +75,34 @@ def _open_hex(v, name):
     """
     seed_hex(v)
     v.run_for(0.3)
+    _to_prompt(v)
     _keys(v, "clear")
     _keys(v, [CR])
     v.run_for(0.3)
     _keys(v, "hex " + name)
     _keys(v, [CR])
-    return _wait(v, "hex: " + name)
+    if not _wait(v, "hex: " + name):
+        return False
+    # The title is not enough: render() draws it FIRST and the 22 dump rows
+    # after, so matching the title can return while the dump is still being
+    # painted -- anything the test then writes to the screen gets overwritten as
+    # the paint finishes. The help line is drawn LAST, so it means "done".
+    return _wait(v, "^x exit")
+
+
+def _close_hex(v):
+    """Leave the editor, whatever state it is in.
+
+    ^X on a modified file asks "discard changes? y/n" and BLOCKS until answered,
+    so a teardown that only sends ^X can leave the editor running -- and then the
+    next test types its command line into the editor instead of the shell. That
+    cascaded one real failure into all four other tests in this module.
+    """
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    if "discard" in v.screen_text():
+        _keys(v, "y")
+    _wait(v, "8>")
 
 
 def _dump_row(v, n=0):
@@ -128,3 +171,70 @@ def test_hex_petscii_pane_writes_the_byte(v):
     v.run_for(0.3)
     _keys(v, "y")                       # discard
     _wait(v, "8>")
+
+
+def test_hex_uses_the_shells_text_colour(v):
+    """Not a hardcoded colour.
+
+    fill_color() used to write $0E (light blue) with a comment calling it "the
+    shell's default" -- it is the bare machine's default. Tardis boots on a
+    dark-red background, so the editor came up blue on red and was barely
+    readable (hardware-reported). Set an unmistakable colour first and require
+    the editor to honour it, which also makes `text <n>` apply here.
+    """
+    seed_hex(v)
+    v.run_for(0.3)
+    _to_prompt(v)
+    _keys(v, "clear")
+    _keys(v, [CR])
+    v.run_for(0.3)
+    # Write $0286 directly rather than using `text`: that command lives in the
+    # FILES bank and these tests seed only the hex bank, so it would silently do
+    # nothing. What matters here is that the editor follows $0286 whoever set it.
+    want = 7                            # yellow: neither $0E nor the default
+    v.write_byte(0x0286, want)
+
+    _keys(v, "hex readme")
+    _keys(v, [CR])
+    assert _wait(v, "hex: readme"), "hex did not open\n%s" % v.screen_text()
+
+    # Colour RAM across the dump area must be the shell's colour throughout.
+    cram = v.read_memory(0xD800, 1000)
+    off = [i for i in range(1000) if (cram[i] & 0x0F) != want]
+    assert not off, \
+        "%d of 1000 cells are not the shell's colour %d (first at %d, colour %d)" \
+        % (len(off), want, off[0], cram[off[0]] & 0x0F)
+
+    _close_hex(v)
+
+
+def test_hex_cursor_move_does_not_repaint_the_dump(v):
+    """A cursor move must touch the two cursor cells, not all 22 dump rows.
+
+    Repainting everything on every keypress made the whole screen flicker
+    (hardware-reported): the VIC reads the screen while we write it, so 1000
+    cells of clear-then-fill per keystroke is visible. The direct way to assert
+    the light path: scribble a sentinel into a dump row the cursor is not on,
+    move the cursor WITHOUT scrolling, and require the sentinel to survive. A
+    full repaint would erase it.
+    """
+    assert _open_hex(v, "readme"), "hex did not open\n%s" % v.screen_text()
+
+    # Row 5 of the dump (screen row 6) is far from the cursor, which starts on
+    # dump row 0, and a single cursor-right cannot scroll to it.
+    cell = 0x0400 + 6 * 40 + 20
+    v.write_byte(cell, 0x51)             # a ball glyph: nothing else draws it
+    # TWICE: in the hex pane the first cursor-right steps to the byte's second
+    # nibble, and only the second advances to the next byte. Both take the light
+    # path, since neither scrolls.
+    _keys(v, [K_RIGHT, K_RIGHT])
+    v.run_for(0.3)
+
+    assert v.read_byte(cell) == 0x51, \
+        "the dump was repainted on a cursor move (sentinel gone)"
+
+    # And the move really did happen -- otherwise the test proves nothing.
+    assert "at 0001" in v.screen_rows()[0].lower(), \
+        "the cursor did not move:\n%s" % v.screen_rows()[0]
+
+    _close_hex(v)
