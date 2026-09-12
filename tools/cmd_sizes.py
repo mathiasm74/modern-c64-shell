@@ -16,8 +16,14 @@ attributed to any command. RODATA (usage strings etc.) is not counted -- it's
 a handful of bytes per command on top.
 
 Commands whose body lives in a tardis overlay show as kind=overlay; the size
-then is just the resident thunk (which for `save`/`cd` still does real
-arg-building, hence they're bigger than the other thunks).
+then is just the resident thunk.
+
+Most commands are BANK commands now (docs/ROM-EXPANSION.md): their dispatch row
+names a bank entry instead of a resident function, so they have no resident
+code whatsoever. They are listed separately at the end with what they actually
+cost the 16KB ROM -- the 4-byte table row plus the name string -- because "0
+bytes of code" is the point of that architecture, and a report that silently
+omitted them would overstate what is left to move.
 
 Run `make` first so the .s files exist.
 Usage: tools/cmd_sizes.py [build-dir]   (default: build)
@@ -28,7 +34,10 @@ import subprocess
 import sys
 
 BUILD = sys.argv[1] if len(sys.argv) > 1 else "build"
-MODULES = ["builtins", "mem", "fs", "config"]
+# The command modules that still exist. mem.c and config.c are gone: peek/
+# poke and the colour commands moved into the files BANK, leaving no
+# resident code at all (see the bank listing at the end of the report).
+MODULES = ["builtins", "fs", "overlay"]
 
 # Commands whose real body is in an overlay (resident side is only a thunk).
 OVERLAY_CMDS = {"cat", "less", "cp", "mv", "rm", "save", "status", "cd",
@@ -100,7 +109,14 @@ for mod in MODULES:
 
 nodes = set(size)
 commands = sorted(n for n in nodes if n[1].startswith("cmd_"))
-helpers = [n for n in nodes if not n[1].startswith("cmd_")]
+# Bank-dispatch plumbing serves EVERY bank command, but the only resident
+# command that reaches it is `run` -- so the call-graph walk would charge all of
+# it to `run` and overstate it several-fold. Treat it as infrastructure, like
+# the IEC/screen layers, and report it separately.
+INFRA = {"bank_try", "bank_dispatch", "report_no_bank"}
+
+helpers = [n for n in nodes if not n[1].startswith("cmd_") and n[1] not in INFRA]
+infra = [n for n in nodes if n[1] in INFRA]
 
 
 def reachable(start):
@@ -159,6 +175,12 @@ if shared:
     for b, h, cs in sorted(shared, reverse=True):
         print("  %-22s %5d  <- %s" % (disp(h), b, ", ".join(c[1][4:] for c in cs)))
 
+if infra:
+    print("\n== bank-dispatch plumbing (serves every bank command) ==")
+    for b, h in sorted(((size[n], n) for n in infra), reverse=True):
+        print("  %-22s %5d" % (disp(h), b))
+    print("  %-22s %5d  total" % ("", sum(size[n] for n in infra)))
+
 orphan = [(size[h], h) for h in helpers if not reachers.get(h)]
 if orphan:
     print("\n== helpers not reached from any command "
@@ -178,3 +200,37 @@ if os.path.isdir(ovl_dir):
         for f in bins:
             n = os.path.getsize(os.path.join(ovl_dir, f))
             print("  %-22s %5d  (%d pages)" % (f, n, (n + 255) // 256))
+
+
+# --- bank commands ----------------------------------------------------------
+# A BANK_CMD row names a bank entry rather than a resident function, so these
+# commands contribute NO code to the 16KB ROM -- only their dispatch row (4
+# bytes) and their name string. Read them straight out of the table in shell.c
+# so the list cannot drift from what actually dispatches.
+shell_c = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "src", "shell.c")
+try:
+    src = open(shell_c).read()
+except OSError:
+    src = ""
+bank_rows = re.findall(r'\{\s*"([^"]+)"\s*,\s*BANK_CMD\(\s*(\w+)\s*,\s*(\d+)\s*\)',
+                       src)
+if bank_rows:
+    print("\n== bank commands (no resident code; row + name only) ==")
+    per = []
+    for name, bank, entry in sorted(bank_rows):
+        cost = 4 + len(name) + 1        # table row + NUL-terminated name
+        per.append(cost)
+        print("  %-9s %5d  %s entry %s" % (name, cost, bank.replace("BANK_", "").lower(),
+                                           entry))
+    print("  %-9s %5d  total" % ("", sum(per)))
+
+# Bank images live in their own flash sets, outside the 16K ROM.
+bank_dir = os.path.join(BUILD, "banks")
+if os.path.isdir(bank_dir):
+    bins = sorted(f for f in os.listdir(bank_dir) if f.endswith(".bin"))
+    if bins:
+        print("\n== bank images (outside the 16K ROM; served at $A000) ==")
+        for f in bins:
+            n = os.path.getsize(os.path.join(bank_dir, f))
+            print("  %-22s %5d" % (f, n))
