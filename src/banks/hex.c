@@ -89,6 +89,9 @@ static unsigned char col_data;
                                            lesson from the CTRL-tap completion. */
 #define PAGE     ((unsigned int)ROWS * BPR)
 #define PATMAX   16                     /* longest search pattern */
+#define CTRL_Z   0x1A                   /* undo */
+#define UNDO_N   128                    /* keystrokes of undo (power of two, so
+                                           the ring index is an AND) */
 #define BPR      8                      /* bytes per row */
 #define STREG    (*(unsigned char *)0x90)
 
@@ -138,6 +141,26 @@ static void msg(const char *s);         /* defined below; mark_edited reports
 
 static unsigned char pat[PATMAX];       /* the last search pattern... */
 static unsigned char patlen;            /* ...so a bare RETURN repeats it */
+
+/* UNDO. This editor only ever OVERWRITES a byte -- never inserts, never deletes,
+ * because a hex editor must not change a file's length -- so a record is just
+ * (offset, previous value) and costs three bytes. There is no tree of operations
+ * to model and no length bookkeeping; that is what makes undo cheap enough to
+ * have here at all.
+ *
+ * One record per KEYSTROKE, which in the hex pane means per nibble. That is the
+ * right granularity: a mistyped digit is taken back by one ^Z, which is what the
+ * hand expects, rather than losing the whole byte.
+ *
+ * The ring holds the last UNDO_N and drops the oldest, so it is bounded depth
+ * rather than full history -- lives past the edit map, see edits_init. It does
+ * NOT clear a byte's yellow mark: `modified` and the mark both mean "touched this
+ * session", which stays true, and reconstructing whether a byte is back at its
+ * ON-DISK value would need the file's original bytes kept as well.
+ */
+static unsigned char *uring;            /* UNDO_N * 3: off lo, off hi, old byte */
+static unsigned char uhead;             /* next slot to write */
+static unsigned char ucount;            /* records available to undo */
 
 static unsigned char *edir;             /* chunk -> block, or EDNONE */
 static unsigned char *epool;
@@ -206,13 +229,33 @@ static void edits_init(void)
     track = 0;
     efull = 0;
     eblocks = 0;
-    if (flen == 0 || flen + (EDCHUNKS + EDBLOCKS * EDBLK) > BUFMAX)
-        return;                         /* no room past the document: no map */
+    uhead = 0;
+    ucount = 0;
+    if (flen == 0
+        || flen + (EDCHUNKS + EDBLOCKS * EDBLK + UNDO_N * 3) > BUFMAX)
+        return;                         /* no room past the document: neither */
     edir = BUF + flen;
     epool = edir + EDCHUNKS;
+    uring = epool + EDBLOCKS * EDBLK;
     for (i = 0; i < EDCHUNKS; ++i)
         edir[i] = EDNONE;               /* the pool itself is cleared per block */
     track = 1;
+}
+
+/* Remember a byte's value BEFORE it is overwritten. */
+static void undo_push(unsigned int off, unsigned char old)
+{
+    unsigned char *r;
+
+    if (!track)
+        return;
+    r = uring + (unsigned int)uhead * 3;
+    r[0] = (unsigned char)off;
+    r[1] = (unsigned char)(off >> 8);
+    r[2] = old;
+    uhead = (unsigned char)((uhead + 1) & (UNDO_N - 1));
+    if (ucount < UNDO_N)
+        ++ucount;                       /* full: the oldest is simply dropped */
 }
 
 static void mark_edited(unsigned int off)
@@ -297,7 +340,7 @@ static void draw_help(void)
     clear_row(SCREEN + HELPROW * COLS);
     put_str(SCREEN + HELPROW * COLS, "^x quit ^o save ^ pane ^b/^f page");
     clear_row(SCREEN + MSGROW * COLS);
-    put_str(SCREEN + MSGROW * COLS, "^g goto  ^w find  0-9a-f edit");
+    put_str(SCREEN + MSGROW * COLS, "^g goto ^w find ^z undo 0-9a-f edit");
 }
 
 /* Also single-pass -- it is redrawn on every cursor move (the "at" field), so
@@ -637,6 +680,32 @@ static void do_find(void)
     msg("not found");
 }
 
+/* ^Z: put the last overwritten byte back, and go to it -- being shown WHERE the
+   change was undone matters as much as undoing it. */
+static void do_undo(void)
+{
+    unsigned char *r;
+    unsigned int off;
+
+    if (!track) {
+        msg("undo unavailable: file too large");
+        return;
+    }
+    if (!ucount) {
+        msg("nothing to undo");
+        return;
+    }
+    uhead = (unsigned char)((uhead + UNDO_N - 1) & (UNDO_N - 1));
+    --ucount;
+    r = uring + (unsigned int)uhead * 3;
+    off = r[0] | ((unsigned int)r[1] << 8);
+    BUF[off] = r[2];
+    pos = off;
+    nib = 0;
+    if (pos < top || pos >= top + PAGE)
+        top = (pos / BPR) * BPR;
+}
+
 /* ^B / ^F: a whole window at a time, keeping the cursor on the same screen row
    so the eye does not have to re-find it. */
 static void page_move(unsigned char forward)
@@ -859,6 +928,11 @@ void hex_main(void)
             render();
             continue;
         }
+        if (c == CTRL_Z) {
+            do_undo();
+            render();
+            continue;
+        }
         if (c == TAB || c == K_PANE) {
             /* Switching panes moves the cursor and nothing else: the same byte
                is shown, the same rows, the same title. It used to render() --
@@ -912,6 +986,7 @@ void hex_main(void)
                 continue;
             /* Overwrite the nibble under the cursor, then step on -- a hex
                editor never inserts: the file keeps its length. */
+            undo_push(pos, BUF[pos]);
             if (nib == 0)
                 BUF[pos] = (unsigned char)((BUF[pos] & 0x0F) | (v << 4));
             else
@@ -931,6 +1006,7 @@ void hex_main(void)
             /* PETSCII pane: the key IS the byte. */
             if (pos >= flen)
                 continue;
+            undo_push(pos, BUF[pos]);
             BUF[pos] = c;
             modified = 1;
             mark_edited(pos);

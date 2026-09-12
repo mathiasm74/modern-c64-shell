@@ -870,3 +870,84 @@ def test_hex_exit_prompt_saves_cancels_and_discards(v):
         % v.read_memory(0x0800, 2)[1]
 
     _close_hex(v)
+
+
+CTRL_Z = 0x1A
+
+
+def test_hex_undo_steps_back_through_edits(v):
+    """^Z restores the previous value, one KEYSTROKE at a time.
+
+    Per keystroke, not per byte: in the hex pane a byte takes two nibbles, and a
+    mistyped digit should cost one ^Z, not the whole byte. Records are
+    (offset, previous value) -- the editor only ever overwrites, never inserts or
+    deletes, which is what makes a record three bytes and undo affordable here.
+    """
+    assert _open_hex(v, "readme"), "hex did not open\n%s" % v.screen_text()
+    orig = list(v.read_memory(0x0800, 4))
+
+    # Two full bytes: four nibble keystrokes.
+    _keys(v, "abcd")
+    v.run_for(0.5)
+    assert list(v.read_memory(0x0800, 2)) == [0xAB, 0xCD], \
+        "the edits did not land: %s" % [hex(b) for b in v.read_memory(0x0800, 2)]
+
+    # One ^Z takes back the last NIBBLE: $CD -> $C0 (the low nibble's old value
+    # came from $00, since byte 1 was $20 -> $C0 after the first nibble).
+    _keys(v, [CTRL_Z])
+    v.run_for(0.4)
+    assert v.read_memory(0x0801, 1)[0] == 0xC0, \
+        "one undo should take back one nibble, byte 1 is $%02X" \
+        % v.read_memory(0x0801, 1)[0]
+    assert _at(v) == 1, "undo should move the cursor to the byte it changed"
+
+    # Three more walk all the way back to the file's own bytes.
+    for _ in range(3):
+        _keys(v, [CTRL_Z])
+    v.run_for(0.5)
+    assert list(v.read_memory(0x0800, 2)) == orig[:2], \
+        "undoing every keystroke should restore the original bytes: %s vs %s" \
+        % ([hex(b) for b in v.read_memory(0x0800, 2)], [hex(b) for b in orig[:2]])
+
+    # And an empty ring says so rather than corrupting anything.
+    _keys(v, [CTRL_Z])
+    v.run_for(0.4)
+    assert "nothing to undo" in v.screen_text(), \
+        "an exhausted undo should report it\n%s" % v.screen_text()
+    assert list(v.read_memory(0x0800, 4)) == orig, \
+        "an exhausted undo changed memory: %s" \
+        % [hex(b) for b in v.read_memory(0x0800, 4)]
+
+    _close_hex(v)
+
+
+def test_hex_undo_finds_a_byte_that_scrolled_away(v):
+    """Undo has to bring the view back to the byte it restores.
+
+    Otherwise the change happens off-screen and looks like nothing happened --
+    which is exactly what makes an undo feel broken.
+    """
+    if not _have_big:
+        print("      (skipped: c1541 could not write the tall fixture)")
+        return
+
+    assert _open_hex(v, BIG_NAME), "hex did not open\n%s" % v.screen_text()
+
+    _keys(v, "ff")                      # edit byte 0
+    v.run_for(0.4)
+    _keys(v, [CTRL_F])                  # page away from it
+    v.run_for(0.4)
+    assert _top(v) != 0, "^f did not page away"
+
+    _keys(v, [CTRL_Z])
+    v.run_for(0.4)
+    assert _top(v) == 0, \
+        "undo should bring the view back to the restored byte, top is $%04X" \
+        % _top(v)
+    assert _at(v) == 0, "the cursor should be on the restored byte, at $%04X" % _at(v)
+    # byte 0 was $00; 'f' made it $F0, the second 'f' made it $FF. One undo takes
+    # back the second keystroke, so $F0 -- not $0F.
+    assert v.read_memory(0x0800, 1)[0] == 0xF0, \
+        "one undo should restore $F0, got $%02X" % v.read_memory(0x0800, 1)[0]
+
+    _close_hex(v)
