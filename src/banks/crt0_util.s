@@ -19,11 +19,13 @@
 
 .import _tab_complete
 .import about_main
+.import kbdiag_main
 
 .segment "ENTRY"
         .byte "bnk", 1          ; $A000  identity: a bank, and WHICH bank
         jmp _tab_complete       ; $A004  entry 0: complete the word at the cursor
         jmp about_main          ; $A007  entry 1: the `about` text
+        jmp kbdiag_main         ; $A00A  entry 2: the live keyboard matrix
 
 ; `about` rides in THIS bank rather than one of its own: it is self-contained
 ; assembly needing no cc65 runtime, exactly like the completion matcher, and

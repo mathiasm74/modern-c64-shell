@@ -68,6 +68,7 @@ const struct command shell_commands[] = {
     { "cd",     BANK_CMD(BANK_FILES, 6) },
     { "clear",  cmd_clear  },
     { "cp",     BANK_CMD(BANK_FILES, 2) },
+    { "debug",  BANK_CMD(BANK_UTIL, 2) },
     { "dev",    BANK_CMD(BANK_FILES, 13) },
     { "device", BANK_CMD(BANK_FILES, 13) },
     { "devices", BANK_CMD(BANK_FILES, 14) },

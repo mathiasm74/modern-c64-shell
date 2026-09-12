@@ -206,8 +206,9 @@ $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_ban
 # Separate from the disk bank because it needs no cc65 runtime at all, so it
 # costs nothing out of the program load area (cfg/util_bank.cfg).
 $(BUILD)/banks/util_bank.bin: $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
-                              $(BUILD)/banks/about.o cfg/util_bank.cfg
+                              $(BUILD)/banks/about.o $(BUILD)/banks/kbdiag.o cfg/util_bank.cfg
 	$(LD) -C cfg/util_bank.cfg -o $@ $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
+	      $(BUILD)/banks/kbdiag.o \
 	      $(BUILD)/banks/about.o \
 	      -Ln $(BUILD)/banks/util_bank.labels -m $(BUILD)/banks/util_bank.map
 	@echo "  util_bank.bin : $$(wc -c < $@) bytes"
