@@ -15,7 +15,6 @@
  */
 
 void files_main(void);                  /* src/banks/files.c */
-void picker_main(void);                 /* src/banks/picker.c */
 void __fastcall__ k_chrout(unsigned char c);
 
 #define CR 0x0D
@@ -23,7 +22,7 @@ void __fastcall__ k_chrout(unsigned char c);
 /* Mailbox accessors -- absolute addresses (a base-pointer macro lets cc65
    reuse a loop-clobbered pointer register, mislanding a store/load). */
 #define MB_CMD  (*(unsigned char *)0x02D0)
-#define MB_DEV  (*(unsigned char *)0x02D1)      /* also the picker's "which" */
+#define MB_DEV  (*(unsigned char *)0x02D1)
 #define A1L     (*(unsigned char *)0x02D2)
 #define A1      ((unsigned char *)0x02D3)       /* 16 chars */
 #define A2L     (*(unsigned char *)0x02E3)
@@ -107,24 +106,10 @@ void fb_devices(void){ run_bare(18); }
    main() calls this through the bank like any other entry. */
 void fb_identify(void) { run_bare(17); }
 
-/* border / bg / text. With NO value they open the interactive colour picker,
-   which is why picker.c is in this bank: a bank cannot fetch a RAM overlay,
-   since the fetch machinery is resident BASIC-half code and is swapped out
-   while we run. `which` (0/1/2) goes in $02D1, which the picker reads -- it
-   does not need the device the resident side left there. */
-static void colour(unsigned char which)
-{
-    if (BD_ARGC < 2) {
-        MB_DEV = which;
-        picker_main();
-        return;
-    }
-    run_args(8 + which);
-}
-
-void fb_border(void) { colour(0); }
-void fb_bg(void)     { colour(1); }
-void fb_text(void)   { colour(2); }
+/* border / bg / text moved to the UTIL BANK, with the colour picker they open.
+   A bank cannot call another bank -- the switch pulls the caller's code out from
+   under the CPU -- so the picker must live in the same image as the commands
+   that open it, and all four went together when this bank reached 97%. */
 
 /* cd <path> -- prebuild the whole drive command into the 40-byte scratch at
  * $0340 and pass only its length, because a path can exceed the 16-char

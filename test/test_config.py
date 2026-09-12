@@ -6,7 +6,7 @@ cost overlay flash, not the 16KB ROM -- so the tests seed that overlay first.
 No disk needed (these never touch the drive).
 """
 
-from lib.overlays import seed_files, seed_picker
+from lib.overlays import seed_files, seed_picker, seed_util_bank
 
 CR = 0x0D
 
@@ -16,7 +16,8 @@ def _ch(s):
 
 
 def _run(v, text):
-    seed_files(v)
+    # border/bg/text live in the UTIL bank now, with the picker they open.
+    seed_util_bank(v)
     v.write_memory(0x0277, _ch(text) + [CR])
     v.write_byte(0x00C6, len(text) + 1)
     v.run_for(0.4)

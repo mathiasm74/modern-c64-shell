@@ -467,9 +467,9 @@ void cmd_font(int argc, char *argv[])
 #define FB_A2L (*(unsigned char *)0x02E3)
 #define FB_A2  ((unsigned char *)0x02E4)        /* 16 chars */
 
-/* Identify the default device quietly at boot (files bank entry 15): prints
+/* Identify the default device quietly at boot (files bank entry 12): prints
    nothing, swallows a failed bank call, and runs the bus in probe mode. */
 void identify_boot_device(void)
 {
-    bank_try((BANK_FILES << 5) | 15, 0, (char **)0);
+    bank_try((BANK_FILES << 5) | 12, 0, (char **)0);
 }

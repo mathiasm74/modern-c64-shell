@@ -349,40 +349,8 @@ static void cd_path(void)
     command_channel((const char *)0x0340, A1L, "cd: ", 0);
 }
 
-/* ---- border / bg / text / prompt: appearance settings (cmd 8-11) --------- */
-#define VIC_BORDER (*(unsigned char *)0xD020)
-#define VIC_BG     (*(unsigned char *)0xD021)
-#define COLOR_REG  (*(unsigned char *)0x0286)   /* KERNAL text color */
-
-/* parse A1 as a small decimal value (0-15 after the caller masks). */
-static unsigned char parse_dec(void)
-{
-    unsigned char v = 0, i;
-    char c;
-
-    for (i = 0; i < A1L; ++i) {
-        c = A1[i];
-        if (c < '0' || c > '9')
-            break;
-        v = v * 10 + (c - '0');
-    }
-    return v;
-}
-
-/* which: 0 border ($D020), 1 background ($D021), 2 text color ($0286). The
-   no-value case (interactive color picker) is handled resident in config.c, so
-   the overlay only ever gets a value here. */
-static void set_color(unsigned char which)
-{
-    unsigned char val = parse_dec() & 0x0F;
-
-    if (which == 0)
-        VIC_BORDER = val;
-    else if (which == 1)
-        VIC_BG = val;
-    else
-        COLOR_REG = val;
-}
+/* border / bg / text (cmds 8-10) moved to the UTIL BANK with their picker --
+   see src/banks/colour.c for why they had to travel together. */
 
 
 /* ---- peek / poke / help: resident commands moved here (cmd 12,13,15) ------ */
@@ -734,8 +702,6 @@ void files_main(void)
         status_read();
     else if (cmd == 7)
         cd_path();
-    else if (cmd == 8 || cmd == 9 || cmd == 10)
-        set_color(cmd - 8);             /* border / bg / text */
     else if (cmd == 12)
         do_peek();
     else if (cmd == 13)

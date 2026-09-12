@@ -20,12 +20,20 @@
 .import _tab_complete
 .import about_main
 .import kbdiag_main
+.import _ub_border, _ub_bg, _ub_text
+.import copydata, zerobss
+.importzp sp
+
+CSTACK_TOP = $A000              ; grows down into $9Exx/$9Fxx RAM
 
 .segment "ENTRY"
         .byte "bnk", 1          ; $A000  identity: a bank, and WHICH bank
         jmp _tab_complete       ; $A004  entry 0: complete the word at the cursor
         jmp about_main          ; $A007  entry 1: the `about` text
         jmp kbdiag_main         ; $A00A  entry 2: the live keyboard matrix
+        jmp e_border            ; $A00D  entry 3: border colour (value or picker)
+        jmp e_bg                ; $A010  entry 4: background colour
+        jmp e_text              ; $A013  entry 5: text colour
 
 ; `about` rides in THIS bank rather than one of its own: it is self-contained
 ; assembly needing no cc65 runtime, exactly like the completion matcher, and
@@ -33,6 +41,29 @@
 ; here retired that whole mechanism.
 
 .segment "CODE"
+
+; --- the C entries ----------------------------------------------------------
+; Only these go through bank_init. Entries 0-2 are self-contained assembly and
+; jump straight in from the table above, which matters for entry 0: it is tab
+; completion, on the TAB keystroke path, and it should not pay for a runtime it
+; does not use.
+e_border:   jsr bank_init
+            jmp _ub_border
+e_bg:       jsr bank_init
+            jmp _ub_bg
+e_text:     jsr bank_init
+            jmp _ub_text
+
+; Per-entry init: point the bank's C stack at the top of its RAM window, clear
+; BSS and copy DATA down from ROM. On EVERY entry, because the shell, a loaded
+; program or another bank may have used that RAM in between -- banks share it.
+bank_init:
+        lda #<CSTACK_TOP
+        sta sp
+        lda #>CSTACK_TOP
+        sta sp+1
+        jsr zerobss
+        jmp copydata            ; tail call; copydata RTSes to our caller
 
 ; --- _print_prompt ----------------------------------------------------------
 ; complete.s reprints the prompt after listing candidates, and in the resident
@@ -93,3 +124,9 @@ _print_prompt:
         jsr CHROUT
         lda #' '
         jmp CHROUT
+
+; --- KERNAL entry shims -----------------------------------------------------
+; picker.c reaches the machine through the fixed KERNAL entry points, the same
+; way every other bank does. The assembly entries here call CHROUT directly and
+; do not need these; they arrived with the colour cluster.
+.include "kernal_shims.inc"

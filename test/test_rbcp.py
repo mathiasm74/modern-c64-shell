@@ -15,8 +15,8 @@ separate diagnosis -- the protocol part is in the vendored library.
 import os
 import re
 
-_LABELS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "..", "build", "labels.txt")
+_BUILD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build")
+_LABELS = os.path.join(_BUILD, "labels.txt")
 
 
 def _labels():
@@ -240,3 +240,65 @@ def test_bank_flash_sets_have_the_right_chip_layout(v):
         assert files[0] != files[2], \
             "slot %d serves the same image as KERNAL and bank -- this is the " \
             "overlay-set shape (one image on all chips), not a bank set" % i
+
+
+def test_bank_entry_indices_match_the_entry_tables(v):
+    """The entry NUMBER a caller uses must reach the function it names.
+
+    An entry index is encoded in two unrelated places: the order of the JMPs in
+    the bank's crt0 ENTRY table, and the literal in shell.c's dispatch row (or in
+    fs.c, for the boot-time identify). Nothing ties them together, so removing an
+    entry silently shifts every later one -- which is exactly what happened when
+    border/bg/text left the files bank for the util bank and everything after
+    them renumbered.
+
+    Most of those commands have tests that would notice. `identify` does not: it
+    runs once at boot, prints nothing by design and swallows a failed bank call,
+    so a wrong index there is invisible. Check the table directly instead: follow
+    entry N's JMP in the built image and require it to land on the intended
+    function (via the bank's own label file, or its bank_init trampoline).
+    """
+    (void) = v
+
+    def entry_target(bank, n):
+        img = open(os.path.join(_BUILD, "banks", bank + "_bank.bin"), "rb").read()
+        at = 4 + 3 * n                      # $A000 "bnk" + id, then the JMPs
+        assert img[at] == 0x4C, \
+            "%s entry %d is not a JMP (got $%02X)" % (bank, n, img[at])
+        return img[at + 1] | (img[at + 2] << 8)
+
+    def label(bank, name):
+        path = os.path.join(_BUILD, "banks", bank + "_bank.labels")
+        with open(path) as f:
+            for line in f:
+                p = line.split()
+                if len(p) >= 3 and p[2] == "." + name:
+                    return int(p[1], 16) & 0xFFFF
+        raise AssertionError("%s not in %s" % (name, path))
+
+    # Each entry goes through a bank_init trampoline, so follow that one hop: the
+    # trampoline is `jsr bank_init / jmp _target`, and the jmp is at +3.
+    def through_init(bank, n):
+        img = open(os.path.join(_BUILD, "banks", bank + "_bank.bin"), "rb").read()
+        tramp = entry_target(bank, n) - 0xA000
+        assert img[tramp] == 0x20, "entry %d of %s does not jsr bank_init" % (n, bank)
+        assert img[tramp + 3] == 0x4C, "no jmp after bank_init in %s entry %d" % (bank, n)
+        return img[tramp + 4] | (img[tramp + 5] << 8)
+
+    # identify_boot_device's index is READ FROM fs.c, not assumed. Checking the
+    # image against itself would be circular: it would confirm that entry 12 is
+    # identify while the caller happily asked for 15. The literal in the source is
+    # the half that rots, so that is the half to read.
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "src", "commands", "fs.c")).read()
+    m = re.search(r"bank_try\(\(BANK_FILES\s*<<\s*5\)\s*\|\s*(\d+)", src)
+    assert m, "identify_boot_device's bank_try call is gone or reshaped"
+    n = int(m.group(1))
+    assert through_init("files", n) == label("files", "_fb_identify"), \
+        "fs.c asks for files entry %d, which is not _fb_identify -- it and the " \
+        "ENTRY table in crt0_files_bank.s have drifted apart" % n
+
+    # shell.c routes border/bg/text to util entries 3/4/5.
+    for n, name in ((3, "_ub_border"), (4, "_ub_bg"), (5, "_ub_text")):
+        assert through_init("util", n) == label("util", name), \
+            "util entry %d does not reach %s" % (n, name)

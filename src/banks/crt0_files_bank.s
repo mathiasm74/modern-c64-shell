@@ -31,15 +31,18 @@ CSTACK_TOP = $A000              ; grows down into $9Exx/$9Fxx RAM
         jmp e_rm                ; $A010  entry 4
         jmp e_status            ; $A013  entry 5
         jmp e_cd                ; $A016  entry 6
-        jmp e_border            ; $A019  entry 7
-        jmp e_bg                ; $A01C  entry 8
-        jmp e_text              ; $A01F  entry 9
-        jmp e_peek              ; $A022  entry 10
-        jmp e_poke              ; $A025  entry 11
-        jmp e_help              ; $A028  entry 12
-        jmp e_device            ; $A02B  entry 13
-        jmp e_devices           ; $A02E  entry 14
-        jmp e_identify          ; $A031  entry 15 (boot-time, not a command)
+        ; border/bg/text were entries 7-9. They moved to the UTIL BANK along
+        ; with the colour picker they open -- a bank cannot call another bank, so
+        ; the picker has to live in the same image as the commands that open it,
+        ; and this bank was at 97% while that one was at 29%. Everything after
+        ; them renumbered; shell.c's dispatch rows and fs.c's identify index are
+        ; the two places that encode these numbers.
+        jmp e_peek              ; $A019  entry 7
+        jmp e_poke              ; $A01C  entry 8
+        jmp e_help              ; $A01F  entry 9
+        jmp e_device            ; $A022  entry 10
+        jmp e_devices           ; $A025  entry 11
+        jmp e_identify          ; $A028  entry 12 (boot-time, not a command)
 
 .segment "CODE"
 
@@ -57,12 +60,6 @@ e_status:   jsr bank_init
             jmp _fb_status
 e_cd:       jsr bank_init
             jmp _fb_cd
-e_border:   jsr bank_init
-            jmp _fb_border
-e_bg:       jsr bank_init
-            jmp _fb_bg
-e_text:     jsr bank_init
-            jmp _fb_text
 e_peek:     jsr bank_init
             jmp _fb_peek
 e_poke:     jsr bank_init

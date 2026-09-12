@@ -206,14 +206,27 @@ $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_ban
 # Separate from the disk bank because it needs no cc65 runtime at all, so it
 # costs nothing out of the program load area (cfg/util_bank.cfg).
 $(BUILD)/banks/util_bank.bin: $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
-                              $(BUILD)/banks/about.o $(BUILD)/banks/kbdiag.o cfg/util_bank.cfg
+                              $(BUILD)/banks/about.o $(BUILD)/banks/kbdiag.o \
+                              $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
+                              cfg/util_bank.cfg
 	$(LD) -C cfg/util_bank.cfg -o $@ $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
 	      $(BUILD)/banks/kbdiag.o \
 	      $(BUILD)/banks/about.o \
-	      -Ln $(BUILD)/banks/util_bank.labels -m $(BUILD)/banks/util_bank.map
+	      $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
+	      $(RTLIB) -Ln $(BUILD)/banks/util_bank.labels -m $(BUILD)/banks/util_bank.map
 	@echo "  util_bank.bin : $$(wc -c < $@) bytes"
 
-# The FILES BANK: the file/config/memory commands plus the colour picker, which
+$(BUILD)/banks/ub_%.s: src/banks/%.c | $(BUILD)
+	@mkdir -p $(BUILD)/banks
+	$(CC) $(CC65FLAGS) -o $@ $<
+$(BUILD)/banks/ub_%.o: $(BUILD)/banks/ub_%.s
+	$(AS) $(ASFLAGS) -o $@ $<
+
+# The FILES BANK: the file/config/memory commands. The colour picker used to ride
+# here too (border/bg/text with no value open it, and a bank cannot call another
+# bank, so it had to sit with them) -- it moved to the util bank WITH those three
+# commands when this one reached 97%.
+#
 # has to ride along because border/bg/text with no value open it and a bank
 # cannot fetch a RAM overlay. Retires the two biggest RAM overlays.
 $(BUILD)/banks/fb_%.s: src/banks/%.c | $(BUILD)
@@ -223,7 +236,7 @@ $(BUILD)/banks/fb_%.o: $(BUILD)/banks/fb_%.s
 	$(AS) $(ASFLAGS) -D BANK_BUILD=1 -o $@ $<
 
 FILES_BANK_OBJ := $(BUILD)/banks/crt0_files_bank.o $(BUILD)/banks/fb_files_entry.o \
-                  $(BUILD)/banks/fb_files.o $(BUILD)/banks/fb_picker.o
+                  $(BUILD)/banks/fb_files.o
 
 HEX_BANK_OBJ := $(BUILD)/banks/crt0_hex.o $(BUILD)/banks/fb_hex.o
 

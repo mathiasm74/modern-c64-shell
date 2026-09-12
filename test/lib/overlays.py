@@ -32,8 +32,9 @@ def _seed(v, name, addr):
 def seed_files(v):
     """files bank -> the RAM under the $A000 ROM.
 
-    cat/less/cp/mv/rm/cd/status/border/bg/text/peek/poke/help/device/devices,
-    plus the colour picker. It was a RAM overlay at $8800; it is a BANK now
+    cat/less/cp/mv/rm/cd/status/peek/poke/help/device/devices. (border/bg/text
+    and the colour picker left for the util bank.) It was a RAM overlay at $8800;
+    it is a BANK now
     (docs/ROM-EXPANSION.md), so it seeds like the other banks. Kept under the
     old name because callers only care that the code behind those commands is
     present.
@@ -97,5 +98,10 @@ def seed_edit(v):
 
 
 def seed_picker(v):
-    """The picker rides inside the files bank now -- same image."""
-    seed_files(v)
+    """The picker -- and border/bg/text with it -- rides in the UTIL bank now.
+
+    It moved out of the files bank when that reached 97%. All four had to travel
+    together: a bank cannot call another bank, so the picker must live in the
+    same image as the commands that open it.
+    """
+    seed_util_bank(v)
