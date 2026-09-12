@@ -133,8 +133,11 @@ ROM16K := $(BUILD)/rom16k.bin
 
 all: $(ROM16K)
 
-# Per-command ROM code-size report (body + call-graph-attributed helpers).
-sizes: all
+# Per-command ROM code-size report (body + call-graph-attributed helpers), plus
+# how full each bank is. Depends on the banks so the maps it reads are current.
+# (`banks`, not $(BANK_BINS): that variable is defined further down, so as a
+# prerequisite here it would expand to nothing and the maps would be stale.)
+sizes: all banks
 	@python3 tools/cmd_sizes.py $(BUILD)
 
 $(BUILD):
@@ -236,7 +239,7 @@ $(BUILD)/banks/bk_fastload.o $(BUILD)/banks/bk_dir.o: %.o: %.s
 $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o \
                               $(BANK_SHARED_OBJ) cfg/disk_bank.cfg
 	$(LD) -C cfg/disk_bank.cfg -o $@ $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o \
-	      $(BANK_SHARED_OBJ) $(RTLIB) -Ln $(BUILD)/banks/disk_bank.labels
+	      $(BANK_SHARED_OBJ) $(RTLIB) -Ln $(BUILD)/banks/disk_bank.labels -m $(BUILD)/banks/disk_bank.map
 	@echo "  disk_bank.bin : $$(wc -c < $@) bytes"
 
 # The UTIL BANK: tab completion (src/complete.s), assembled into its own image.
@@ -245,7 +248,7 @@ $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_ban
 $(BUILD)/banks/util_bank.bin: $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
                               cfg/util_bank.cfg
 	$(LD) -C cfg/util_bank.cfg -o $@ $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
-	      -Ln $(BUILD)/banks/util_bank.labels
+	      -Ln $(BUILD)/banks/util_bank.labels -m $(BUILD)/banks/util_bank.map
 	@echo "  util_bank.bin : $$(wc -c < $@) bytes"
 
 # The FILES BANK: the file/config/memory commands plus the colour picker, which
@@ -264,12 +267,12 @@ EDIT_BANK_OBJ := $(BUILD)/banks/crt0_edit.o $(BUILD)/banks/fb_edit.o
 
 $(BUILD)/banks/edit_bank.bin: $(EDIT_BANK_OBJ) cfg/edit_bank.cfg
 	$(LD) -C cfg/edit_bank.cfg -o $@ $(EDIT_BANK_OBJ) $(RTLIB) \
-	      -Ln $(BUILD)/banks/edit_bank.labels
+	      -Ln $(BUILD)/banks/edit_bank.labels -m $(BUILD)/banks/edit_bank.map
 	@echo "  edit_bank.bin : $$(wc -c < $@) bytes"
 
 $(BUILD)/banks/files_bank.bin: $(FILES_BANK_OBJ) cfg/files_bank.cfg
 	$(LD) -C cfg/files_bank.cfg -o $@ $(FILES_BANK_OBJ) $(RTLIB) \
-	      -Ln $(BUILD)/banks/files_bank.labels
+	      -Ln $(BUILD)/banks/files_bank.labels -m $(BUILD)/banks/files_bank.map
 	@echo "  files_bank.bin: $$(wc -c < $@) bytes"
 
 BANK_BINS := $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin \

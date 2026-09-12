@@ -225,12 +225,59 @@ if bank_rows:
                                            entry))
     print("  %-9s %5d  total" % ("", sum(per)))
 
-# Bank images live in their own flash sets, outside the 16K ROM.
+# --- how full each bank is --------------------------------------------------
+# The .bin is always 8192 (it is $FF-padded to fill the served window), so the
+# file size says nothing. Read the link map instead.
+#
+# Two budgets matter, and they are not the same:
+#   ROM  -- the $A000-$BFFF window, 8KB, private to each bank.
+#   RAM  -- DATA+BSS+C stack, which every bank SHARES ($9D00-$9FFF) and which
+#           is carved out of the program load area. So the ROM column is per
+#           bank, but the RAM column is a claim on one common budget: the
+#           largest bank sets the floor, and with it the biggest program the
+#           machine can load.
+BANK_WINDOW = 0x2000                    # $A000-$BFFF
+BANK_RAM_TOP = 0xA000                   # the C stack grows down from here
+ROM_SEGS = ("ENTRY", "CODE", "RODATA", "CODE2", "RODATA2", "DATA")
+RAM_SEGS = ("BSS",)
+
+def read_map(path):
+    """Segment name -> (start, size) from an ld65 map file."""
+    segs = {}
+    inlist = False
+    for line in open(path, errors="ignore"):
+        if line.startswith("Segment list:"):
+            inlist = True
+            continue
+        if inlist:
+            if line.startswith("Exports list:") or line.startswith("Modules list:"):
+                break
+            m = re.match(r"^(\w+)\s+([0-9A-Fa-f]{6})\s+([0-9A-Fa-f]{6})\s+([0-9A-Fa-f]{6})", line)
+            if m:
+                segs[m.group(1)] = (int(m.group(2), 16), int(m.group(4), 16))
+    return segs
+
 bank_dir = os.path.join(BUILD, "banks")
-if os.path.isdir(bank_dir):
-    bins = sorted(f for f in os.listdir(bank_dir) if f.endswith(".bin"))
-    if bins:
-        print("\n== bank images (outside the 16K ROM; served at $A000) ==")
-        for f in bins:
-            n = os.path.getsize(os.path.join(bank_dir, f))
-            print("  %-22s %5d" % (f, n))
+maps = sorted(f for f in os.listdir(bank_dir) if f.endswith(".map")) \
+       if os.path.isdir(bank_dir) else []
+if maps:
+    print("\n== bank fullness (each served into the same 8KB $A000 window) ==")
+    print("  %-12s %11s %6s   %s" % ("bank", "ROM used", "free", "bar"))
+    ram_hi = 0
+    for f in maps:
+        segs = read_map(os.path.join(bank_dir, f))
+        rom = sum(sz for n, (_st, sz) in segs.items() if n in ROM_SEGS)
+        free = BANK_WINDOW - rom
+        pct = rom * 100 // BANK_WINDOW
+        bar = "#" * (pct * 24 // 100)
+        print("  %-12s %5d/%4d %6d   %-24s %d%%"
+              % (f[:-4], rom, BANK_WINDOW, free, bar, pct))
+        for n in RAM_SEGS:
+            if n in segs:
+                st, sz = segs[n]
+                ram_hi = max(ram_hi, st + sz)
+    if ram_hi:
+        print("\n  shared bank RAM: BSS reaches $%04X; the C stack grows down from"
+              " $%04X" % (ram_hi, BANK_RAM_TOP))
+        print("  (one common budget -- it is carved out of the program load area,"
+              " so the\n   largest bank sets the load ceiling for every program)")
