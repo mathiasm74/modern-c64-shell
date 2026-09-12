@@ -149,3 +149,44 @@ def test_ctrl_colours_match_the_kernal(v):
     got = v.read_memory(_symbol_addr("ctrl_color"), 8)
     assert got == want, "CTRL colours differ from the KERNAL's\n got: %s\nwant: %s" % (
         " ".join("%02X" % b for b in got), " ".join("%02X" % b for b in want))
+
+
+def test_scan_settles_before_reading_the_matrix(v):
+    """The scan must let the matrix line settle before sampling it.
+
+    The lines are long -- mainboard trace, connector, keyboard PCB -- and a
+    contact that has aged or oxidised adds series resistance, raising the RC.
+    Reading back-to-back after selecting a line then samples it before it has
+    pulled down and the key reads as "not pressed", so an entire row goes dead
+    while the hardware is only marginal.
+
+    This is not hypothetical: a real machine showed row 4 (9 I J 0 M K O N)
+    dead under Tardis and working under the STOCK KERNAL, whose scan loop puts
+    ldx/pha between its write and its read. We had nothing between ours.
+
+    VICE cannot reproduce a resistive contact, so assert the property instead:
+    there IS a gap between selecting a line ($DC00) and reading it ($DC01).
+    """
+    (void) = v
+
+    rom = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "build", "kernal.bin"), "rb").read()
+    sel = bytes([0x8D, 0x00, 0xDC])         # sta $DC00
+    rd = bytes([0xAD, 0x01, 0xDC])          # lda $DC01
+    gaps = []
+    i = 0
+    while True:
+        i = rom.find(sel, i)
+        if i < 0:
+            break
+        j = rom.find(rd, i)
+        if 0 <= j - (i + 3) < 40:
+            gaps.append(j - (i + 3))
+        i += 1
+    assert gaps, "no select/read pair found -- did the scan change shape?"
+    # The stock KERNAL's scan-loop gap is 3 bytes (ldx #$08 ; pha = 5 cycles).
+    # Ours is deliberately longer, since the cost is ~0.5% of a frame's IRQ
+    # budget and the margin is what keeps an ageing keyboard working.
+    assert min(gaps) >= 5, \
+        "keyboard scan reads $DC01 only %d bytes after selecting on $DC00 -- " \
+        "too tight for a marginal contact (stock leaves 3)" % min(gaps)

@@ -77,6 +77,12 @@ nmi_stub:
         pha
         lda #$7F
         sta CIA1_PRA            ; select keyboard column 7
+        ; Settle: the matrix needs time to pull down, and on an ageing
+        ; keyboard a back-to-back read misses the key entirely -- see
+        ; scan_keyboard. Here that would silently swallow the shortcut.
+.repeat 5
+        nop
+.endrepeat
         lda CIA1_PRB            ; read rows; RUN/STOP is row 7 (bit 7)
         and #$80
         bne @nmi_ret            ; STOP not held -> bare RESTORE, ignore
@@ -101,9 +107,25 @@ scan_keyboard:
 @col:
         lda COLMASK
         sta CIA1_PRA            ; drive one column low
+        ; SETTLE before reading. The matrix lines are long -- mainboard trace,
+        ; connector, keyboard PCB -- and a contact that has aged or oxidised
+        ; adds series resistance, raising the RC. Reading back-to-back then
+        ; samples the line before it has pulled down, and the key reads as "not
+        ; pressed": an entire row goes dead while the hardware is merely
+        ; marginal, not broken.
+        ;
+        ; This is exactly what a real machine showed -- row 4 (9 I J 0 M K O N)
+        ; dead under Tardis but working under the STOCK KERNAL, whose scan loop
+        ; puts ldx/pha (5 cycles) between its write and its read. We had none.
+        ; The delay here is deliberately longer than stock's, since the cost is
+        ; nothing: 8 columns x ~12 cycles is ~0.5% of one frame's IRQ budget,
+        ; and the margin is what keeps an ageing keyboard usable.
+        ldy #$08                ; the row counter, hoisted up to help settle
+.repeat 5
+        nop
+.endrepeat
         lda CIA1_PRB            ; read the 8 rows (0 = pressed)
         sta ROWBITS
-        ldy #$08
 @row:
         lsr ROWBITS             ; next row bit -> carry
         bcs @next               ; 1 = not pressed

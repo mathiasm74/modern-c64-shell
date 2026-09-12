@@ -1000,6 +1000,12 @@ rbcp_nmi_escape:
         pha                             ; we clobber A reading the key matrix
         lda #$7F
         sta $DC00                       ; CIA1 PRA: select keyboard column 7
+        ; Settle: the matrix needs time to pull down, and on an ageing
+        ; keyboard a back-to-back read misses the key entirely -- see
+        ; scan_keyboard. Here that would silently swallow the shortcut.
+.repeat 5
+        nop
+.endrepeat
         lda $DC01                       ; CIA1 PRB: read rows; RUN/STOP = row 7
         and #$80
         bne @pass                       ; bit set = STOP up -> bare RESTORE
