@@ -63,22 +63,47 @@ static unsigned char col_data;
 
 /* Which bytes have been changed, one bit each, so they can be drawn in yellow.
  *
- * It lives immediately PAST the document, in whatever is left of the buffer:
- * there is nowhere else. The bank's BSS is a 256-byte window shared with every
- * other bank ($9D10-$9E0F), and $C000-$CFFF is spoken for (the settings blob,
- * the RBCP copy, the completion name cache, the run stub). A map costs an eighth
- * of the file, so it fits whenever flen + flen/8 <= BUFMAX, i.e. up to ~33.6KB.
- * Above that the map is simply switched OFF -- editing a bigger file still works,
- * it just does not get the highlight. That is the right trade: reserving the
- * eighth up front would have cut the largest editable file by 11% for everyone.
+ * SPARSE, in chunks: a flat bitmap over the whole document cost an eighth of the
+ * file -- up to 4.7KB -- for a display nicety, and it was paid in full whether
+ * one byte was edited or ten thousand. Editing is local, so instead the file is
+ * divided into EDCHUNK-byte chunks and a chunk's 8 bytes of bitmap are allocated
+ * from a small pool only when something in it is actually edited. A directory
+ * maps chunk -> block, or $FF for "nothing edited in there".
  *
- * A list of edited offsets was the alternative and is worse: it has to be
+ *   directory   EDCHUNKS bytes (one per chunk, covering the whole buffer)
+ *   pool        EDBLOCKS * (EDCHUNK/8) bytes
+ *
+ * That is 1104 bytes fixed instead of up to 4736, and because it no longer
+ * scales with the file, tracking now survives to ~36.8KB rather than ~33.6KB --
+ * so only files within about a kilobyte of the maximum lose the highlight.
+ *
+ * EDCHUNK is 64 -- smaller than a screenful (184 bytes), which keeps the
+ * granularity fine enough that a single edit does not claim a large block, and
+ * makes every index a shift.
+ *
+ * It all still lives immediately PAST the document, because there is nowhere
+ * else: the bank's BSS is a 256-byte window shared with every other bank
+ * ($9D10-$9E0F), and $C000-$CFFF is spoken for (the settings blob, the RBCP
+ * copy, the completion name cache, the run stub).
+ *
+ * A LIST of edited offsets was the other option and is worse: it has to be
  * searched per drawn cell, and a full repaint draws 184 of them, so even a
- * 64-entry list costs ~12k comparisons per scroll. A bitmap is one shift and one
- * AND per cell however many edits there are.
+ * 64-entry list costs ~12k comparisons per scroll. This is two indexed loads.
  */
-static unsigned char *emap;             /* NULL semantics carried by `track` */
-static unsigned char track;             /* 0 = file too big, no highlighting */
+static void msg(const char *s);         /* defined below; mark_edited reports
+                                           pool exhaustion through it */
+
+#define EDCHUNK   64                    /* file bytes per chunk */
+#define EDBLK     (EDCHUNK / 8)         /* bitmap bytes per chunk */
+#define EDCHUNKS  (BUFMAX / EDCHUNK)    /* directory entries: 592 */
+#define EDBLOCKS  64                    /* chunks trackable at once */
+#define EDNONE    0xFF
+
+static unsigned char *edir;             /* chunk -> block, or EDNONE */
+static unsigned char *epool;
+static unsigned char eblocks;           /* blocks handed out */
+static unsigned char efull;             /* pool exhausted, said so once */
+static unsigned char track;             /* 0 = no room at all, no highlighting */
 
 /* cc65 turns `1 << (off & 7)` into a shift loop; a table is smaller and flat. */
 static const unsigned char bitmask[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };
@@ -93,6 +118,7 @@ static const unsigned char bitmask[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };
 #define K_RIGHT  0x1D
 #define K_UP     0x91
 #define K_DOWN   0x11
+#define K_PANE   0x5E                   /* the up-arrow key: switch pane */
 #define K_HOME   0x13
 #define CTRL_X   0x18
 #define CTRL_O   0x0F
@@ -129,29 +155,62 @@ static unsigned char hexval(unsigned char c)
 
 static void edits_init(void)
 {
-    unsigned int bytes = (unsigned int)((flen + 7) >> 3);
     unsigned int i;
 
     track = 0;
-    if (flen == 0 || flen + bytes > BUFMAX)
+    efull = 0;
+    eblocks = 0;
+    if (flen == 0 || flen + (EDCHUNKS + EDBLOCKS * EDBLK) > BUFMAX)
         return;                         /* no room past the document: no map */
-    emap = BUF + flen;
-    for (i = 0; i < bytes; ++i)
-        emap[i] = 0;
+    edir = BUF + flen;
+    epool = edir + EDCHUNKS;
+    for (i = 0; i < EDCHUNKS; ++i)
+        edir[i] = EDNONE;               /* the pool itself is cleared per block */
     track = 1;
 }
 
 static void mark_edited(unsigned int off)
 {
-    if (track)
-        emap[off >> 3] |= bitmask[(unsigned char)off & 7];
+    unsigned char *b;
+    unsigned char blk, i;
+
+    if (!track)
+        return;
+    blk = edir[off / EDCHUNK];
+    if (blk == EDNONE) {
+        if (eblocks >= EDBLOCKS) {
+            /* More scattered regions than the pool holds. Say so once rather
+               than silently stop marking -- an unmarked edit would otherwise
+               look like the feature was broken. */
+            if (!efull) {
+                efull = 1;
+                msg("too many edited regions to mark");
+            }
+            return;
+        }
+        blk = eblocks++;
+        edir[off / EDCHUNK] = blk;
+        b = epool + (unsigned int)blk * EDBLK;
+        for (i = 0; i < EDBLK; ++i)
+            b[i] = 0;
+    }
+    epool[(unsigned int)blk * EDBLK + (((unsigned char)off & (EDCHUNK - 1)) >> 3)]
+        |= bitmask[(unsigned char)off & 7];
 }
 
 /* The colour a byte's cells should carry when the cursor is not on them. */
 static unsigned char cell_color(unsigned int off)
 {
-    if (track && (emap[off >> 3] & bitmask[(unsigned char)off & 7]))
-        return COL_EDITED;
+    unsigned char blk;
+
+    if (track) {
+        blk = edir[off / EDCHUNK];
+        if (blk != EDNONE
+            && (epool[(unsigned int)blk * EDBLK
+                      + (((unsigned char)off & (EDCHUNK - 1)) >> 3)]
+                & bitmask[(unsigned char)off & 7]))
+            return COL_EDITED;
+    }
     return col_data;
 }
 
@@ -187,7 +246,11 @@ static void msg(const char *s)
 static void draw_help(void)
 {
     clear_row(SCREEN + 24 * COLS);
-    put_str(SCREEN + 24 * COLS, "^x exit ^o save tab pane  0-9a-f edit");
+    /* `^` renders as the up-arrow glyph in the C64 charset (screen code $1E),
+       which is exactly the key it names -- and also how the CTRL combinations
+       above read, since there is no caret glyph. The standalone one is the pane
+       key. */
+    put_str(SCREEN + 24 * COLS, "^x exit ^o save ^ pane  0-9a-f edit");
 }
 
 /* Also single-pass -- it is redrawn on every cursor move (the "at" field), so
@@ -386,18 +449,22 @@ static void fill_color(void)
             CRAM[(unsigned int)r * COLS + i] = col_data;
 }
 
-/* Keep the cursor's row on screen. */
+/* Keep the cursor's row on screen -- and when it leaves, move a PAGE, not a
+   line. Stepping off the bottom puts the cursor on the TOP row (so the scroll
+   reveals a whole screen of later bytes) and stepping off the top puts it on the
+   BOTTOM row. Line-at-a-time was the obvious reading of "keep it visible" and it
+   is the wrong one here: it repaints all 23 rows to show ONE new line of bytes,
+   so holding cursor-down repaints the screen per byte-row and crawls. */
 static void ensure_visible(void)
 {
-    unsigned int last;
+    unsigned int row = pos / BPR;       /* the cursor's row within the file */
 
-    if (pos < top) {
-        top = (pos / BPR) * BPR;
+    if (pos < top) {                    /* off the top: cursor to the last row */
+        top = (row < (ROWS - 1)) ? 0 : (row - (ROWS - 1)) * BPR;
         return;
     }
-    last = top + (unsigned int)ROWS * BPR;
-    if (pos >= last)
-        top = ((pos / BPR) - (ROWS - 1)) * BPR;
+    if (pos >= top + (unsigned int)ROWS * BPR)
+        top = row * BPR;                /* off the bottom: cursor to the top row */
 }
 
 static unsigned char build_iocmd(const char *mode, unsigned char replace)
@@ -555,10 +622,19 @@ void hex_main(void)
             render();
             continue;
         }
-        if (c == TAB) {
+        if (c == TAB || c == K_PANE) {
+            /* Switching panes moves the cursor and nothing else: the same byte
+               is shown, the same rows, the same title. It used to render() --
+               all 23 rows -- which is why it felt slow (hardware-reported). The
+               light path is two cells off and three cells on.
+               K_PANE is the C64's up-arrow key, which is a real key you can find
+               without being told; TAB still works (CTRL+I, or a bare CTRL tap)
+               but nothing advertises it. The cost is that the character pane
+               cannot type $5E itself -- enter that byte from the hex pane. */
+            cursor_off();
             pane ^= 1;
             nib = 0;
-            render();
+            cursor_on();
             continue;
         }
         old_top = top;
@@ -619,6 +695,13 @@ void hex_main(void)
             mark_edited(pos);
             edited = 1;
             erow = (unsigned char)((pos - top) / BPR);
+            if (pos + 1 < flen)         /* step on, exactly as the hex pane does
+                                           after its second nibble. This was lost
+                                           in v0.2.13 when the light repaint path
+                                           replaced the block that held it, so
+                                           typing in the character pane stopped
+                                           advancing (hardware-reported). */
+                ++pos;
         }
         ensure_visible();
 
