@@ -101,3 +101,45 @@ def test_picker_down_moves_left(v):
         "down should move back by 2 from %d" % start
 
 
+
+
+def test_text_picker_previews_on_screen(v):
+    """Stepping the text colour must actually recolour what is on screen.
+
+    border and bg are single VIC registers, so previewing them is one write and
+    the whole screen follows. $0286 is not: it only decides the colour of
+    characters drawn from then on, so the picker set it and the already-drawn
+    text stayed white -- there was no preview at all (hardware-reported). The fix
+    repaints colour RAM, which means the swatches have to be redrawn after it;
+    this checks both halves, since a repaint that ate the swatches would leave
+    the user choosing from 16 identical blocks.
+    """
+    assert _open_picker(v, "text"), \
+        "text picker did not appear\n%s" % v.screen_text()
+
+    # The title is on row 0, drawn before any preview -- so it is exactly the
+    # text that used to stay white.
+    title_cell = 0xD800 + 0                     # colour of the first title char
+    before = v.read_byte(title_cell) & 0x0F
+
+    v.write_memory(0x0277, [0x1D, 0x1D])        # right, right: +2 colours
+    v.write_byte(0x00C6, 2)
+    for _ in range(8):
+        v.run_for(0.3)
+        if (v.read_byte(title_cell) & 0x0F) != before:
+            break
+
+    after = v.read_byte(title_cell) & 0x0F
+    assert after != before, \
+        "the text on screen did not change colour (still %d) -- $0286 alone " \
+        "does not repaint anything already drawn" % before
+    assert after == ((before + 2) & 0x0F), \
+        "expected the colour two steps on from %d, got %d" % (before, after)
+
+    # The swatches must have survived the repaint: 16 blocks, each its own colour.
+    swatch = 0xD800 + 6 * 40 + 4
+    seen = [v.read_byte(swatch + i * 2) & 0x0F for i in range(16)]
+    assert seen == list(range(16)), \
+        "the preview repaint ate the colour swatches: %s" % seen
+
+    _send_keys(v, [0x03])                       # STOP: revert, leave the picker

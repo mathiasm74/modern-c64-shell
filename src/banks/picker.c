@@ -8,6 +8,14 @@
  * 16 solid color blocks with an 'o' marker under the selected one, moved
  * left/right with the cursor keys. The choice previews live; RETURN keeps it
  * (the shell's settings_after_command then persists it), STOP reverts.
+ *
+ * Note the text color previews DIFFERENTLY from the other two, and has to. The
+ * border and background are single VIC registers, so writing one recolors the
+ * screen at once; $0286 only decides the color of characters drawn FROM NOW ON,
+ * so setting it changed nothing on a screen that had already been drawn and the
+ * text just stayed white (hardware-reported). Previewing it means repainting
+ * color RAM -- which is also why the swatches are redrawn each pass: the repaint
+ * would otherwise take them with it.
  */
 
 unsigned char __fastcall__ k_chrout(unsigned char c);
@@ -36,12 +44,22 @@ static void puts_raw(const char *s)
 
 static void apply_color(unsigned char which, unsigned char v)
 {
-    if (which == 0)
+    unsigned int i;
+
+    if (which == 0) {
         VIC_BORDER = v;
-    else if (which == 1)
+        return;
+    }
+    if (which == 1) {
         VIC_BG = v;
-    else
-        COLOR_REG = v;
+        return;
+    }
+    COLOR_REG = v;
+    /* ...and show it: recolor what is already on screen. Written straight to
+       its final value (never blanked first), so the repaint cannot flash. The
+       caller redraws the swatches and the marker after this. */
+    for (i = 0; i < 1000; ++i)
+        CRAM[i] = v;
 }
 
 void picker_main(void)
@@ -63,21 +81,23 @@ void picker_main(void)
     k_chrout(CR);
     puts_raw("stop to cancel");
 
-    for (i = 0; i < 16; ++i) {            /* the 16 color blocks, two cells wide */
-        SCR[base + i * 2]      = 0xA0;
-        SCR[base + i * 2 + 1]  = 0xA0;
-        CRAM[base + i * 2]     = i;
-        CRAM[base + i * 2 + 1] = i;
-    }
-
     for (;;) {
+        apply_color(which, sel);          /* live preview */
+
+        for (i = 0; i < 16; ++i) {        /* the 16 blocks, two cells wide --
+                                             after the preview, which for the
+                                             text color repaints all of CRAM */
+            SCR[base + i * 2]      = 0xA0;
+            SCR[base + i * 2 + 1]  = 0xA0;
+            CRAM[base + i * 2]     = i;
+            CRAM[base + i * 2 + 1] = i;
+        }
         for (i = 0; i < 32; ++i)          /* redraw the marker row */
             SCR[mbase + i] = 0x20;
         SCR[mbase + sel * 2]     = 0x77;  /* two-bar marker (PETSCII 183) under */
         SCR[mbase + sel * 2 + 1] = 0x77;  /* both cells of the 2-wide block */
         CRAM[mbase + sel * 2]     = 0x01; /* white */
         CRAM[mbase + sel * 2 + 1] = 0x01;
-        apply_color(which, sel);          /* live preview */
 
         do {
             c = k_getin();
