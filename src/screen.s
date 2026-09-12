@@ -9,6 +9,7 @@
 .export set_line_ptrs
 .export screen_clear
 .export pet2scr
+.export scr_display
 
 ; --- cursor state (KERNAL-compatible zero page) --------------------------
 PNT    = $D1            ; $D1/$D2: pointer to start of the current screen line
@@ -341,6 +342,38 @@ pet2scr:
         rts
 @sub80: sec
         sbc #$80
+        rts
+
+; scr_display - screen code for ANY byte, the way a text editor must draw it.
+;
+; pet2scr covers the printable ranges, which is all CHROUT needs: it ACTS on a
+; control code rather than drawing one. An editor has the opposite job -- every
+; byte in the document has to appear as something, including the control codes
+; a BASIC string legitimately carries (colours, cursor moves). So this adds the
+; quote-mode rule the C64 itself uses, in reverse video:
+;
+;   $00-$1F  ->  screen code c, reversed
+;   $80-$9F  ->  screen code (c & $1F) + $40, reversed
+;
+; Those two lines were MEASURED against the stock KERNAL (see
+; test_runstub::test_control_code_glyphs_match_the_kernal) -- the obvious
+; c & $7F collapses red and purple onto one glyph.
+;
+; It lives here, in the KERNAL half, because every bank can reach it through the
+; SVC table: the text editor had its own 96-byte runtime table plus three
+; helpers for exactly this, and the hex editor would have been a third copy.
+scr_display:
+        cmp #$20
+        bcc @revlow             ; $00-$1F: reverse of the code itself
+        cmp #$80
+        bcc pet2scr             ; $20-$7F: ordinary printable
+        cmp #$A0
+        bcs pet2scr             ; $A0-$FF: graphics, pet2scr has them
+        and #$1F                ; $80-$9F: reverse of (c & $1F) + $40
+        clc
+        adc #$40
+@revlow:
+        ora #$80
         rts
 
 ; --- per-row screen-line address tables (low/high bytes) -----------------

@@ -81,6 +81,11 @@ def seed_about(v):
     _seed(v, "about.bin", 0x8800)
 
 
+def seed_hex(v):
+    """hex bank (the byte editor) -> the RAM under the $A000 ROM."""
+    _seed_bank(v, "hex_bank.bin")
+
+
 def seed_edit(v):
     """edit bank -> the RAM under the $A000 ROM.
 

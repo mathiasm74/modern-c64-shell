@@ -77,6 +77,7 @@ const struct command shell_commands[] = {
     { "fload",  BANK_CMD(BANK_DISK, 3) },
     { "font",   cmd_font   },
     { "help",   BANK_CMD(BANK_FILES, 12) },
+    { "hex",    BANK_CMD(BANK_HEX, 0) },
     { "less",   BANK_CMD(BANK_FILES, 1) },
     { "load",   BANK_CMD(BANK_DISK, 4) },
     { "ls",     BANK_CMD(BANK_DISK, 1) },

@@ -263,6 +263,13 @@ $(BUILD)/banks/fb_%.o: $(BUILD)/banks/fb_%.s
 FILES_BANK_OBJ := $(BUILD)/banks/crt0_files_bank.o $(BUILD)/banks/fb_files_entry.o \
                   $(BUILD)/banks/fb_files.o $(BUILD)/banks/fb_picker.o
 
+HEX_BANK_OBJ := $(BUILD)/banks/crt0_hex.o $(BUILD)/banks/fb_hex.o
+
+$(BUILD)/banks/hex_bank.bin: $(HEX_BANK_OBJ) cfg/hex_bank.cfg
+	$(LD) -C cfg/hex_bank.cfg -o $@ $(HEX_BANK_OBJ) $(RTLIB) \
+	      -Ln $(BUILD)/banks/hex_bank.labels -m $(BUILD)/banks/hex_bank.map
+	@echo "  hex_bank.bin  : $$(wc -c < $@) bytes"
+
 EDIT_BANK_OBJ := $(BUILD)/banks/crt0_edit.o $(BUILD)/banks/fb_edit.o
 
 $(BUILD)/banks/edit_bank.bin: $(EDIT_BANK_OBJ) cfg/edit_bank.cfg
@@ -276,7 +283,8 @@ $(BUILD)/banks/files_bank.bin: $(FILES_BANK_OBJ) cfg/files_bank.cfg
 	@echo "  files_bank.bin: $$(wc -c < $@) bytes"
 
 BANK_BINS := $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin \
-             $(BUILD)/banks/files_bank.bin $(BUILD)/banks/edit_bank.bin
+             $(BUILD)/banks/files_bank.bin $(BUILD)/banks/edit_bank.bin \
+             $(BUILD)/banks/hex_bank.bin
 
 banks: $(BANK_BINS)
 # Generated overlay page-number map (start page of each overlay), derived from
@@ -396,7 +404,7 @@ $(BOOTLOADER): $(BOOTLOADER_SRC) tools/build_bootloader.sh | $(BUILD)
 # JiffyDOS is commercial, so unlike the stock ROMs (Zimmers URLs) it stays a
 # local user-supplied file; the C= boot menu (cfg/onerom-stock.json set 3)
 # offers it as a bootable KERNAL.
-ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin $(BUILD)/banks/files_bank.bin $(BUILD)/banks/edit_bank.bin stock-roms/JiffyDOS_C64.bin
+ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin $(BUILD)/banks/files_bank.bin $(BUILD)/banks/edit_bank.bin $(BUILD)/banks/hex_bank.bin stock-roms/JiffyDOS_C64.bin
 onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
 		--config-file $(ONEROM_STOCK_CFG) $(ONEROM_PLUGINS) \

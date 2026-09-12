@@ -67,7 +67,6 @@ static unsigned int cliplen;
 static unsigned char modified, msg_hold, chain;  /* chain: 1 = cut/copy run */
 static unsigned char fname[17];
 static unsigned char fnlen;
-static unsigned char sctab[96]; /* ASCII $20-$7F -> screen code             */
 
 /* --- gap buffer ---------------------------------------------------------- */
 static unsigned int doclen(void)
@@ -120,65 +119,15 @@ static unsigned int line_end(unsigned int p)  /* offset of CR or doclen */
 }
 
 /* --- screen -------------------------------------------------------------- */
-static void build_sctab(void)
-{
-    unsigned char i, c;
+/* Screen code for any byte, via the resident routine at $FFA4 (scr_display in
+   src/screen.s). This used to be a 96-byte table built at every entry plus
+   three helpers here -- and the hex editor would have made a third copy. The
+   routine is in the KERNAL half, which stays mapped while a bank runs, so the
+   SVC table can reach it; the control-code and graphics rules live there now,
+   measured against the stock KERNAL once instead of transcribed per bank. */
+unsigned char __fastcall__ svc_scr_display(unsigned char c);
 
-    for (i = 0; i < 96; ++i) {
-        c = 0x20 + i;
-        if (c >= 'a' && c <= 'z')
-            c -= 0x60;          /* lowercase -> $01-$1A */
-        else if (c == '@')
-            c = 0x00;
-        else if (c >= 0x5B && c <= 0x5F)
-            c -= 0x40;          /* [ \ ] ^ _ -> $1B-$1F */
-        else if (c >= 0x60)
-            c = 0x3F;           /* `, {|}~, DEL: no glyph, show '?' */
-        sctab[i] = c;           /* $20-$3F and A-Z pass through */
-    }
-}
-
-/* A PETSCII control code has no glyph, so show it the way the C64 shows one
-   inside quotes: in reverse video. The screen code it reverses was MEASURED
-   against the stock KERNAL (test_runstub::test_control_code_glyphs_match_the_
-   kernal), because the obvious guess is wrong:
-
-     $00-$1F  ->  screen code c          ($1C red    -> $1C reversed)
-     $80-$9F  ->  screen code (c&$1F)+$40 ($9C purple -> $5C reversed)
-
-   Masking to c & $7F -- which looks right -- maps red and purple to the SAME
-   glyph, and likewise for the other seven pairs, so half the colours would be
-   indistinguishable.
-
-   The glyph still will not match a stock LIST: stock BASIC runs the
-   uppercase/graphics charset and this shell runs the lowercase one, so the
-   same screen code draws a different picture. The CODE is right; the font
-   differs. */
-static unsigned char ctrl_glyph(unsigned char c)
-{
-    if (c >= 0x80)
-        return (unsigned char)(((c & 0x1F) + 0x40) | 0x80);
-    return (unsigned char)(c | 0x80);
-}
-
-/* PETSCII graphics ($A0-$FF, C= + key) use the standard mapping -- $A0-$BF
-   $A0-$BF -> screen $60-$7F and $C0-$FF -> screen $40-$7F. Same
-   rule as pet2scr in screen.s; it covers the uppercase Swedish letters too. */
-static unsigned char gfx_scrc(unsigned char c)
-{
-    return (unsigned char)(c >= 0xC0 ? c - 0x80 : c - 0x40);
-}
-
-static unsigned char scrc(unsigned char c)
-{
-    if (c < 0x20 || (c >= 0x80 && c <= 0x9F))
-        return ctrl_glyph(c);
-    if (c >= 0xA0)
-        return gfx_scrc(c);
-    if (c > 0x7F)
-        return 0x3F;
-    return sctab[c - 0x20];
-}
+#define scrc(c) svc_scr_display(c)
 
 static void put_str(unsigned char *dst, const char *s)
 {
@@ -917,7 +866,6 @@ void edit_main(void)
     msg_hold = 0;
     chain = 0;
     literal_next = 0;
-    build_sctab();
     fnlen = 0;
     if (BD_ARGC > 1) {
         char **argv = BD_ARGV;

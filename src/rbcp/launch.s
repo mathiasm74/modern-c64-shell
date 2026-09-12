@@ -758,6 +758,7 @@ bank_flash_set:
                                 ;         overlay set vacated, so nothing else
                                 ;         renumbered when the editor moved out
                                 ;         of RAM
+        .byte 7                 ; bank 4: hex -- appended after stock
 .else
         .byte 7                 ; bank 0: disk  (dir/ls/pwd/fload/load)
         .byte 8                 ; bank 1: util  (tab completion)
@@ -766,6 +767,7 @@ bank_flash_set:
                                 ;               device/devices + the picker)
         .byte 5                 ; bank 3: edit -- took the slot the second
                                 ;         overlay set vacated (see above)
+        .byte 10                ; bank 4: hex -- appended, so nothing renumbered
 .endif
 
 .export _bank_call
