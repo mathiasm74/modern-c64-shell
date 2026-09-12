@@ -161,10 +161,20 @@ static unsigned char ctrl_glyph(unsigned char c)
     return (unsigned char)(c | 0x80);
 }
 
+/* PETSCII graphics ($A0-$FF, C= + key) use the standard mapping -- $A0-$BF
+   $A0-$BF -> screen $60-$7F and $C0-$FF -> screen $40-$7F. Same
+   rule as pet2scr in screen.s; it covers the uppercase Swedish letters too. */
+static unsigned char gfx_scrc(unsigned char c)
+{
+    return (unsigned char)(c >= 0xC0 ? c - 0x80 : c - 0x40);
+}
+
 static unsigned char scrc(unsigned char c)
 {
     if (c < 0x20 || (c >= 0x80 && c <= 0x9F))
         return ctrl_glyph(c);
+    if (c >= 0xA0)
+        return gfx_scrc(c);
     if (c > 0x7F)
         return 0x3F;
     return sctab[c - 0x20];
@@ -1020,14 +1030,16 @@ void edit_main(void)
             insert_ch(CR_CH);               /* structural: full redraw */
             break;
         default:
-            /* Printable text, plus the PETSCII colour codes (CTRL/C= 1-8).
+            /* Printable text, the PETSCII GRAPHICS set ($A0-$FF, C= + key),
+               plus the colour codes (CTRL/C= 1-8).
                Those are control bytes, so they would otherwise be swallowed
                here -- and they are the only way to put a colour into a BASIC
                string. ($05 white is the exception: it collides with ^E and
                needs ^V, above.) */
-            if ((c >= 0x20 && c <= 0x7E) || c == 0x05 || c == 0x1C ||
-                c == 0x1E || c == 0x1F || (c >= 0x81 && c <= 0x9F &&
-                c != 0x8D && c != 0x91 && c != 0x93 && c != 0x9D)) {
+            if ((c >= 0x20 && c <= 0x7E) || c >= 0xA0 || c == 0x05 ||
+                c == 0x1C || c == 0x1E || c == 0x1F ||
+                (c >= 0x81 && c <= 0x9F && c != 0x8D && c != 0x91 &&
+                 c != 0x93 && c != 0x9D)) {
                 insert_ch(c);
                 light = 1;
             }

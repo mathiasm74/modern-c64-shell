@@ -44,8 +44,12 @@
                                     irq.s ctrl_tap -- or CTRL+I)            */
 #define PRINT_LO 0x20            /* printable PETSCII range we store/echo   */
 #define PRINT_HI 0x7E
-#define SWE_LO   0xDB            /* uppercase Swedish Ae/Oe/Aring ($DB-$DD), */
-#define SWE_HI   0xDD            /* also storable/echoable (pet2scr -> $5B-$5D) */
+/* The PETSCII graphics set ($A0-$FF, C= + key). Storable and echoable like any
+   other character -- CBM filenames may contain them, and they draw via the
+   same pet2scr rule. This range subsumes the uppercase Swedish Ae/Oe/Aring at
+   $DB-$DD, which used to need a window of its own here. */
+#define GFX_LO   0xA0
+#define GFX_HI   0xFF
 #define LINEMAX  80             /* one 40-col line wraps to two; 80 is plenty */
 #define HIST_N   8              /* commands remembered for up/down recall   */
 
@@ -335,7 +339,7 @@ static unsigned char readline(void)
             }
             continue;
         }
-        if ((c >= PRINT_LO && c <= PRINT_HI) || (c >= SWE_LO && c <= SWE_HI)) {
+        if ((c >= PRINT_LO && c <= PRINT_HI) || c >= GFX_LO) {
             if (len >= LINEMAX)
                 continue;               /* line full */
             if (pos == len) {           /* common case: append */

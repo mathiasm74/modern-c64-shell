@@ -114,3 +114,31 @@ def test_uppercase_swedish_char_is_accepted_at_prompt(v):
             break
     assert sc == 0x5B, \
         "typed $DB should land as screen code $5B (Ae), got $%02X" % sc
+
+
+def test_pet2scr_petscii_graphics(v):
+    """The PETSCII graphics set ($A0-$FF) maps to its screen codes.
+
+    $A0-$BF -> $60-$7F and $C0-$FF -> $40-$7F, the standard mapping. The
+    uppercase Swedish letters are just three entries inside that second range
+    ($DB-$DD -> $5B-$5D), which is why they no longer need a rule of their own:
+    the general one covers them, and the rest of the graphics came with it.
+    """
+    pet = _symbol_addr("pet2scr")
+    lo, hi = pet & 0xFF, (pet >> 8) & 0xFF
+    cases = [(0xA0, 0x60),          # C= + space: the solid block
+             (0xA1, 0x61), (0xBF, 0x7F),
+             (0xC0, 0x40), (0xDB, 0x5B),    # $DB is also uppercase Ae
+             (0xDD, 0x5D), (0xFF, 0x7F)]
+    out = 0x2000
+    stub = []
+    for i, (inp, _exp) in enumerate(cases):
+        stub += [0xA9, inp, 0x20, lo, hi,
+                 0x8D, (out + i) & 0xFF, ((out + i) >> 8) & 0xFF]
+    stub += _spin(0x1000 + len(stub))
+    v.write_memory(0x1000, stub)
+    v.run_at(0x1000, 0.2)
+    res = v.read_memory(out, len(cases))
+    for i, (inp, exp) in enumerate(cases):
+        assert res[i] == exp, \
+            "pet2scr($%02X) = $%02X, expected $%02X" % (inp, res[i], exp)

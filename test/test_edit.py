@@ -431,3 +431,28 @@ def test_edit_literal_next_inserts_a_bound_key(v):
     v.run_for(0.3)
     _keys(v, "n")
     _wait(v, "8>")
+
+
+def test_edit_accepts_petscii_graphics(v):
+    """The editor stores and draws the PETSCII graphics set (C= + key).
+
+    They are the characters BASIC programs draw boxes and bars with, so an
+    editor that dropped them could not hold a real listing. $A0-$FF map to
+    screen codes the same way pet2scr does it.
+    """
+    _seed(v)
+    v.run_for(0.3)
+    _keys(v, "edit")
+    _keys(v, [CR])
+    _wait(v, "edit: (new)")
+
+    _keys(v, [0xA0, 0xA1, 0xDB, 0xFF])
+    v.run_for(0.4)
+    row = v.read_memory(0x0400 + 40, 4)
+    assert row == [0x60, 0x61, 0x5B, 0x7F], \
+        "graphics not stored/drawn: %s" % [hex(b) for b in row]
+
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    _keys(v, "n")
+    _wait(v, "8>")

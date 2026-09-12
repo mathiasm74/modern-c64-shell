@@ -199,24 +199,19 @@ scan_keyboard:
         jsr decode_shift        ; shifted decode (US or Swedish table):
         jmp @emit               ; uppercase, !"#$, <>?[], cursor left/up, CLR, ...
 @viacbm:
-        ; C=+1..8 emit the OTHER eight colours (orange, brown, light red, dark
-        ; grey, grey, light green, light blue, light grey), as on a real C64.
-        jsr decode_unshift      ; preserves X (the matrix code)
-        cmp #'1'
-        bcc @cbmat
-        cmp #'9'
-        bcs @cbmat
-        sec
-        sbc #'1'
-        tax
-        lda cbm_color,x
-        jmp @emit
-@cbmat:
-        ; VICE's symbolic keymap sends host '_' as @+CBM (the only CBM combo
-        ; it uses); decode that one to underscore and ignore the rest.
+        ; C= + key: PETSCII graphics, and the other eight colours on the digit
+        ; row -- straight out of the table below, which is the KERNAL's own.
+        ;
+        ; One deliberate exception: VICE's symbolic keymap sends host '_' as
+        ; @+CBM, so that combination stays underscore. The cost is the single
+        ; graphic C=+@ would give ($A4); the ← key produces underscore on real
+        ; hardware anyway (matrix 57, in `keytab`), so nothing is lost there.
         cpx #46                 ; the @ key
-        bne @ret
-        lda #$5F                ; underscore
+        bne @cbmtab
+        lda #$5F                ; underscore (VICE's symbolic keymap)
+        jmp @emit
+@cbmtab:
+        lda keytab_cbm,x
 @emit:
         beq @ret                ; non-emitting key (ctrl, a shift/cbm alone, ...)
         ldx NDX
@@ -277,17 +272,34 @@ ctrl_tap:
 ; still needs it); clobbers A and Y. ROM tables can't be self-modified, so we
 ; branch on the layout byte instead of patching the load operand.
 ; -------------------------------------------------------------------------
-.export ctrl_color, cbm_color
+.export ctrl_color, keytab_cbm
 
-; The C64's sixteen PETSCII colour codes, in keycap order. These are control
-; codes, not characters, so they have no place in the key tables: they are
-; reached only through a modifier.
+; CTRL+1..8: the first eight PETSCII colour codes. Kept as a small table of its
+; own because our CTRL path is CTRL+letter -> control code, which is NOT what
+; the stock KERNAL's CTRL table does; only the digits agree, and
+; test_keyboard checks these eight against that ROM table.
 ctrl_color:
         .byte $90, $05, $1C, $9F        ; 1-4: black, white, red, cyan
         .byte $9C, $1E, $1F, $9E        ; 5-8: purple, green, blue, yellow
-cbm_color:
-        .byte $81, $95, $96, $97        ; 1-4: orange, brown, lt red, dk grey
-        .byte $98, $99, $9A, $9B        ; 5-8: grey, lt green, lt blue, lt grey
+
+; C= + key: the PETSCII GRAPHICS set, plus the other eight colours on the digit
+; row. Transcribed from the genuine KERNAL's own C= decode table ($EC03 in
+; kernal.901227-03) -- our matrix indexing is identical to the KERNAL's, which
+; test_keyboard verifies, so the table drops straight in. Guessing 60-odd
+; graphics codes from memory would have been the wrong way to get these.
+;
+; The modifier slots (15/52/58/61) and the no-key sentinel (64) are zeroed to
+; match `keytab`'s convention: $00 means "emits nothing".
+keytab_cbm:
+        .byte $94, $8D, $9D, $8C, $89, $8A, $8B, $91
+        .byte $96, $B3, $B0, $97, $AD, $AE, $B1, $00
+        .byte $98, $B2, $AC, $99, $BC, $BB, $A3, $BD
+        .byte $9A, $B7, $A5, $9B, $BF, $B4, $B8, $BE
+        .byte $29, $A2, $B5, $30, $A7, $A1, $B9, $AA
+        .byte $A6, $AF, $B6, $DC, $3E, $5B, $A4, $3C
+        .byte $A8, $DF, $5D, $93, $00, $3D, $DE, $3F
+        .byte $81, $5F, $00, $95, $A0, $00, $AB, $83
+        .byte $00                       ; 64: no key
 
 decode_unshift:
         ldy KBD_LAYOUT

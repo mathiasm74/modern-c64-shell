@@ -63,12 +63,11 @@ chrout_impl:
         bcc @done               ; other $00-$1F control codes: ignore
         cmp #$80
         bcc @draw               ; $20-$7F: printable
-        cmp #$DB
-        bcc @done               ; $80-$DA (function keys, graphics): ignore
-        cmp #$DE
-        bcs @done               ; $DE-$FF: ignore
+        cmp #$A0
+        bcc @done               ; $80-$9F: control codes (colours etc.), ignore
 
-        ; printable $20-$7F, plus uppercase Swedish Ae/Oe/Aring ($DB-$DD)
+        ; printable $20-$7F, plus the PETSCII graphics $A0-$FF (which include
+        ; the uppercase Swedish Ae/Oe/Aring at $DB-$DD)
 @draw:
         jsr pet2scr
         ldy PNTR
@@ -308,8 +307,8 @@ do_scroll:
 ; Preserves X and Y; clobbers A only.
 ; -------------------------------------------------------------------------
 pet2scr:
-        cmp #$DB
-        bcs @hi                 ; $DB-$FF: uppercase Swedish range (see @hi)
+        cmp #$A0
+        bcs @graphics           ; $A0-$FF: PETSCII graphics (see @graphics)
         cmp #$40
         bcc @keep               ; $20-$3F: screen code == byte
         beq @at                 ; $40 '@' -> $00
@@ -328,11 +327,20 @@ pet2scr:
         sbc #$40
 @keep:
         rts
-@hi:                            ; A >= $DB
-        cmp #$DE
-        bcs @keep               ; $DE-$FF: not ours -> leave unchanged
+; PETSCII graphics, the standard mapping:
+;   $A0-$BF -> screen $60-$7F   (-$40)
+;   $C0-$FF -> screen $40-$7F   (-$80)
+; The uppercase Swedish Ae/Oe/Aring ($DB/$DC/$DD -> $5B/$5C/$5D) used to be a
+; special case here; it is the SAME arithmetic as the $C0-$FF rule, so it is
+; simply covered now -- and the rest of the graphics set came with it.
+@graphics:
+        cmp #$C0
+        bcs @sub80
         sec
-        sbc #$80                ; $DB/$DC/$DD -> $5B/$5C/$5D (upper Ae/Oe/Aring)
+        sbc #$40
+        rts
+@sub80: sec
+        sbc #$80
         rts
 
 ; --- per-row screen-line address tables (low/high bytes) -----------------

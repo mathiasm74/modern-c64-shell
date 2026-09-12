@@ -89,6 +89,63 @@ def test_colour_code_tables(v):
     got = v.read_memory(_symbol_addr("ctrl_color"), 8)
     assert got == want_ctrl, "CTRL colours: %s want %s" % (
         [hex(b) for b in got], [hex(b) for b in want_ctrl])
-    got = v.read_memory(_symbol_addr("cbm_color"), 8)
+    # The C= colours live in the full C= table now (it came from the KERNAL and
+    # carries the graphics too), so read them from the digit keys' matrix slots.
+    tab = v.read_memory(_symbol_addr("keytab_cbm"), 65)
+    got = [tab[i] for i in (56, 59, 8, 11, 16, 19, 24, 27)]
     assert got == want_cbm, "C= colours: %s want %s" % (
         [hex(b) for b in got], [hex(b) for b in want_cbm])
+
+
+_STOCK_KERNAL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "..", "stock-roms", "kernal.901227-03.bin")
+
+
+def _stock_table(addr, n=65):
+    with open(_STOCK_KERNAL, "rb") as f:
+        rom = f.read()
+    return list(rom[addr - 0xE000:addr - 0xE000 + n])
+
+
+def test_cbm_table_matches_the_kernal(v):
+    """C= + key produces the PETSCII graphics the real KERNAL produces.
+
+    Our matrix indexing is the same as the KERNAL's, so its own C= decode table
+    ($EC03) drops straight in -- which is the point: sixty-odd graphics codes
+    are not something to transcribe from memory. This checks ours still equals
+    the ROM's, so a future edit cannot quietly drift.
+
+    Four slots differ by design: the modifier keys (15/52/58/61), where the
+    KERNAL stores flag bits and we store $00 for "emits nothing", and the
+    no-key sentinel at 64. The '@' slot stays faithful to the ROM here; the
+    underscore override for VICE's symbolic keymap is applied in the decode
+    path, not the table.
+    """
+    if not os.path.exists(_STOCK_KERNAL):
+        return                          # skip: no user-supplied stock ROMs
+
+    want = _stock_table(0xEC03)
+    for i in (15, 52, 58, 61, 64):
+        want[i] = 0x00
+    got = v.read_memory(_symbol_addr("keytab_cbm"), 65)
+    assert got == want, "C= table drifted from the KERNAL's\n got: %s\nwant: %s" % (
+        " ".join("%02X" % b for b in got), " ".join("%02X" % b for b in want))
+
+
+def test_ctrl_colours_match_the_kernal(v):
+    """CTRL+1..8 emit what the KERNAL's own CTRL table emits for those keys.
+
+    We keep a small table of our own because our CTRL path is CTRL+letter ->
+    control code, which is NOT what the stock table does -- only the digit row
+    agrees, and this pins that agreement.
+    """
+    if not os.path.exists(_STOCK_KERNAL):
+        return
+
+    ctrl = _stock_table(0xEC78)
+    # matrix slots for the digit keys 1..8, in keycap order
+    digits = [56, 59, 8, 11, 16, 19, 24, 27]
+    want = [ctrl[i] for i in digits]
+    got = v.read_memory(_symbol_addr("ctrl_color"), 8)
+    assert got == want, "CTRL colours differ from the KERNAL's\n got: %s\nwant: %s" % (
+        " ".join("%02X" % b for b in got), " ".join("%02X" % b for b in want))
