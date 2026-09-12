@@ -37,6 +37,34 @@ unsigned char k_chrin(void);
    editor rather than duplicated -- see src/screen.s. */
 unsigned char __fastcall__ svc_scr_display(unsigned char c);
 
+/* ...but the character pane does NOT use that rule for control codes.
+ *
+ * scr_display renders $00-$1F and $80-$9F in reverse video -- $01 as a reversed
+ * `a`, $02 as a reversed `b` -- which is the C64's own quote-mode convention and
+ * exactly right for the TEXT editor, where a colour code embedded in a BASIC
+ * string has to be visible AND distinguishable from the other codes. It is wrong
+ * here: in a hex dump those glyphs read as text when they are not text, so a real
+ * string does not stand out from the control bytes around it. Nothing is lost by
+ * dropping them either, because the hex pane one column over already shows the
+ * exact value. So the pane follows the usual hex-editor convention -- a `.` for
+ * anything unprintable.
+ *
+ * Printable means $20-$7E and $A0-$FF. The high range is the PETSCII graphics set
+ * and those are real glyphs worth seeing -- but note this shell runs the
+ * LOWERCASE charset, where screen codes $41-$5A are uppercase letters rather than
+ * graphics, so PETSCII $C1-$DA draw as A-Z and only $A0-$BF (plus a few strays)
+ * draw as the box/bar set. That is the charset, not a mapping bug: stock BASIC
+ * shows the graphics because it runs the uppercase/graphics charset.
+ */
+#define DOT_SCR  0x2E                   /* screen code for '.' */
+
+static unsigned char char_cell(unsigned char b)
+{
+    if ((b >= 0x20 && b <= 0x7E) || b >= 0xA0)
+        return svc_scr_display(b);
+    return DOT_SCR;
+}
+
 #define SCREEN   ((unsigned char *)0x0400)
 #define CRAM     ((unsigned char *)0xD800)
 #define TEXT_COLOR (*(unsigned char *)0x0286)   /* the shell's current colour */
@@ -299,7 +327,7 @@ static void render_row(unsigned char r, unsigned int off)
                                : svc_scr_display(hexd((unsigned char)(b >> 4)));
         row[6 + i * 3] = blank ? 0x20 : svc_scr_display(hexd(b));
         row[7 + i * 3] = 0x20;          /* separator; i = BPR-1 lands on col 28 */
-        row[30 + i] = blank ? 0x20 : svc_scr_display(b);
+        row[30 + i] = blank ? 0x20 : char_cell(b);
         /* Colour follows the BYTE, so an edited one stays yellow in both panes
            as it scrolls -- the map is the only record, so the repaint must read
            it rather than rely on colour RAM surviving. */

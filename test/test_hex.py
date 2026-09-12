@@ -596,3 +596,46 @@ def test_hex_switching_pane_does_not_repaint(v):
         "TAB no longer switches panes (colour %d)" % _cram(v, 1, 5)
 
     _close_hex(v)
+
+
+def test_hex_character_pane_dots_unprintable_bytes(v):
+    """Control codes show as `.`, not as reverse-video letters.
+
+    scr_display (svc 12) renders $00-$1F and $80-$9F in reverse video -- $01 as a
+    reversed `a` -- which is the C64's quote-mode convention and right for the
+    TEXT editor, where an embedded colour code must stay visible and telling
+    apart. In a hex dump it reads as text when it is not text, so real strings do
+    not stand out; and nothing is lost, since the hex pane already shows the
+    value. The text editor deliberately keeps the old rule.
+
+    The `big` fixture is built to cover the ranges: bytes 0-6 are $00, $20 and
+    five control codes, byte 7 is $26 ('&').
+    """
+    if not _have_big:
+        print("      (skipped: c1541 could not write the fixture)")
+        return
+
+    assert _open_hex(v, BIG_NAME), "hex did not open\n%s" % v.screen_text()
+
+    # Read RAW screen codes, not screen_rows(): the harness decodes a graphics
+    # code to '.' as a placeholder, so a text comparison cannot tell a real dot
+    # from a graphic and this test would be checking the decoder.
+    cells = [b & 0x7F for b in v.read_memory(0x0400 + 1 * 40 + 30, 8)]
+    # bytes $00 $20 $03 $0A $11 $18 $1F $26
+    assert cells == [0x2E, 0x20, 0x2E, 0x2E, 0x2E, 0x2E, 0x2E, 0x26], \
+        "expected dots for the control codes and glyphs for $20/$26, got %s\n%s" \
+        % ([hex(c) for c in cells], v.screen_text())
+
+    # A high byte must still draw its GLYPH, not a dot: the graphics set is real
+    # characters. (Whether the charset renders a given one as a box or as a letter
+    # is a separate matter -- see char_cell's comment.)
+    off = next(i for i in range(2, 8 * 23)
+               if (((i - 2) * 7 + 3) & 0xFF) >= 0xA0)
+    b = ((off - 2) * 7 + 3) & 0xFF
+    want = b - 0x40 if b < 0xC0 else b - 0x80     # pet2scr's graphics mapping
+    got = v.read_byte(0x0400 + (1 + off // 8) * 40 + 30 + off % 8) & 0x7F
+    assert got == want, \
+        "byte $%02X at offset %d drew screen code $%02X, expected $%02X " \
+        "(a dot would be $2E)" % (b, off, got, want)
+
+    _close_hex(v)
