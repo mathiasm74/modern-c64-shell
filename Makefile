@@ -74,11 +74,6 @@ endif
 # when toggling it.
 EXTRA_DEFS ?=
 ASFLAGS += $(EXTRA_DEFS)
-# The C128 build's overlay flash sets have different loadable-set indices than
-# the C64 firmware (see tools/gen_overlay_pages.py), so tell the generator.
-ifneq (,$(findstring TARGET_C128,$(EXTRA_DEFS)))
-export OVL_C128 := 1
-endif
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
 CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD) $(EXTRA_DEFS)
@@ -121,7 +116,7 @@ SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/ie
          src/rbcp/rbcp.s src/rbcp/launch.s
 SRC_C := src/shell.c src/parser.c \
          src/commands/builtins.c src/commands/fs.c \
-         src/commands/overlay.c
+        
 OBJ   := $(patsubst src/%.s,$(BUILD)/%.o,$(SRC_S)) \
          $(patsubst src/%.c,$(BUILD)/%.o,$(SRC_C))
 
@@ -154,41 +149,6 @@ $(BUILD)/%.o: src/%.s | $(BUILD)
 # launch.o, which includes the defs too) if either include changes.
 $(BUILD)/rbcp/rbcp.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
-
-# Tardis overlay library (PLAN.md backlog #4). Each overlay in src/overlays/
-# is linked standalone (single-page at the $CE00 cache, multi-page at $8800)
-# and padded to a 256-byte page multiple. The overlays then pack into TWO 8KB
-# flash sets, each a 2364 chip_set in the One ROM firmware: set A (loadable ROM
-# set 2) = about+files+dir, set B (loadable ROM set 3) = edit. Two sets, not
-# one 16KB set, because a SLOT_PEEK across two chips of a single set isn't
-# contiguous; keeping each overlay wholly inside one 8KB chip means every fetch
-# stays in the proven 8KB-SLOT_PEEK case. Not part of the 16KB shell ROM --
-# only the onerom-stock firmware carries them. The A/B split and intra-set
-# page order are defined in tools/gen_overlay_pages.py (LAYOUT) and mirrored by
-# the overlays_a/b.bin rules below; build/overlay_pages.h is generated from the
-# .bin sizes so the resident thunks never hardcode a page or set number.
-OVERLAYS := $(BUILD)/overlays/about.bin
-# Set/page order MUST match LAYOUT in tools/gen_overlay_pages.py.
-#
-# Only TWO overlays are left -- files and picker became the files bank, dir the
-# disk bank -- so there are two sets: A = edit, B = about. The old set C is gone
-# from onerom-stock.json, which renumbered the loadable sets after it (the banks
-# are 7/8/9; see bank_flash_set in src/rbcp/launch.s).
-OVERLAYS_A := $(BUILD)/overlays/about.bin
-OVERLAY_SETS := $(BUILD)/overlays_a.bin
-
-# The about overlay is self-contained asm linked multi-page at $8800
-# (cfg/overlay_about.cfg); padded to a 256 multiple to stay page-aligned.
-$(BUILD)/overlays/about.bin: $(BUILD)/overlays/about.o cfg/overlay_about.cfg
-	$(LD) -C cfg/overlay_about.cfg -o $@ $(BUILD)/overlays/about.o
-	python3 -c "f=open('$@','r+b'); f.seek(0,2); n=f.tell(); f.write(b'\xff'*((-n)%256))"
-	@echo "  about overlay: $$(wc -c < $@) bytes"
-
-$(BUILD)/overlays/%.o: src/overlays/%.s | $(BUILD)
-	@mkdir -p $(BUILD)/overlays
-	$(AS) $(ASFLAGS) -o $@ $<
-$(BUILD)/overlays/%.bin: $(BUILD)/overlays/%.o cfg/overlay.cfg
-	$(LD) -C cfg/overlay.cfg -o $@ $<
 
 # --- banks (docs/ROM-EXPANSION.md) -------------------------------------------
 # A bank is a self-contained 8KB ROM image the One ROM serves at $A000-$BFFF in
@@ -246,8 +206,9 @@ $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_ban
 # Separate from the disk bank because it needs no cc65 runtime at all, so it
 # costs nothing out of the program load area (cfg/util_bank.cfg).
 $(BUILD)/banks/util_bank.bin: $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
-                              cfg/util_bank.cfg
+                              $(BUILD)/banks/about.o cfg/util_bank.cfg
 	$(LD) -C cfg/util_bank.cfg -o $@ $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
+	      $(BUILD)/banks/about.o \
 	      -Ln $(BUILD)/banks/util_bank.labels -m $(BUILD)/banks/util_bank.map
 	@echo "  util_bank.bin : $$(wc -c < $@) bytes"
 
@@ -287,34 +248,8 @@ BANK_BINS := $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin \
              $(BUILD)/banks/hex_bank.bin
 
 banks: $(BANK_BINS)
-# Generated overlay page-number map (start page of each overlay), derived from
-# the actual .bin sizes. The resident overlay thunks include it; their .s
-# therefore depend on it, and it depends on the overlay .bin -- so the page
-# numbers are always consistent with what's in the overlay sets.
-$(BUILD)/overlay_pages.h: $(OVERLAYS) tools/gen_overlay_pages.py
-	@python3 tools/gen_overlay_pages.py $(BUILD) > $@
-$(BUILD)/commands/overlay.s: $(BUILD)/overlay_pages.h
-$(BUILD)/commands/fs.s: $(BUILD)/overlay_pages.h
 
-# The overlay library is two independent 8KB flash sets (each a single 2364 in
-# cfg/onerom-stock.json). Each holds whole overlays packed from page 0, so a
-# fetch's SLOT_PEEK always stays within one 8KB chip. The A/B grouping here
-# MUST match LAYOUT in tools/gen_overlay_pages.py.
-#
-# These depend on the Makefile itself: the *order/membership* of OVERLAYS_A/B
-# lives only in this file, so a regrouping (e.g. moving an overlay between sets)
-# leaves the member .bins untouched -- without this dep, make would see the
-# stale set binary as newer than its prereqs and skip the rebuild, baking the
-# old page layout into the firmware (resident macros then mismatch -> stage 5).
-define pack_overlay_set
-	cat $(1) > $@
-	python3 -c "import sys; f=open('$@','r+b'); f.seek(0,2); n=f.tell(); \
-	  assert n <= 8192, '$@ overflow (%d > 8192)' % n; f.write(b'\xff'*(8192-n))"
-	@echo "  $(@F): $$(wc -c < $@) bytes"
-endef
 
-$(BUILD)/overlays_a.bin: $(OVERLAYS_A) Makefile
-	$(call pack_overlay_set,$(OVERLAYS_A))
 
 
 
@@ -370,7 +305,7 @@ run: all
 # The banks are prerequisites too: the VICE tests seed them into the RAM under
 # $A000 (most commands live in a bank now), so a test run straight after a
 # clean would otherwise fail with a confusing FileNotFoundError.
-test: all $(OVERLAY_SETS) $(BANK_BINS)
+test: all $(BANK_BINS)
 	$(PYTHON) test/run_tests.py $(M)
 
 # Build a One ROM firmware image holding both halves as a single multi-ROM set
@@ -404,7 +339,7 @@ $(BOOTLOADER): $(BOOTLOADER_SRC) tools/build_bootloader.sh | $(BUILD)
 # JiffyDOS is commercial, so unlike the stock ROMs (Zimmers URLs) it stays a
 # local user-supplied file; the C= boot menu (cfg/onerom-stock.json set 3)
 # offers it as a bootable KERNAL.
-ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(OVERLAY_SETS) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin $(BUILD)/banks/files_bank.bin $(BUILD)/banks/edit_bank.bin $(BUILD)/banks/hex_bank.bin stock-roms/JiffyDOS_C64.bin
+ONEROM_STOCK_DEPS   := $(BASIC) $(KERNAL) $(BOOTLOADER) $(BUILD)/banks/disk_bank.bin $(BUILD)/banks/util_bank.bin $(BUILD)/banks/files_bank.bin $(BUILD)/banks/edit_bank.bin $(BUILD)/banks/hex_bank.bin stock-roms/JiffyDOS_C64.bin
 onerom-stock: $(ONEROM_STOCK_DEPS)
 	$(ONEROM) firmware build --board $(ONEROM_BOARD) --version $(ONEROM_FW_VERSION) \
 		--config-file $(ONEROM_STOCK_CFG) $(ONEROM_PLUGINS) \

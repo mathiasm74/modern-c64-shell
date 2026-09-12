@@ -15,7 +15,6 @@
 #include "parser.h"
 #include "commands/builtins.h"
 #include "commands/fs.h"
-#include "commands/overlay.h"
 
 /* ALL of this file's string literals go in the KERNAL half.
  *
@@ -61,7 +60,7 @@
    BASIC ROM, where the rest of the cc65 output sits. */
 #pragma rodata-name (push, "RODATA2")
 const struct command shell_commands[] = {
-    { "about",  cmd_about  },
+    { "about",  BANK_CMD(BANK_UTIL, 1) },
     { "basic",  cmd_basic  },
     { "bg",     BANK_CMD(BANK_FILES, 8) },
     { "border", BANK_CMD(BANK_FILES, 7) },

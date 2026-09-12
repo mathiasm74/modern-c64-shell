@@ -18,10 +18,17 @@
 ; below.
 
 .import _tab_complete
+.import about_main
 
 .segment "ENTRY"
         .byte "bnk", 1          ; $A000  identity: a bank, and WHICH bank
         jmp _tab_complete       ; $A004  entry 0: complete the word at the cursor
+        jmp about_main          ; $A007  entry 1: the `about` text
+
+; `about` rides in THIS bank rather than one of its own: it is self-contained
+; assembly needing no cc65 runtime, exactly like the completion matcher, and
+; this bank had 90% of its window free. It was the last RAM overlay -- moving it
+; here retired that whole mechanism.
 
 .segment "CODE"
 

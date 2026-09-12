@@ -10,10 +10,12 @@ ROM, so tests write the overlay image straight into its run address. The
 resident thunk validates the cache by the magic in the overlay's own header,
 so seeding the bytes is enough -- no resident state to poke.
 
-The files overlay (cat/less/cp/mv/rm) and the edit overlay share $8800, so a
-test that uses both must re-seed whichever it needs next.
+There are no RAM overlays left: every command lives in a bank, served as ROM at
+$A000 and seeded into the RAM underneath it. The names here are kept as they
+were so callers read naturally ("seed the thing behind these commands").
 
-seed_disk_bank is the odd one out -- see its docstring.
+Only ONE bank can be seeded at a time -- they all link to $A000 -- so a test
+crossing banks must re-seed between them.
 """
 
 import os
@@ -77,8 +79,8 @@ def seed_disk_bank(v):
 
 
 def seed_about(v):
-    """about overlay (self-contained asm pager) -> $8800."""
-    _seed(v, "about.bin", 0x8800)
+    """`about` rides in the util bank now -- same image."""
+    seed_util_bank(v)
 
 
 def seed_hex(v):

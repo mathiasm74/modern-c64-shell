@@ -47,8 +47,9 @@
 ; after the boot normalize in reset.s, or slot 2 for font B -- never 1.)
 .ifdef TARGET_C128
 ; C128/C64C firmware layout (tools/build_c128.sh, build_c64c.sh):
-;   0 Tardis (served), 1 overlays_a (about), 2 edit bank, 3/4/5 disk/util/files
-;   banks, 6 stock C64.
+;   0 Tardis (served), 1 edit, 2 disk, 3 util, 4 files, 5 hex, 6 stock C64.
+; (There are no overlay sets any more -- `about`, the last RAM overlay, moved
+; into the util bank and the whole overlay mechanism went with it.)
 ; `basic`/`run` swap to that stock C64 set (the 325182-style [BASIC][KERNAL]
 ; 16KB image) so C64 mode becomes real stock C64 BASIC.
 RBCP_STOCK_FLASH_SLOT = 6
@@ -751,23 +752,19 @@ BANK_ID        = $02CF          ; bank id being called (page-2 scratch)
 ; tools/build_c128.sh / build_c64c.sh and with cfg/onerom-stock.json.
 bank_flash_set:
 .ifdef TARGET_C128
-        .byte 3                 ; bank 0: disk
-        .byte 4                 ; bank 1: util
-        .byte 5                 ; bank 2: files
-        .byte 2                 ; bank 3: edit -- took the slot the second
-                                ;         overlay set vacated, so nothing else
-                                ;         renumbered when the editor moved out
-                                ;         of RAM
-        .byte 7                 ; bank 4: hex -- appended after stock
+        .byte 2                 ; bank 0: disk
+        .byte 3                 ; bank 1: util
+        .byte 4                 ; bank 2: files
+        .byte 1                 ; bank 3: edit
+        .byte 5                 ; bank 4: hex
 .else
-        .byte 7                 ; bank 0: disk  (dir/ls/pwd/fload/load)
-        .byte 8                 ; bank 1: util  (tab completion)
-        .byte 9                 ; bank 2: files (cat/less/cp/mv/rm/cd/status/
+        .byte 6                 ; bank 0: disk  (dir/ls/pwd/fload/load)
+        .byte 7                 ; bank 1: util  (tab completion, about)
+        .byte 8                 ; bank 2: files (cat/less/cp/mv/rm/cd/status/
                                 ;               border/bg/text/peek/poke/help/
                                 ;               device/devices + the picker)
-        .byte 5                 ; bank 3: edit -- took the slot the second
-                                ;         overlay set vacated (see above)
-        .byte 10                ; bank 4: hex -- appended, so nothing renumbered
+        .byte 4                 ; bank 3: edit
+        .byte 9                 ; bank 4: hex
 .endif
 
 .export _bank_call
@@ -917,33 +914,17 @@ bank_magic_ok:
 bank_magic_str:
         .byte "bnk"
 
-; JSR through the computed vector (the table entry is itself a JMP), then
-; invalidate the RAM overlay cache.
+; JSR through the computed vector (the table entry is itself a JMP).
 ;
-; WHY the invalidate: the bank's per-entry init writes $9800-$9FFF (its DATA,
-; BSS and C stack), and that region is the TAIL of every RAM overlay -- the
-; files overlay's last 7 code pages ($8800+$1700 reaches $9EFF) and its BSS at
-; $9F00, edit's upper pages and BSS, picker's BSS at $9D00. But the overlay
-; cache is validated ONLY by the 4-byte magic at $8803 (mp_cached in
-; overlay.c), which sits below $9800 and therefore SURVIVES intact. So without
-; this, the next overlay command sees a "valid" cache whose upper third is
-; rubble and calls into it.
-;
-; That is the v0.1.89 hardware symptom exactly: `cd` failed most of the time
-; while `bg`/`border`/`text`/`help` -- the SAME overlay, but lower in it --
-; worked, and `edit` worked because its different magic forced a re-fetch
-; anyway. Clearing the magic makes the next overlay command re-fetch, which is
-; simply the truth: the bank really did destroy it.
-;
-; The reverse direction is already safe: an overlay clobbers the bank's RAM
-; just as thoroughly, which is why bank_init re-runs zerobss + copydata + the
-; descramble rebuild on EVERY entry rather than trusting what it left behind.
-OVL_MAGIC = $8803               ; the 4-byte magic mp_cached() checks
-
+; This used to clear the RAM overlay cache's magic at $8803 afterwards, because
+; a bank's per-entry init writes RAM that was the tail of a cached overlay, and
+; the cache was validated only by that magic -- the next overlay command would
+; otherwise have called into rubble (the v0.1.90 `cd` failure). There are no RAM
+; overlays left: `about`, the last one, is in the util bank. So the write is not
+; merely redundant now, it is HARMFUL -- $8803 is ordinary user RAM again, and
+; zeroing it after every disk command would corrupt a loaded program.
 bank_gosub:
         jsr bank_jmp
-        lda #0
-        sta OVL_MAGIC           ; force the next overlay command to re-fetch
         rts
 
 bank_jmp:

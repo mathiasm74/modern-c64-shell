@@ -56,8 +56,8 @@ STOCK_OUT="build/stock-c64-combined.bin"
 echo "== clean + build combined image + overlays (TARGET_C128 = combined-ROM layout) =="
 make clean >/dev/null
 make EXTRA_DEFS='-D TARGET_C128' \
-     build/rom16k.bin build/overlays_a.bin build/overlays_b.bin \
-     build/banks/disk_bank.bin build/banks/util_bank.bin build/banks/files_bank.bin
+     build/rom16k.bin build/banks/edit_bank.bin build/banks/disk_bank.bin \
+     build/banks/util_bank.bin build/banks/files_bank.bin build/banks/hex_bank.bin
 
 if [ ! -f "$STOCK_BASIC" ] || [ ! -f "$STOCK_KERNAL" ]; then
     echo "ERROR: stock C64 ROMs not found ($STOCK_BASIC / $STOCK_KERNAL)." >&2
@@ -71,11 +71,11 @@ echo "== assembling firmware ${OUT} (board ${BOARD}, fw ${FW}) =="
 tools/onerom firmware build --board "$BOARD" --version "$FW" \
   --plugin usb --plugin host-control \
   --slot "file=build/rom16k.bin,type=23128,$CS" \
-  --slot "file=build/overlays_a.bin,type=23128,$CS,size_handling=duplicate" \
-  --slot "file=build/overlays_b.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/edit_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=build/banks/disk_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=build/banks/util_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=build/banks/files_bank.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/hex_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=${STOCK_OUT},type=23128,$CS" \
   --out "$OUT"
 echo "  c64c fw : $(wc -c < "$OUT" | tr -d ' ') bytes -> $OUT"

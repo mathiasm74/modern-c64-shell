@@ -37,7 +37,9 @@ BUILD = sys.argv[1] if len(sys.argv) > 1 else "build"
 # The command modules that still exist. mem.c and config.c are gone: peek/
 # poke and the colour commands moved into the files BANK, leaving no
 # resident code at all (see the bank listing at the end of the report).
-MODULES = ["builtins", "fs", "overlay"]
+# overlay.c is gone with the last RAM overlay: every command lives in a bank,
+# so there is no fetch machinery left to measure.
+MODULES = ["builtins", "fs"]
 
 # Commands whose real body is in an overlay (resident side is only a thunk).
 OVERLAY_CMDS = {"cat", "less", "cp", "mv", "rm", "save", "status", "cd",

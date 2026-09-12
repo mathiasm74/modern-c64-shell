@@ -27,14 +27,14 @@ TBLX   = $D6                    ; KERNAL cursor row -- the page position. The
                                 ; scrolling the title off the top.
 PTR     = $FB                   ; free scratch zp (reset's string ptrs, idle now)
 
-.import __OVL_START__, __OVL_LAST__
+; It is a BANK entry now, not a $8800 overlay: the crt0's JMP table is the entry
+; point, so the old overlay header (jmp + "abt1" magic + page count) is gone
+; along with the fetch machinery that read it.
+.export about_main
 
 .segment "CODE"
 
-        jmp start
-        .byte "abt1"
-        .byte <((__OVL_LAST__ - __OVL_START__ + $FF) / $100)
-start:
+about_main:
         lda #CLEAR              ; fresh screen so the text starts at the top
         jsr CHROUT
         lda #<msg

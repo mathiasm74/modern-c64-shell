@@ -10,7 +10,6 @@
  */
 #include "shell.h"
 #include "iec.h"
-#include "commands/overlay.h"
 
 #define CR    0x0D
 #define CLEAR 0x93
@@ -373,7 +372,7 @@ void settings_save(void);               /* shell.c; persists the font choice */
 #define FONT_MB_FLASH   (*(unsigned char *)0x02C9)
 #define FONT_MB_RAM     (*(unsigned char *)0x02CA)
 #define FONTA_FLASH_SET 1               /* loadable ROM set: shell + US charset */
-#define FONTB_FLASH_SET 6               /* loadable ROM set: shell + swedish */
+#define FONTB_FLASH_SET 5               /* loadable ROM set: shell + swedish */
 #define FONTB_RAM_SLOT  2               /* free RAM slot to stage font B into */
 #define FONTA_RAM_SLOT  0               /* RAM slot font A is staged into */
 #define KBD_LAYOUT      (*(unsigned char *)0x02CB) /* irq.s key-table selector */

@@ -107,21 +107,24 @@ def test_escape_invalidates_planted_cbm80(v):
         "escape did not invalidate the planted CBM80 signature ($8004 still $C3)"
 
 
-def test_overlay_command_fails_gracefully_without_device(v):
-    # `about` is the first overlay command: its code is NOT in the shell ROM
-    # (it lives in the One ROM's overlays flash set), and the resident thunk
-    # fetches it through the same RBCP session machinery as tardis. In VICE
-    # no device answers, so the thunk must report the stage-1 enter failure
-    # rather than jumping into an unfilled cache page.
+def test_bank_command_fails_gracefully_without_device(v):
+    """A command whose code lives outside the 16KB ROM must report, not jump.
+
+    `about` is the case that used to exercise the RAM-overlay fetch: its code
+    was in a flash set and the resident thunk pulled it in over RBCP. It is in
+    the util bank now -- the last overlay retired -- so the failure it reports
+    with no device answering is the bank one, and the point of the test is
+    unchanged: no device, no jump into whatever happens to be at $A000.
+    """
     v.run_for(0.3)
     v.write_memory(0x0277, [ord(c) for c in "about"] + [0x0D])
     v.write_byte(0x00C6, 6)
     for _ in range(10):
         v.run_for(0.5)
-        if "overlay load failed, stage 1" in v.screen_text():
+        if "unavailable" in v.screen_text():
             break
-    assert "overlay load failed, stage 1" in v.screen_text(), \
-        "about did not report the expected overlay-load failure\n%s" % v.screen_text()
+    assert "bank unavailable" in v.screen_text(), \
+        "about did not report the bank as unavailable\n%s" % v.screen_text()
 
 
 def test_back_channel_window_is_free_fill(v):

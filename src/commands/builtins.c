@@ -7,7 +7,6 @@
  */
 #include "shell.h"
 #include "commands/builtins.h"
-#include "commands/overlay.h"     /* run_files_overlay (help thunk) */
 
 #define CR    0x0D             /* RETURN / newline */
 #define CLEAR 0x93             /* CHROUT clear-screen control code */
@@ -32,7 +31,7 @@ void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Brand + version; kept in step with the boot banner's version (reset.s). */
-    puts_raw("Tardis DOS v0.2.08");
+    puts_raw("Tardis DOS v0.2.09");
     chrout(CR);
 }
 #pragma rodata-name (pop)

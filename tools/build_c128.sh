@@ -38,18 +38,18 @@ STOCK_C64="https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c128/c128_
 echo "== clean + build C128 shell (TARGET_C128) =="
 make clean >/dev/null
 make EXTRA_DEFS='-D TARGET_C128' \
-     build/rom16k.bin build/overlays_a.bin build/overlays_b.bin \
-     build/banks/disk_bank.bin build/banks/util_bank.bin build/banks/files_bank.bin
+     build/rom16k.bin build/banks/edit_bank.bin build/banks/disk_bank.bin \
+     build/banks/util_bank.bin build/banks/files_bank.bin build/banks/hex_bank.bin
 
 echo "== assembling firmware ${OUT} (board ${BOARD}, fw ${FW}) =="
 tools/onerom firmware build --board "$BOARD" --version "$FW" \
   --plugin usb --plugin host-control \
   --slot "file=build/rom16k.bin,type=23128,$CS" \
-  --slot "file=build/overlays_a.bin,type=23128,$CS,size_handling=duplicate" \
-  --slot "file=build/overlays_b.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/edit_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=build/banks/disk_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=build/banks/util_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=build/banks/files_bank.bin,type=23128,$CS,size_handling=duplicate" \
+  --slot "file=build/banks/hex_bank.bin,type=23128,$CS,size_handling=duplicate" \
   --slot "file=${STOCK_C64},type=23128,$CS" \
   --out "$OUT"
 echo "  c128 fw : $(wc -c < "$OUT" | tr -d ' ') bytes -> $OUT"
