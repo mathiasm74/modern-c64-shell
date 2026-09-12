@@ -43,6 +43,7 @@ unsigned char __fastcall__ svc_scr_display(unsigned char c);
 #define VIC_BG     (*(unsigned char *)0xD021)
 #define COL_FOCUS  0x01                 /* white: the cell being edited */
 #define COL_MIRROR 0x0F                 /* light grey: the same byte, other pane */
+#define COL_EDITED 0x07                 /* yellow: a byte changed this session */
 #define DATA_LO    5                    /* first column of the hex pane */
 #define DATA_HI    37                   /* last column of the PETSCII pane */
 
@@ -59,6 +60,28 @@ static unsigned char col_data;
    into it would overwrite the editor while it runs. */
 #define BUF      ((unsigned char *)0x0800)
 #define BUFMAX   0x9400U
+
+/* Which bytes have been changed, one bit each, so they can be drawn in yellow.
+ *
+ * It lives immediately PAST the document, in whatever is left of the buffer:
+ * there is nowhere else. The bank's BSS is a 256-byte window shared with every
+ * other bank ($9D10-$9E0F), and $C000-$CFFF is spoken for (the settings blob,
+ * the RBCP copy, the completion name cache, the run stub). A map costs an eighth
+ * of the file, so it fits whenever flen + flen/8 <= BUFMAX, i.e. up to ~33.6KB.
+ * Above that the map is simply switched OFF -- editing a bigger file still works,
+ * it just does not get the highlight. That is the right trade: reserving the
+ * eighth up front would have cut the largest editable file by 11% for everyone.
+ *
+ * A list of edited offsets was the alternative and is worse: it has to be
+ * searched per drawn cell, and a full repaint draws 184 of them, so even a
+ * 64-entry list costs ~12k comparisons per scroll. A bitmap is one shift and one
+ * AND per cell however many edits there are.
+ */
+static unsigned char *emap;             /* NULL semantics carried by `track` */
+static unsigned char track;             /* 0 = file too big, no highlighting */
+
+/* cc65 turns `1 << (off & 7)` into a shift loop; a table is smaller and flat. */
+static const unsigned char bitmask[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };
 
 /* argc/argv published by the resident dispatcher (bank_dispatch in fs.c). */
 #define BD_ARGC  (*(unsigned char *)0x03A0)
@@ -102,6 +125,34 @@ static unsigned char hexval(unsigned char c)
     if (c >= 'A' && c <= 'F')
         return (unsigned char)(c - 'A' + 10);
     return 0xFF;
+}
+
+static void edits_init(void)
+{
+    unsigned int bytes = (unsigned int)((flen + 7) >> 3);
+    unsigned int i;
+
+    track = 0;
+    if (flen == 0 || flen + bytes > BUFMAX)
+        return;                         /* no room past the document: no map */
+    emap = BUF + flen;
+    for (i = 0; i < bytes; ++i)
+        emap[i] = 0;
+    track = 1;
+}
+
+static void mark_edited(unsigned int off)
+{
+    if (track)
+        emap[off >> 3] |= bitmask[(unsigned char)off & 7];
+}
+
+/* The colour a byte's cells should carry when the cursor is not on them. */
+static unsigned char cell_color(unsigned int off)
+{
+    if (track && (emap[off >> 3] & bitmask[(unsigned char)off & 7]))
+        return COL_EDITED;
+    return col_data;
 }
 
 static void clear_row(unsigned char *r)
@@ -168,7 +219,8 @@ static void draw_title(void)
 static void render_row(unsigned char r, unsigned int off)
 {
     unsigned char *row = SCREEN + (r + 1) * COLS;
-    unsigned char i, b, blank;
+    unsigned char *crow = CRAM + (r + 1) * COLS;
+    unsigned char i, b, blank, col;
 
     if (off > flen || (off >= flen && off != 0 && flen != 0)) {
         clear_row(row);                 /* past the end: blank, one pass */
@@ -179,11 +231,18 @@ static void render_row(unsigned char r, unsigned int off)
     for (i = 0; i < BPR; ++i) {
         blank = (unsigned char)(off + i >= flen);
         b = blank ? 0 : BUF[off + i];
+        col = blank ? col_data : cell_color(off + i);
         row[5 + i * 3] = blank ? 0x20
                                : svc_scr_display(hexd((unsigned char)(b >> 4)));
         row[6 + i * 3] = blank ? 0x20 : svc_scr_display(hexd(b));
         row[7 + i * 3] = 0x20;          /* separator; i = BPR-1 lands on col 28 */
         row[30 + i] = blank ? 0x20 : svc_scr_display(b);
+        /* Colour follows the BYTE, so an edited one stays yellow in both panes
+           as it scrolls -- the map is the only record, so the repaint must read
+           it rather than rely on colour RAM surviving. */
+        crow[5 + i * 3] = col;
+        crow[6 + i * 3] = col;
+        crow[30 + i] = col;
     }
     row[29] = 0x20;
     row[38] = 0x20;
@@ -221,19 +280,23 @@ static unsigned char mirror_col(unsigned char *len)
    and it is what lets the colours be PUT BACK, without which the cursor would
    leave a trail of white cells behind it. */
 static unsigned char cur_r, cur_c, cur_shown, cur_mc, cur_ml;
+static unsigned int cur_off;            /* which byte, so its colour can be
+                                           restored -- col_data or yellow */
 
 static void cursor_off(void)
 {
     unsigned int base;
-    unsigned char i;
+    unsigned char i, col;
 
     if (!cur_shown)
         return;
     base = (unsigned int)(cur_r + 1) * COLS;
+    col = cell_color(cur_off);          /* NOT col_data: an edited byte goes
+                                           back to yellow, not to the pane */
     SCREEN[base + cur_c] &= 0x7F;
-    CRAM[base + cur_c] = col_data;
+    CRAM[base + cur_c] = col;
     for (i = 0; i < cur_ml; ++i)
-        CRAM[base + cur_mc + i] = col_data;
+        CRAM[base + cur_mc + i] = col;
     cur_shown = 0;
 }
 
@@ -248,6 +311,7 @@ static void cursor_on(void)
     cur_r = r;
     cur_c = cursor_col();
     cur_mc = mirror_col(&cur_ml);
+    cur_off = pos;
     cur_shown = 1;
     base = (unsigned int)(r + 1) * COLS;
     SCREEN[base + cur_c] |= 0x80;
@@ -457,6 +521,7 @@ void hex_main(void)
         load_file();
     else
         msg("usage: hex <name>");
+    edits_init();                       /* needs flen, so after the load */
     render();
 
     for (;;) {
@@ -535,6 +600,7 @@ void hex_main(void)
             else
                 BUF[pos] = (unsigned char)((BUF[pos] & 0xF0) | v);
             modified = 1;
+            mark_edited(pos);
             edited = 1;
             erow = (unsigned char)((pos - top) / BPR);
             if (nib == 0) {
@@ -550,6 +616,7 @@ void hex_main(void)
                 continue;
             BUF[pos] = c;
             modified = 1;
+            mark_edited(pos);
             edited = 1;
             erow = (unsigned char)((pos - top) / BPR);
         }

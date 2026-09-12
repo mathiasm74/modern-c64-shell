@@ -23,6 +23,8 @@ TAB = 0x09
 CTRL_X = 0x18
 CTRL_O = 0x0F
 K_RIGHT = 0x1D
+K_LEFT = 0x9D
+K_HOME = 0x13
 
 
 def _keys(v, codes):
@@ -328,5 +330,77 @@ def test_hex_cursor_colours_focus_and_companion_and_cleans_up(v):
     assert _cram(v, 1, 8) == COL_MIRROR and _cram(v, 1, 9) == COL_MIRROR, \
         "both hex digits of the byte should be the companion, got %d/%d" \
         % (_cram(v, 1, 8), _cram(v, 1, 9))
+
+    _close_hex(v)
+
+
+COL_EDITED = 0x07                       # yellow
+
+
+def test_hex_marks_edited_bytes_in_yellow(v):
+    """An edited byte turns yellow in BOTH panes, and stays yellow.
+
+    Two interactions carry the risk, and neither is obvious from reading the
+    feature in isolation:
+
+      - cursor_off restores a cell's colour when the cursor leaves. It must
+        restore the BYTE's colour, not the pane's, or editing a byte and moving
+        on wipes the mark you just made.
+      - a cursor move does not repaint (v0.2.13) but a SCROLL does, and the
+        repaint's only record of what was edited is the bitmap. Colour RAM is not
+        a record: render_row overwrites it.
+
+    The map itself lives just past the document in the buffer, so it also has to
+    survive being adjacent to the data it describes.
+    """
+    assert _open_hex(v, "readme"), "hex did not open\n%s" % v.screen_text()
+
+    pane = _PANE_COLOR[v.read_byte(0xD021) & 0x0F]
+
+    # Edit byte 1 (not 0: byte 0 is where the cursor starts, and its cells are
+    # white/grey from the cursor, which would mask a missing mark).
+    _keys(v, [K_RIGHT, K_RIGHT])        # nibble, then on to byte 1
+    _keys(v, "ab")                      # both nibbles -> cursor steps to byte 2
+    v.run_for(0.4)
+
+    # Byte 1's cells: hex pair at cols 8-9, character at col 31.
+    for col in (8, 9, 31):
+        assert _cram(v, 1, col) == COL_EDITED, \
+            "edited byte's cell at col %d is colour %d, expected yellow -- " \
+            "cursor_off restores the PANE colour instead of the byte's" \
+            % (col, _cram(v, 1, col))
+
+    # Its neighbours are untouched, so the mark is per byte and not per row.
+    for col in (14, 33):                # byte 3: never edited, never focused
+        assert _cram(v, 1, col) == pane, \
+            "an unedited byte at col %d went colour %d, expected the pane's %d" \
+            % (col, _cram(v, 1, col), pane)
+
+    # Now the case that isolates cursor_off. Land the cursor back ON the edited
+    # byte and then walk off it with plain cursor keys: no edit happens, so
+    # nothing repaints the row, and cursor_off's restore is the ONLY thing that
+    # decides what colour the byte is left in. (Right after an edit this is
+    # invisible -- render_row rebuilds that row from the map and covers a wrong
+    # restore, which is why the check above cannot stand in for this one.)
+    _keys(v, [K_LEFT])                  # back onto byte 1 (cursor paints it white)
+    v.run_for(0.3)
+    assert _cram(v, 1, 9) == COL_FOCUS, \
+        "expected the cursor back on byte 1, got colour %d" % _cram(v, 1, 9)
+    _keys(v, [K_RIGHT, K_RIGHT])        # ...and off it again, editing nothing
+    v.run_for(0.3)
+    for col in (8, 9, 31):
+        assert _cram(v, 1, col) == COL_EDITED, \
+            "walking off the edited byte left col %d colour %d -- cursor_off " \
+            "restores the pane colour instead of the byte's" \
+            % (col, _cram(v, 1, col))
+
+    # The mark must survive a repaint that rebuilds the row from the map.
+    assert v.read_memory(0x0800 + 1, 1)[0] == 0xAB, "the edit did not land"
+    _keys(v, [K_HOME])                  # forces a full render()
+    v.run_for(0.4)
+    for col in (8, 9, 31):
+        assert _cram(v, 1, col) == COL_EDITED, \
+            "the mark at col %d was lost on a full repaint (colour %d) -- the " \
+            "repaint is not reading the edit map" % (col, _cram(v, 1, col))
 
     _close_hex(v)
