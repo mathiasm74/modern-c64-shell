@@ -951,3 +951,53 @@ def test_hex_undo_finds_a_byte_that_scrolled_away(v):
         "one undo should restore $F0, got $%02X" % v.read_memory(0x0800, 1)[0]
 
     _close_hex(v)
+
+
+def test_hex_undo_clears_the_yellow_mark_when_the_byte_is_back(v):
+    """A byte undone all the way back stops showing as edited.
+
+    The mark exists to tell you what you changed, so a stale one is worse than
+    none. The ring already knows: records hold the value BEFORE each write, so
+    once no remaining record mentions an offset, the value just restored is the
+    one the file was loaded with. A byte edited twice therefore keeps its mark
+    through the first undo and loses it on the second -- and that partial step is
+    the part worth testing, since clearing on the first undo would be just as
+    wrong as never clearing.
+    """
+    assert _open_hex(v, "readme"), "hex did not open\n%s" % v.screen_text()
+    pane = _PANE_COLOR[v.read_byte(0xD021) & 0x0F]
+
+    # Edit byte 1 (two nibbles), so it is marked and the cursor has moved off it.
+    _keys(v, [K_RIGHT, K_RIGHT])
+    _keys(v, "ab")
+    v.run_for(0.5)
+    assert _cram(v, 1, 8) == COL_EDITED, "the edit was not marked"
+    assert "*" in v.screen_rows()[0], "the modified flag is missing"
+
+    # First undo: one nibble back, still different from the file -> still marked.
+    # Read col 9, the byte's SECOND hex digit: undo puts the cursor on the byte it
+    # restored, so col 8 is the white focus cell and says nothing about the mark.
+    _keys(v, [CTRL_Z])
+    v.run_for(0.4)
+    assert _cram(v, 1, 9) == COL_EDITED, \
+        "after one of two undos the byte still differs, so it must stay marked " \
+        "(colour %d)" % _cram(v, 1, 9)
+
+    # Second undo: back to the loaded value -> the mark comes off, in both panes.
+    _keys(v, [CTRL_Z])
+    v.run_for(0.4)
+    _keys(v, [K_HOME])                  # step the cursor off it, so all three
+    v.run_for(0.4)                      # cells show the byte's own colour
+    for col in (8, 9, 31):
+        assert _cram(v, 1, col) == pane, \
+            "cell at col %d is still colour %d after undoing back to the file's " \
+            "value; expected the pane's %d" % (col, _cram(v, 1, col), pane)
+
+    # ...and with the whole ring emptied, the buffer is unmodified again.
+    assert "*" not in v.screen_rows()[0], \
+        "undoing everything should drop the modified flag:\n%s" % v.screen_rows()[0]
+
+    # Which means ^X leaves without asking anything.
+    _keys(v, [CTRL_X])
+    assert _wait(v, "8>"), \
+        "an fully-undone file should exit without prompting\n%s" % v.screen_text()

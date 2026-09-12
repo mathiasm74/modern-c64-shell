@@ -153,14 +153,26 @@ static unsigned char patlen;            /* ...so a bare RETURN repeats it */
  * hand expects, rather than losing the whole byte.
  *
  * The ring holds the last UNDO_N and drops the oldest, so it is bounded depth
- * rather than full history -- lives past the edit map, see edits_init. It does
- * NOT clear a byte's yellow mark: `modified` and the mark both mean "touched this
- * session", which stays true, and reconstructing whether a byte is back at its
- * ON-DISK value would need the file's original bytes kept as well.
+ * rather than full history -- lives past the edit map, see edits_init.
+ *
+ * UNDO ALSO CLEARS THE YELLOW MARK when the byte is back where it started. The
+ * first cut did not, on the reasoning that the mark meant "touched this session"
+ * and that knowing the ON-DISK value would need a second copy of the file. That
+ * was wrong: the ring already carries it. Records hold the value BEFORE each
+ * write, so after popping one, if NO REMAINING record mentions that offset then
+ * the value just restored is the one the file was loaded with -- and the mark
+ * comes off. A byte edited three times keeps its mark for the first two undos and
+ * loses it on the third, which is what you want. Same argument retires `modified`
+ * when the ring empties, so undoing everything also drops the `*` and stops ^X
+ * from asking. The one inexact case is a ring that has DROPPED records (`uevict`):
+ * an evicted earlier edit to the same byte cannot be seen, so `modified` is left
+ * set -- erring towards "you still have changes", never the other way.
  */
 static unsigned char *uring;            /* UNDO_N * 3: off lo, off hi, old byte */
 static unsigned char uhead;             /* next slot to write */
 static unsigned char ucount;            /* records available to undo */
+static unsigned char uevict;            /* the ring has dropped a record, so its
+                                           history is no longer complete */
 
 static unsigned char *edir;             /* chunk -> block, or EDNONE */
 static unsigned char *epool;
@@ -231,6 +243,7 @@ static void edits_init(void)
     eblocks = 0;
     uhead = 0;
     ucount = 0;
+    uevict = 0;
     if (flen == 0
         || flen + (EDCHUNKS + EDBLOCKS * EDBLK + UNDO_N * 3) > BUFMAX)
         return;                         /* no room past the document: neither */
@@ -255,7 +268,27 @@ static void undo_push(unsigned int off, unsigned char old)
     r[2] = old;
     uhead = (unsigned char)((uhead + 1) & (UNDO_N - 1));
     if (ucount < UNDO_N)
-        ++ucount;                       /* full: the oldest is simply dropped */
+        ++ucount;
+    else
+        uevict = 1;                     /* the oldest is dropped: history is now
+                                           partial, which `modified` must respect */
+}
+
+/* Does any record still in the ring refer to this offset? If not, the value we
+   just restored is the one the file was loaded with. */
+static unsigned char still_pending(unsigned int off)
+{
+    unsigned char i, idx;
+    unsigned char *r;
+
+    idx = (unsigned char)((uhead + UNDO_N - ucount) & (UNDO_N - 1));
+    for (i = 0; i < ucount; ++i) {
+        r = uring + (unsigned int)idx * 3;
+        if ((unsigned int)(r[0] | ((unsigned int)r[1] << 8)) == off)
+            return 1;
+        idx = (unsigned char)((idx + 1) & (UNDO_N - 1));
+    }
+    return 0;
 }
 
 static void mark_edited(unsigned int off)
@@ -288,6 +321,19 @@ static void mark_edited(unsigned int off)
 }
 
 /* The colour a byte's cells should carry when the cursor is not on them. */
+static void unmark_edited(unsigned int off)
+{
+    unsigned char blk;
+
+    if (!track)
+        return;
+    blk = edir[off / EDCHUNK];
+    if (blk != EDNONE)
+        epool[(unsigned int)blk * EDBLK
+              + (((unsigned char)off & (EDCHUNK - 1)) >> 3)]
+            &= (unsigned char)~bitmask[(unsigned char)off & 7];
+}
+
 static unsigned char cell_color(unsigned int off)
 {
     unsigned char blk;
@@ -702,6 +748,13 @@ static void do_undo(void)
     BUF[off] = r[2];
     pos = off;
     nib = 0;
+    /* Back to the loaded value? Then it is no longer an edit, and must stop
+       showing as one -- the mark is what tells you what you changed, so a stale
+       one is worse than none. */
+    if (!still_pending(off))
+        unmark_edited(off);
+    if (ucount == 0 && !uevict)
+        modified = 0;                   /* everything undone: drop the `*` too */
     if (pos < top || pos >= top + PAGE)
         top = (pos / BPR) * BPR;
 }
