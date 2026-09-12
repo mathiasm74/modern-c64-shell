@@ -47,6 +47,11 @@ K_RIGHT = 0x1D
 K_LEFT = 0x9D
 K_HOME = 0x13
 K_PANE = 0x5E
+CTRL_B = 0x02
+CTRL_F = 0x06
+CTRL_G = 0x07
+CTRL_W = 0x17
+DUMP_ROWS = 22                          # must match ROWS in hex.c
 
 
 def _keys(v, codes):
@@ -107,11 +112,13 @@ def _open_hex(v, name):
     _keys(v, [CR])
     if not _wait(v, "hex: " + name):
         return False
-    # The title is not enough: render() draws it FIRST and the 22 dump rows
-    # after, so matching the title can return while the dump is still being
-    # painted -- anything the test then writes to the screen gets overwritten as
-    # the paint finishes. The help line is drawn LAST, so it means "done".
-    return _wait(v, "^x exit")
+    # The title is not enough: render() draws it FIRST and the dump rows after,
+    # so matching the title can return while the dump is still being painted --
+    # anything the test then writes to the screen gets overwritten as the paint
+    # finishes. Wait for the LAST thing drawn instead, which is the second legend
+    # row. Match its plain text, not the "^x" part: `^` renders as the up-arrow
+    # GLYPH here, so what the decoder gives back for it is not a caret.
+    return _wait(v, "0-9a-f")
 
 
 def _close_hex(v):
@@ -535,7 +542,7 @@ def test_hex_scrolls_a_page_at_a_time(v):
         return int(v.screen_rows()[1][:4], 16)     # address of the top dump row
 
     def cursor_row(v):
-        for r in range(1, 24):
+        for r in range(1, DUMP_ROWS + 1):
             for c in range(5, 29):
                 if v.read_byte(0x0400 + r * 40 + c) & 0x80:
                     return r
@@ -544,7 +551,7 @@ def test_hex_scrolls_a_page_at_a_time(v):
     assert first_addr(v) == 0, "expected to start at the top of the file"
 
     # Walk down to the last visible row, then one more: that step scrolls.
-    for _ in range(23):
+    for _ in range(DUMP_ROWS):
         _keys(v, [0x11])                            # cursor down
     v.run_for(0.4)
     assert first_addr(v) != 0, "stepping past the last row did not scroll"
@@ -552,16 +559,16 @@ def test_hex_scrolls_a_page_at_a_time(v):
         "after scrolling off the bottom the cursor should be on the TOP row, " \
         "it is on screen row %d" % cursor_row(v)
     # A page, not a line: the window moved by a full screen of bytes.
-    assert first_addr(v) == 23 * 8, \
+    assert first_addr(v) == DUMP_ROWS * 8, \
         "expected the window to move a page (to $%04X), it moved to $%04X" \
-        % (23 * 8, first_addr(v))
+        % (DUMP_ROWS * 8, first_addr(v))
 
     # ...and back up the other way.
     _keys(v, [0x91])                                # cursor up, off the top
     v.run_for(0.4)
     assert first_addr(v) == 0, \
         "stepping off the top should page back to $0000, went to $%04X" % first_addr(v)
-    assert cursor_row(v) == 23, \
+    assert cursor_row(v) == DUMP_ROWS, \
         "after scrolling off the top the cursor should be on the BOTTOM row, " \
         "it is on screen row %d" % cursor_row(v)
 
@@ -629,7 +636,7 @@ def test_hex_character_pane_dots_unprintable_bytes(v):
     # A high byte must still draw its GLYPH, not a dot: the graphics set is real
     # characters. (Whether the charset renders a given one as a box or as a letter
     # is a separate matter -- see char_cell's comment.)
-    off = next(i for i in range(2, 8 * 23)
+    off = next(i for i in range(2, 8 * DUMP_ROWS)
                if (((i - 2) * 7 + 3) & 0xFF) >= 0xA0)
     b = ((off - 2) * 7 + 3) & 0xFF
     want = b - 0x40 if b < 0xC0 else b - 0x80     # pet2scr's graphics mapping
@@ -637,5 +644,155 @@ def test_hex_character_pane_dots_unprintable_bytes(v):
     assert got == want, \
         "byte $%02X at offset %d drew screen code $%02X, expected $%02X " \
         "(a dot would be $2E)" % (b, off, got, want)
+
+    _close_hex(v)
+
+
+def _at(v):
+    """The cursor's offset, from the title's "at" field."""
+    row = v.screen_rows()[0]
+    i = row.find("at ")
+    return int(row[i + 3:i + 7], 16)
+
+
+def _top(v):
+    """The offset of the first visible dump row."""
+    return int(v.screen_rows()[1][:4], 16)
+
+
+def test_hex_page_keys_move_a_window_and_keep_the_row(v):
+    """^F / ^B move a whole window and leave the cursor on the same screen row.
+
+    Keeping the row is the point: a page key that also jumps the cursor to an
+    edge makes the eye re-find it on every press. Needs the tall fixture, since
+    every tracked file is shorter than one window.
+    """
+    if not _have_big:
+        print("      (skipped: c1541 could not write the tall fixture)")
+        return
+
+    assert _open_hex(v, BIG_NAME), "hex did not open\n%s" % v.screen_text()
+
+    # Put the cursor a few rows down so "same row" is a real claim.
+    for _ in range(3):
+        _keys(v, [0x11])
+    v.run_for(0.3)
+    assert _top(v) == 0 and _at(v) == 24, "expected byte 24 on screen row 4"
+
+    _keys(v, [CTRL_F])
+    v.run_for(0.4)
+    assert _top(v) == DUMP_ROWS * 8, \
+        "^f should move one window, top is $%04X" % _top(v)
+    assert _at(v) == DUMP_ROWS * 8 + 24, \
+        "^f moved the cursor off its row: at $%04X" % _at(v)
+
+    _keys(v, [CTRL_B])
+    v.run_for(0.4)
+    assert _top(v) == 0 and _at(v) == 24, \
+        "^b should come back to top $0000 / byte $0018, got $%04X / $%04X" \
+        % (_top(v), _at(v))
+
+    # At the top, ^b is a no-op rather than an error or a wrap.
+    _keys(v, [CTRL_B])
+    v.run_for(0.3)
+    assert _top(v) == 0 and _at(v) == 24, "^b at the top should do nothing"
+
+    _close_hex(v)
+
+
+def test_hex_goto_jumps_to_an_address(v):
+    """^G reads a hex address and puts that byte's row at the top."""
+    if not _have_big:
+        print("      (skipped: c1541 could not write the tall fixture)")
+        return
+
+    assert _open_hex(v, BIG_NAME), "hex did not open\n%s" % v.screen_text()
+
+    _keys(v, [CTRL_G])
+    v.run_for(0.3)
+    assert "goto" in v.screen_text(), "no goto prompt\n%s" % v.screen_text()
+    _keys(v, "10a")                     # $010A
+    _keys(v, [CR])
+    v.run_for(0.4)
+    assert _at(v) == 0x10A, "goto landed on $%04X, expected $010A" % _at(v)
+    assert _top(v) == (0x10A // 8) * 8, \
+        "the target's row should be at the top, top is $%04X" % _top(v)
+
+    # Past the end is refused, and the cursor stays put.
+    was = _at(v)
+    _keys(v, [CTRL_G])
+    v.run_for(0.3)
+    _keys(v, "7fff")
+    _keys(v, [CR])
+    v.run_for(0.4)
+    assert "past end" in v.screen_text(), \
+        "an address past the end should be refused\n%s" % v.screen_text()
+    assert _at(v) == was, "the cursor moved on a refused goto"
+
+    # STOP cancels without moving.
+    _keys(v, [CTRL_G])
+    v.run_for(0.3)
+    _keys(v, "20")
+    _keys(v, [0x03])                    # STOP
+    v.run_for(0.4)
+    assert _at(v) == was, "STOP should cancel the goto, cursor is at $%04X" % _at(v)
+
+    _close_hex(v)
+
+
+def test_hex_find_text_and_hex_and_repeat(v):
+    """^W finds text, or hex bytes with the shell's `$` prefix, and wraps.
+
+    A bare RETURN repeats the last pattern, which is how "find next" works
+    without spending another key on it.
+    """
+    assert _open_hex(v, "doc"), "hex did not open\n%s" % v.screen_text()
+
+    # `doc` is "l00\rl01\r...l29\r" -- so "l1" first occurs at line 10's start.
+    _keys(v, [CTRL_W])
+    v.run_for(0.3)
+    assert "find" in v.screen_text(), "no find prompt\n%s" % v.screen_text()
+    _keys(v, "l1")
+    _keys(v, [CR])
+    v.run_for(0.4)
+    first = _at(v)
+    assert first == 40, "expected 'l1' at offset 40, found $%04X" % first
+
+    # Bare RETURN repeats it: the next occurrence, four bytes on (l10..l19).
+    _keys(v, [CTRL_W])
+    v.run_for(0.3)
+    _keys(v, [CR])
+    v.run_for(0.4)
+    assert _at(v) == 44, "repeat should find the next 'l1' at 44, got $%04X" % _at(v)
+
+    # Hex search, with the shell's `$` convention. $0D is the line terminator.
+    _keys(v, [CTRL_W])
+    v.run_for(0.3)
+    _keys(v, "$0d")
+    _keys(v, [CR])
+    v.run_for(0.4)
+    assert v.read_memory(0x0800 + _at(v), 1)[0] == 0x0D, \
+        "hex search landed on $%02X, not $0D" \
+        % v.read_memory(0x0800 + _at(v), 1)[0]
+
+    # Something absent says so, and does not move the cursor.
+    was = _at(v)
+    _keys(v, [CTRL_W])
+    v.run_for(0.3)
+    _keys(v, "zzz")
+    _keys(v, [CR])
+    v.run_for(0.4)
+    assert "not found" in v.screen_text(), \
+        "a missing pattern should report it\n%s" % v.screen_text()
+    assert _at(v) == was, "the cursor moved on a failed search"
+
+    # A malformed hex pattern is refused rather than half-parsed.
+    _keys(v, [CTRL_W])
+    v.run_for(0.3)
+    _keys(v, "$0")
+    _keys(v, [CR])
+    v.run_for(0.4)
+    assert "whole bytes" in v.screen_text(), \
+        "an odd-length hex pattern should be refused\n%s" % v.screen_text()
 
     _close_hex(v)

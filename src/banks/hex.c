@@ -79,7 +79,16 @@ static unsigned char char_cell(unsigned char b)
    pane_color below). Declared up here because the cursor helpers restore it. */
 static unsigned char col_data;
 #define COLS     40
-#define ROWS     23                     /* screen rows 1..23 hold the dump */
+#define ROWS     22                     /* screen rows 1..22 hold the dump */
+#define HELPROW  23                     /* permanent legend */
+#define MSGROW   24                     /* legend line 2, and where msg() writes.
+                                           Two lines: the editor grew enough
+                                           commands that one 40-column row could
+                                           not name them, and an unadvertised
+                                           binding is one nobody finds -- the
+                                           lesson from the CTRL-tap completion. */
+#define PAGE     ((unsigned int)ROWS * BPR)
+#define PATMAX   16                     /* longest search pattern */
 #define BPR      8                      /* bytes per row */
 #define STREG    (*(unsigned char *)0x90)
 
@@ -127,6 +136,9 @@ static void msg(const char *s);         /* defined below; mark_edited reports
 #define EDBLOCKS  64                    /* chunks trackable at once */
 #define EDNONE    0xFF
 
+static unsigned char pat[PATMAX];       /* the last search pattern... */
+static unsigned char patlen;            /* ...so a bare RETURN repeats it */
+
 static unsigned char *edir;             /* chunk -> block, or EDNONE */
 static unsigned char *epool;
 static unsigned char eblocks;           /* blocks handed out */
@@ -151,6 +163,12 @@ static const unsigned char bitmask[8] = { 1, 2, 4, 8, 16, 32, 64, 128 };
 #define CTRL_X   0x18
 #define CTRL_O   0x0F
 #define TAB      0x09
+#define CTRL_B   0x02                   /* page back  (vi's ^B) */
+#define CTRL_F   0x06                   /* page forward (vi's ^F) */
+#define CTRL_G   0x07                   /* go to address */
+#define CTRL_W   0x17                   /* find (nano's "where is") */
+#define K_STOP   0x03
+#define K_DEL    0x14
 
 static unsigned int flen;               /* bytes held */
 static unsigned int pos;                /* cursor byte offset */
@@ -266,19 +284,20 @@ static void put_hex16(unsigned char *r, unsigned int v)
 
 static void msg(const char *s)
 {
-    clear_row(SCREEN + 24 * COLS);
-    put_str(SCREEN + 24 * COLS, s);
+    clear_row(SCREEN + MSGROW * COLS);
+    put_str(SCREEN + MSGROW * COLS, s);
     msg_hold = 1;
 }
 
 static void draw_help(void)
 {
-    clear_row(SCREEN + 24 * COLS);
     /* `^` renders as the up-arrow glyph in the C64 charset (screen code $1E),
        which is exactly the key it names -- and also how the CTRL combinations
-       above read, since there is no caret glyph. The standalone one is the pane
-       key. */
-    put_str(SCREEN + 24 * COLS, "^x exit ^o save ^ pane  0-9a-f edit");
+       read, since there is no caret glyph. The standalone one is the pane key. */
+    clear_row(SCREEN + HELPROW * COLS);
+    put_str(SCREEN + HELPROW * COLS, "^x quit ^o save ^ pane ^b/^f page");
+    clear_row(SCREEN + MSGROW * COLS);
+    put_str(SCREEN + MSGROW * COLS, "^g goto  ^w find  0-9a-f edit");
 }
 
 /* Also single-pass -- it is redrawn on every cursor move (the "at" field), so
@@ -477,6 +496,168 @@ static void fill_color(void)
             CRAM[(unsigned int)r * COLS + i] = col_data;
 }
 
+/* Read a short line on the message row, echoing it with a block cursor.
+   Returns the length, or 0xFF if cancelled (STOP or ^X). Modal: it owns the
+   keyboard while it runs, which is what lets the character pane -- where every
+   printable key is data -- still take typed input for a prompt. */
+static unsigned char prompt_line(const char *label, unsigned char *buf,
+                                 unsigned char max)
+{
+    unsigned char *row = SCREEN + MSGROW * COLS;
+    unsigned char n = 0, c, i, col = 0;
+
+    clear_row(row);
+    put_str(row, label);
+    while (label[col])
+        ++col;
+
+    for (;;) {
+        for (i = 0; i <= max; ++i)      /* the typed text, then a block cursor */
+            row[col + i] = (i < n) ? svc_scr_display(buf[i]) : 0x20;
+        row[col + n] |= 0x80;
+
+        do {
+            c = k_getin();
+        } while (!c);
+
+        if (c == CR_CH)
+            return n;
+        if (c == K_STOP || c == CTRL_X)
+            return 0xFF;
+        if (c == K_DEL) {
+            if (n)
+                --n;
+            continue;
+        }
+        if (n < max && c >= 0x20)
+            buf[n++] = c;
+    }
+}
+
+/* ^G: jump to an address. */
+static void do_goto(void)
+{
+    unsigned char in[4];
+    unsigned char n, i, d;
+    unsigned int a = 0;
+
+    n = prompt_line("goto $", in, 4);
+    if (n == 0xFF || n == 0)
+        return;
+    for (i = 0; i < n; ++i) {
+        d = hexval(in[i]);
+        if (d == 0xFF) {
+            msg("not a hex address");
+            return;
+        }
+        a = (a << 4) | d;
+    }
+    if (flen == 0)
+        return;
+    if (a >= flen) {
+        msg("past end of file");
+        return;
+    }
+    pos = a;
+    nib = 0;
+    top = (pos / BPR) * BPR;            /* target row at the top: predictable */
+}
+
+/* Read a search pattern: "$" then hex byte pairs, else the text as typed. The
+   `$` convention is the shell's own (peek/poke/sys), so it needs no explaining.
+   A bare RETURN keeps the previous pattern, which is how you find the next
+   occurrence without a second key binding. */
+static unsigned char read_pattern(void)
+{
+    unsigned char in[PATMAX * 2];
+    unsigned char n, i, hi, lo;
+
+    n = prompt_line("find ", in, PATMAX * 2);
+    if (n == 0xFF)
+        return 0;
+    if (n == 0)
+        return patlen ? 1 : 0;
+
+    if (in[0] == '$') {
+        if (n < 3 || ((n - 1) & 1)) {
+            msg("whole bytes only, e.g. $a90d");
+            return 0;
+        }
+        patlen = 0;
+        for (i = 1; i < n; i += 2) {
+            hi = hexval(in[i]);
+            lo = hexval(in[i + 1]);
+            if (hi == 0xFF || lo == 0xFF) {
+                msg("not hex");
+                return 0;
+            }
+            pat[patlen++] = (unsigned char)((hi << 4) | lo);
+        }
+        return 1;
+    }
+    for (i = 0; i < n; ++i)
+        pat[i] = in[i];
+    patlen = n;
+    return 1;
+}
+
+static unsigned char match_at(unsigned int at)
+{
+    unsigned char i;
+
+    for (i = 0; i < patlen; ++i)
+        if (BUF[at + i] != pat[i])
+            return 0;
+    return 1;
+}
+
+/* ^W: find the next occurrence, wrapping once so repeated finds walk the file
+   and the last match leads back to the first. */
+static void do_find(void)
+{
+    unsigned int last, at, scanned;
+
+    if (!read_pattern())
+        return;
+    if (flen == 0 || patlen == 0 || patlen > flen) {
+        msg("not found");
+        return;
+    }
+    last = flen - patlen;               /* highest legal start offset */
+    at = (pos < last) ? pos + 1 : 0;
+    for (scanned = 0; scanned <= last; ++scanned) {
+        if (match_at(at)) {
+            pos = at;
+            nib = 0;
+            top = (pos / BPR) * BPR;
+            return;                     /* the title's "at" says where */
+        }
+        at = (at < last) ? at + 1 : 0;
+    }
+    msg("not found");
+}
+
+/* ^B / ^F: a whole window at a time, keeping the cursor on the same screen row
+   so the eye does not have to re-find it. */
+static void page_move(unsigned char forward)
+{
+    unsigned int within = pos - top;
+
+    if (forward) {
+        if (top + PAGE >= flen)
+            return;                     /* already showing the last page */
+        top += PAGE;
+    } else {
+        if (top == 0)
+            return;
+        top = (top >= PAGE) ? top - PAGE : 0;
+    }
+    pos = top + within;
+    if (pos >= flen)
+        pos = flen - 1;
+    nib = 0;
+}
+
 /* Keep the cursor's row on screen -- and when it leaves, move a PAGE, not a
    line. Stepping off the bottom puts the cursor on the TOP row (so the scroll
    reveals a whole screen of later bytes) and stepping off the top puts it on the
@@ -650,6 +831,16 @@ void hex_main(void)
             render();
             continue;
         }
+        if (c == CTRL_G) {
+            do_goto();
+            render();
+            continue;
+        }
+        if (c == CTRL_W) {
+            do_find();
+            render();
+            continue;
+        }
         if (c == TAB || c == K_PANE) {
             /* Switching panes moves the cursor and nothing else: the same byte
                is shown, the same rows, the same title. It used to render() --
@@ -689,6 +880,10 @@ void hex_main(void)
             if (pos + BPR < flen)
                 pos += BPR;
             nib = 0;
+        } else if (c == CTRL_F) {
+            page_move(1);
+        } else if (c == CTRL_B) {
+            page_move(0);
         } else if (c == K_HOME) {
             pos = 0;
             top = 0;
