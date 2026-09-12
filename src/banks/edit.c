@@ -917,12 +917,12 @@ void edit_main(void)
             render();
             for (;;) {
                 c = k_getin();
-                if (c == 'y') {
+                if (c == 'y' || c == 'Y') {
                     if (save_file())
                         goto out;
                     break;                  /* save failed: stay */
                 }
-                if (c == 'n')
+                if (c == 'n' || c == 'N')
                     goto out;
                 if (c)
                     break;                  /* anything else: cancel */

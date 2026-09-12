@@ -807,21 +807,39 @@ void hex_main(void)
         msg_hold = 0;
 
         if (c == CTRL_X) {
-            if (modified) {
-                msg("discard changes? y/n");
-                for (;;) {
-                    v = k_getin();
-                    if (v == 'y' || v == 'n')
-                        break;
-                }
-                if (v == 'n') {
-                    msg_hold = 0;
-                    render();
-                    continue;
-                }
+            /* SAME question, same answers, as the text editor -- this used to ask
+               "discard changes? y/n", where `y` THREW THE CHANGES AWAY while `y`
+               in the text editor SAVES them. Two editors reached the same way,
+               from the same shell, with one key meaning opposite things: muscle
+               memory from one destroys work in the other. Both ask nano's
+               question now, and both treat any other key as cancel rather than
+               looping until y or n (there was no way out of this prompt). */
+            if (!modified) {
+                k_chrout(0x93);
+                return;
             }
-            k_chrout(0x93);
-            return;
+            msg("save modified buffer? (y/n)");
+            for (;;) {
+                v = k_getin();
+                if (v == 'y' || v == 'Y') {
+                    if (fnlen && save_file()) {
+                        k_chrout(0x93);
+                        return;
+                    }
+                    if (!fnlen)
+                        msg("no file name");
+                    break;                  /* save failed: stay in the editor */
+                }
+                if (v == 'n' || v == 'N') {
+                    k_chrout(0x93);
+                    return;
+                }
+                if (v)
+                    break;                  /* anything else: cancel */
+            }
+            msg_hold = 0;
+            render();
+            continue;
         }
         if (c == CTRL_O) {
             if (fnlen)

@@ -78,7 +78,7 @@ def _to_prompt(v):
     """Get back to the shell, wherever the last test left us.
 
     These tests share one VICE, and the editor blocks: if a previous test failed
-    mid-edit, or its ^X hit the "discard changes?" prompt, the machine is still
+    mid-edit, or its ^X hit the save-on-exit prompt, the machine is still
     IN the editor -- and then this test's command line is typed into the editor
     instead of the shell, editing the fixture's bytes and failing for a reason
     that has nothing to do with what it checks. Leaving that to luck is what made
@@ -86,8 +86,9 @@ def _to_prompt(v):
     """
     for _ in range(3):
         text = v.screen_text()
-        if "discard" in text:
-            _keys(v, "y")
+        if "save modified" in text:
+            _keys(v, "n")               # 'n' DISCARDS; 'y' would write to the
+                                        # fixture and poison every later test
         elif text.startswith("hex:"):
             _keys(v, [CTRL_X])
         else:
@@ -124,15 +125,16 @@ def _open_hex(v, name):
 def _close_hex(v):
     """Leave the editor, whatever state it is in.
 
-    ^X on a modified file asks "discard changes? y/n" and BLOCKS until answered,
+    ^X on a modified file asks "save modified buffer? (y/n)" and BLOCKS until
+    answered,
     so a teardown that only sends ^X can leave the editor running -- and then the
     next test types its command line into the editor instead of the shell. That
     cascaded one real failure into all four other tests in this module.
     """
     _keys(v, [CTRL_X])
     v.run_for(0.3)
-    if "discard" in v.screen_text():
-        _keys(v, "y")
+    if "save modified" in v.screen_text():
+        _keys(v, "n")                   # discard -- see _to_prompt
     _wait(v, "8>")
 
 
@@ -200,7 +202,7 @@ def test_hex_petscii_pane_writes_the_byte(v):
 
     _keys(v, [CTRL_X])
     v.run_for(0.3)
-    _keys(v, "y")                       # discard
+    _keys(v, "n")                       # 'n' discards (same as the text editor)
     _wait(v, "8>")
 
 
@@ -794,5 +796,77 @@ def test_hex_find_text_and_hex_and_repeat(v):
     v.run_for(0.4)
     assert "whole bytes" in v.screen_text(), \
         "an odd-length hex pattern should be refused\n%s" % v.screen_text()
+
+    _close_hex(v)
+
+
+def test_both_editors_ask_the_same_question_on_exit(v):
+    """^X on a modified file must mean the same thing in both editors.
+
+    It did not. The hex editor asked "discard changes? y/n" where `y` THREW THE
+    CHANGES AWAY, while the text editor asks "save modified buffer? (y/n)" where
+    `y` SAVES them -- two editors reached the same way, from the same shell, with
+    one key doing opposite things. That is the kind of inconsistency that costs
+    someone their work rather than merely confusing them, so assert the prompts
+    are byte-identical: a future divergence in either bank fails here.
+    """
+    (void) = v
+
+    want = b"save modified buffer? (y/n)"
+    for bank in ("hex", "edit"):
+        img = open(os.path.join(_HERE, "..", "build", "banks",
+                                bank + "_bank.bin"), "rb").read()
+        assert want in img, \
+            "the %s bank does not carry the shared exit prompt %r" % (bank, want)
+        assert b"discard changes" not in img, \
+            "the %s bank still carries the old, opposite-meaning prompt" % bank
+
+
+def test_hex_exit_prompt_saves_cancels_and_discards(v):
+    """All three answers, since `y` now WRITES and that is worth being sure of.
+
+    Uses `bas`, which no other hex test touches -- a test that mutates a fixture
+    must not share it, or it dictates the order the suite may run in.
+    """
+    assert _open_hex(v, "bas"), "hex did not open\n%s" % v.screen_text()
+    orig = v.read_memory(0x0800, 2)[1]
+
+    # Any other key CANCELS and stays in the editor -- it used to loop forever
+    # here with no way out but y or n.
+    _keys(v, [K_RIGHT, K_RIGHT])
+    _keys(v, "7e")
+    v.run_for(0.4)
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    assert "save modified" in v.screen_text(), "no exit prompt\n%s" % v.screen_text()
+    _keys(v, "q")                       # not y, not n
+    v.run_for(0.4)
+    assert "0-9a-f" in v.screen_text(), \
+        "any other key should cancel and stay in the editor\n%s" % v.screen_text()
+
+    # 'y' saves and leaves.
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    _keys(v, "y")
+    assert _wait(v, "8>"), "the editor did not exit after 'y'\n%s" % v.screen_text()
+
+    assert _open_hex(v, "bas"), "could not reopen"
+    assert v.read_memory(0x0800, 2)[1] == 0x7E, \
+        "'y' did not save: byte 1 is $%02X, expected $7E (was $%02X)" \
+        % (v.read_memory(0x0800, 2)[1], orig)
+
+    # 'n' discards: change it again and confirm the file is untouched.
+    _keys(v, [K_RIGHT, K_RIGHT])
+    _keys(v, "41")
+    v.run_for(0.4)
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    _keys(v, "n")
+    assert _wait(v, "8>"), "the editor did not exit after 'n'"
+
+    assert _open_hex(v, "bas"), "could not reopen"
+    assert v.read_memory(0x0800, 2)[1] == 0x7E, \
+        "'n' wrote to the file: byte 1 is $%02X, should still be $7E" \
+        % v.read_memory(0x0800, 2)[1]
 
     _close_hex(v)
