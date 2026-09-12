@@ -40,6 +40,15 @@ unsigned char __fastcall__ svc_scr_display(unsigned char c);
 #define SCREEN   ((unsigned char *)0x0400)
 #define CRAM     ((unsigned char *)0xD800)
 #define TEXT_COLOR (*(unsigned char *)0x0286)   /* the shell's current colour */
+#define VIC_BG     (*(unsigned char *)0xD021)
+#define COL_FOCUS  0x01                 /* white: the cell being edited */
+#define COL_MIRROR 0x0F                 /* light grey: the same byte, other pane */
+#define DATA_LO    5                    /* first column of the hex pane */
+#define DATA_HI    37                   /* last column of the PETSCII pane */
+
+/* The two panes' colour, chosen from the background once at startup (see
+   pane_color below). Declared up here because the cursor helpers restore it. */
+static unsigned char col_data;
 #define COLS     40
 #define ROWS     23                     /* screen rows 1..23 hold the dump */
 #define BPR      8                      /* bytes per row */
@@ -191,27 +200,60 @@ static unsigned char cursor_col(void)
     return (unsigned char)(5 + i * 3 + nib);
 }
 
-/* The cell currently drawn in reverse. Remembering it is what lets a cursor
-   move touch TWO cells instead of repainting the screen. */
-static unsigned char cur_r, cur_c, cur_shown;
+/* Where the SAME byte is shown in the other pane. From the hex pane that is one
+   character cell; from the character pane it is the byte's two hex digits, so
+   this returns a length as well -- "the corresponding cell" is a pair there. */
+static unsigned char mirror_col(unsigned char *len)
+{
+    unsigned char i = (unsigned char)((pos - top) % BPR);
+
+    if (pane) {
+        *len = 2;
+        return (unsigned char)(5 + i * 3);
+    }
+    *len = 1;
+    return (unsigned char)(30 + i);
+}
+
+/* The cells the cursor currently owns: the focused one (reverse + white) and the
+   same byte's companion in the other pane (light grey). Remembering them is what
+   lets a cursor move touch a handful of cells instead of repainting the screen --
+   and it is what lets the colours be PUT BACK, without which the cursor would
+   leave a trail of white cells behind it. */
+static unsigned char cur_r, cur_c, cur_shown, cur_mc, cur_ml;
 
 static void cursor_off(void)
 {
-    if (cur_shown)
-        SCREEN[(cur_r + 1) * COLS + cur_c] &= 0x7F;
+    unsigned int base;
+    unsigned char i;
+
+    if (!cur_shown)
+        return;
+    base = (unsigned int)(cur_r + 1) * COLS;
+    SCREEN[base + cur_c] &= 0x7F;
+    CRAM[base + cur_c] = col_data;
+    for (i = 0; i < cur_ml; ++i)
+        CRAM[base + cur_mc + i] = col_data;
     cur_shown = 0;
 }
 
 static void cursor_on(void)
 {
     unsigned char r = (unsigned char)((pos - top) / BPR);
+    unsigned int base;
+    unsigned char i;
 
     if (r >= ROWS)
         return;
     cur_r = r;
     cur_c = cursor_col();
+    cur_mc = mirror_col(&cur_ml);
     cur_shown = 1;
-    SCREEN[(r + 1) * COLS + cur_c] |= 0x80;
+    base = (unsigned int)(r + 1) * COLS;
+    SCREEN[base + cur_c] |= 0x80;
+    CRAM[base + cur_c] = COL_FOCUS;
+    for (i = 0; i < cur_ml; ++i)
+        CRAM[base + cur_mc + i] = COL_MIRROR;
 }
 
 static void render(void)
@@ -219,6 +261,9 @@ static void render(void)
     unsigned char r;
     unsigned int off = top;
 
+    cursor_off();                       /* hand the old cells their colour back;
+                                           render_row writes screen codes only,
+                                           so colour RAM survives a repaint */
     draw_title();
     for (r = 0; r < ROWS; ++r) {
         render_row(r, off);
@@ -226,13 +271,40 @@ static void render(void)
     }
     if (!msg_hold)
         draw_help();
-    cur_shown = 0;                      /* the repaint wiped the reverse bit */
     cursor_on();
 }
+
+/* A dimmer companion for each background colour, so the two data panes read as
+   one block behind the address column and the cursor. The C64 palette has a
+   genuine light/dark sibling only for some hues -- red/light red, green/light
+   green, blue/light blue, brown/orange, the three greys -- and no arithmetic
+   produces them (+8 works for red, green and blue and gives nonsense for the
+   rest), so it is a table. Colours with no usable relative fall back to white,
+   which is legible on anything. Indexed by the BACKGROUND, which is what the
+   panes actually sit on. */
+static const unsigned char pane_color[16] = {
+    0x0C,       /* 0  black        -> medium grey */
+    0x0C,       /* 1  white        -> medium grey (a light ground wants darker) */
+    0x0A,       /* 2  red          -> light red    <- the shell's own scheme */
+    0x01,       /* 3  cyan         -> white */
+    0x01,       /* 4  purple       -> white */
+    0x0D,       /* 5  green        -> light green */
+    0x0E,       /* 6  blue         -> light blue */
+    0x0C,       /* 7  yellow       -> medium grey (bright ground wants darker) */
+    0x07,       /* 8  orange       -> yellow */
+    0x08,       /* 9  brown        -> orange */
+    0x01,       /* 10 light red    -> white */
+    0x0C,       /* 11 dark grey    -> medium grey */
+    0x0F,       /* 12 medium grey  -> light grey */
+    0x01,       /* 13 light green  -> white */
+    0x01,       /* 14 light blue   -> white */
+    0x01,       /* 15 light grey   -> white */
+};
 
 static void fill_color(void)
 {
     unsigned int i;
+    unsigned char r;
 
     /* The shell's CURRENT text colour, not a guess. This used to hardcode $0E
        (light blue), which read as "the default" but is the bare machine's
@@ -241,6 +313,13 @@ static void fill_color(void)
        also means `text <n>` now applies to the editor like everywhere else. */
     for (i = 0; i < 1000; ++i)
         CRAM[i] = TEXT_COLOR;
+
+    /* ...except the two data panes, which are dimmer so the address column, the
+       cursor and its companion cell stand out of them. */
+    col_data = pane_color[VIC_BG & 0x0F];
+    for (r = 1; r <= ROWS; ++r)
+        for (i = DATA_LO; i <= DATA_HI; ++i)
+            CRAM[(unsigned int)r * COLS + i] = col_data;
 }
 
 /* Keep the cursor's row on screen. */
@@ -351,7 +430,7 @@ static unsigned char save_file(void)
 
 void hex_main(void)
 {
-    unsigned char c, v, i, edited = 0, erow = 0;
+    unsigned char c, v, edited = 0, erow = 0;
     unsigned int old_top;
     char **argv = BD_ARGV;
 
