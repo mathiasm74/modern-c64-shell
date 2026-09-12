@@ -136,10 +136,17 @@ def test_text_picker_previews_on_screen(v):
     assert after == ((before + 2) & 0x0F), \
         "expected the colour two steps on from %d, got %d" % (before, after)
 
-    # The swatches must have survived the repaint: 16 blocks, each its own colour.
+    # The swatches must be untouched: the repaint stops at row 4, which is what
+    # keeps them from flickering (they were being redrawn behind it before).
     swatch = 0xD800 + 6 * 40 + 4
     seen = [v.read_byte(swatch + i * 2) & 0x0F for i in range(16)]
     assert seen == list(range(16)), \
-        "the preview repaint ate the colour swatches: %s" % seen
+        "the preview repaint reached the colour swatches: %s" % seen
+
+    # The title is drawn in REVERSE -- an example of inverted text, and for this
+    # picker a second sample of the colour, as the character's background.
+    cells = v.read_memory(0x0400, len("text color"))
+    assert all(c & 0x80 for c in cells), \
+        "the title is not in reverse: %s" % [hex(c) for c in cells]
 
     _send_keys(v, [0x03])                       # STOP: revert, leave the picker

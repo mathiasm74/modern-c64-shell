@@ -14,8 +14,13 @@
  * screen at once; $0286 only decides the color of characters drawn FROM NOW ON,
  * so setting it changed nothing on a screen that had already been drawn and the
  * text just stayed white (hardware-reported). Previewing it means repainting
- * color RAM -- which is also why the swatches are redrawn each pass: the repaint
- * would otherwise take them with it.
+ * color RAM -- but ONLY the text rows (0-4). Repainting all 1000 cells took the
+ * swatches with it and they had to be redrawn behind it, which flickered them on
+ * every keypress; everything below row 4 is either a swatch or a blank space, so
+ * there is nothing down there a repaint could usefully change.
+ *
+ * The title is drawn in REVERSE, which for the text picker is a second sample of
+ * the chosen color -- as the character's background rather than its foreground.
  */
 
 unsigned char __fastcall__ k_chrout(unsigned char c);
@@ -35,6 +40,7 @@ unsigned char k_getin(void);
 #define MB_WHICH (*(unsigned char *)0x02D1)
 #define PICK_ROW 6
 #define PICK_COL 4
+#define TEXT_ROWS 5             /* rows 0-4 hold the title and the two hints */
 
 static void puts_raw(const char *s)
 {
@@ -55,10 +61,10 @@ static void apply_color(unsigned char which, unsigned char v)
         return;
     }
     COLOR_REG = v;
-    /* ...and show it: recolor what is already on screen. Written straight to
-       its final value (never blanked first), so the repaint cannot flash. The
-       caller redraws the swatches and the marker after this. */
-    for (i = 0; i < 1000; ++i)
+    /* ...and show it: recolor the text, and ONLY the text. Straight to the final
+       value, never blanked first, so it cannot flash -- and stopping at row 4
+       leaves the swatches alone, so they neither change nor need redrawing. */
+    for (i = 0; i < TEXT_ROWS * 40; ++i)
         CRAM[i] = v;
 }
 
@@ -66,6 +72,7 @@ void picker_main(void)
 {
     unsigned char which = MB_WHICH;
     unsigned char sel, orig, i, c;
+    const char *title;
     unsigned int base = PICK_ROW * 40 + PICK_COL;
     unsigned int mbase = base + 40;
 
@@ -73,25 +80,33 @@ void picker_main(void)
     sel = orig;
 
     k_chrout(CLEAR);
-    puts_raw(which == 0 ? "border color" : which == 1 ? "background color"
+    title = (which == 0 ? "border color" : which == 1 ? "background color"
                                                       : "text color");
+    puts_raw(title);
+    for (i = 0; title[i]; ++i)            /* ...in reverse: an example of it, and
+                                             for the text picker a second sample
+                                             of the color, as the background */
+        SCR[i] |= 0x80;
     k_chrout(CR);
     k_chrout(CR);
     puts_raw("crsr left/right to choose, return to set");
     k_chrout(CR);
     puts_raw("stop to cancel");
 
+    for (i = 0; i < 16; ++i) {            /* the 16 color blocks, two cells wide.
+                                             Drawn ONCE: the preview repaint stops
+                                             above them, so nothing disturbs them
+                                             and redrawing every pass only made
+                                             them flicker. */
+        SCR[base + i * 2]      = 0xA0;
+        SCR[base + i * 2 + 1]  = 0xA0;
+        CRAM[base + i * 2]     = i;
+        CRAM[base + i * 2 + 1] = i;
+    }
+
     for (;;) {
         apply_color(which, sel);          /* live preview */
 
-        for (i = 0; i < 16; ++i) {        /* the 16 blocks, two cells wide --
-                                             after the preview, which for the
-                                             text color repaints all of CRAM */
-            SCR[base + i * 2]      = 0xA0;
-            SCR[base + i * 2 + 1]  = 0xA0;
-            CRAM[base + i * 2]     = i;
-            CRAM[base + i * 2 + 1] = i;
-        }
         for (i = 0; i < 32; ++i)          /* redraw the marker row */
             SCR[mbase + i] = 0x20;
         SCR[mbase + sel * 2]     = 0x77;  /* two-bar marker (PETSCII 183) under */
