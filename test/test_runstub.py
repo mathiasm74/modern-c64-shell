@@ -179,3 +179,66 @@ def test_run_stub_starts_machine_code(v):
         border = sv.read_byte(0xD020) & 0x0F
         assert border == 0x07, \
             "stub did not start the ML program (border=$%02X)" % border
+
+
+def _stock_type(v, text):
+    """Type into stock BASIC, 8 bytes at a time (the keyboard buffer is 10)."""
+    for i in range(0, len(text), 8):
+        chunk = text[i:i + 8]
+        v.write_memory(0x0277, [ord(c) for c in chunk])
+        v.write_byte(0x00C6, len(chunk))
+        for _ in range(60):
+            v.run_for(0.05)
+            if v.read_byte(0x00C6) == 0:
+                break
+
+
+def test_control_code_glyphs_match_the_kernal(v):
+    """The editor draws PETSCII control codes the way the real KERNAL does.
+
+    The editor shows a control code inside quotes in reverse video, as the C64
+    does -- that is how a colour code in a BASIC string is visible at all. Which
+    screen code it reverses is not guessable: the obvious `c & $7F` maps red
+    ($1C) and purple ($9C) to the SAME glyph, and likewise for the other seven
+    pairs, so half the colours would be indistinguishable.
+
+    So measure it. This drives the GENUINE KERNAL (stock-roms/, skipped when
+    absent), prints the codes in quote mode, and reads the screen codes back.
+    """
+    (void) = v
+    if not _HAVE_STOCK:
+        return                          # skip: no user-supplied stock ROMs
+
+    # Four is the budget: BASIC's input line is ~88 characters and each
+    # CHR$(nnn); costs 11. These four are the ones that matter -- a low/high
+    # PAIR from each half, since it is the high half the naive rule gets wrong.
+    codes = [0x05, 0x1C,                # white, red      (low:  $00-$1F)
+             0x90, 0x9C]                # black, purple   (high: $80-$9F)
+
+    with _stock_vice() as sv:
+        sv.run_for(3.0)
+        _stock_type(sv, 'PRINT CHR$(34);'
+                    + ';'.join('CHR$(%d)' % c for c in codes) + '\r')
+        sv.run_for(2.0)
+        got = None
+        for r in range(25):             # the quote may wrap to any column
+            row = sv.read_memory(0x0400 + r * 40, 40)
+            for i in range(40 - len(codes)):
+                if row[i] == 0x22 and row[i + 1] >= 0x80:
+                    got = row[i + 1:i + 1 + len(codes)]
+                    break
+            if got:
+                break
+        assert got, "could not find the printed row"
+
+    # The rule ctrl_glyph() in src/banks/edit.c implements.
+    def glyph(c):
+        return (((c & 0x1F) + 0x40) | 0x80) if c >= 0x80 else (c | 0x80)
+
+    want = [glyph(c) for c in codes]
+    assert got == want, \
+        "editor's control-code glyphs disagree with the KERNAL\n" \
+        " codes: %s\n   got: %s\n  ours: %s" % (
+            " ".join("%02X" % c for c in codes),
+            " ".join("%02X" % b for b in got),
+            " ".join("%02X" % b for b in want))

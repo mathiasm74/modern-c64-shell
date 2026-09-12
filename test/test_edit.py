@@ -374,3 +374,60 @@ def test_edit_accepts_and_shows_colour_codes(v):
     v.run_for(0.3)
     _keys(v, "n")
     _wait(v, "8>")
+
+
+def test_edit_wraps_long_lines(v):
+    """A line longer than the window continues on the next row.
+
+    BASIC lines run to 80 characters, so without wrapping the right-hand half
+    of a listing is simply invisible and the cursor sticks against column 39.
+    Display rows now break at the window width as well as at a CR.
+    """
+    _seed(v)
+    v.run_for(0.3)
+    _keys(v, "edit")
+    _keys(v, [CR])
+    _wait(v, "edit: (new)")
+
+    # 50 characters: 40 on the first row, 10 on the second.
+    _keys(v, "abcdefghij" * 5)
+    v.run_for(0.4)
+
+    row1 = v.read_memory(0x0400 + 40, 40)       # first document row
+    row2 = v.read_memory(0x0400 + 80, 40)       # its continuation
+    assert row1[39] != 0x20, "first row is not full -- did it wrap early?"
+    assert row2[0] != 0x20, \
+        "long line did not continue on the next row (truncated at 40?)"
+    assert row2[9] != 0x20 and row2[10] == 0x20, \
+        "continuation row holds the wrong number of characters"
+
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    _keys(v, "n")
+    _wait(v, "8>")
+
+
+def test_edit_literal_next_inserts_a_bound_key(v):
+    """^V inserts the next key as text, even one the editor binds.
+
+    PETSCII white is $05, which IS ^E -- the line-end binding eats it, so
+    CTRL+2 can never reach the text on its own. The same clash waits for every
+    control code an editor binds (cursor down $11, home $13, clear $93), all of
+    which are legal inside a BASIC string. One escape key settles the class.
+    """
+    _seed(v)
+    v.run_for(0.3)
+    _keys(v, "edit")
+    _keys(v, [CR])
+    _wait(v, "edit: (new)")
+
+    _keys(v, [0x16, 0x05])              # ^V then white
+    v.run_for(0.4)
+    row = v.read_memory(0x0400 + 40, 40)
+    assert row[0] == (0x05 | 0x80), \
+        "^V did not insert the bound key as text: got $%02X" % row[0]
+
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    _keys(v, "n")
+    _wait(v, "8>")

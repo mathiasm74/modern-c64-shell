@@ -139,13 +139,26 @@ static void build_sctab(void)
 }
 
 /* A PETSCII control code has no glyph, so show it the way the C64 shows one
-   inside quotes: the character whose SCREEN code is the byte, in reverse
-   video. Colour codes typed with CTRL/C= (and any already embedded in a
-   loaded program) are therefore visible and distinguishable from each other,
-   rather than all collapsing to '?'. */
+   inside quotes: in reverse video. The screen code it reverses was MEASURED
+   against the stock KERNAL (test_runstub::test_control_code_glyphs_match_the_
+   kernal), because the obvious guess is wrong:
+
+     $00-$1F  ->  screen code c          ($1C red    -> $1C reversed)
+     $80-$9F  ->  screen code (c&$1F)+$40 ($9C purple -> $5C reversed)
+
+   Masking to c & $7F -- which looks right -- maps red and purple to the SAME
+   glyph, and likewise for the other seven pairs, so half the colours would be
+   indistinguishable.
+
+   The glyph still will not match a stock LIST: stock BASIC runs the
+   uppercase/graphics charset and this shell runs the lowercase one, so the
+   same screen code draws a different picture. The CODE is right; the font
+   differs. */
 static unsigned char ctrl_glyph(unsigned char c)
 {
-    return (unsigned char)((c & 0x7F) | 0x80);
+    if (c >= 0x80)
+        return (unsigned char)(((c & 0x1F) + 0x40) | 0x80);
+    return (unsigned char)(c | 0x80);
 }
 
 static unsigned char scrc(unsigned char c)
@@ -188,7 +201,7 @@ static void fill_color(void)
 static void draw_help(void)
 {
     clear_row(SCREEN + 24 * COLS);
-    put_str(SCREEN + 24 * COLS, "^x exit ^o save ^k cut ^c copy ^u paste");
+    put_str(SCREEN + 24 * COLS, "^x exit ^o save ^k cut ^c copy ^v literal");
 }
 
 static void msg(const char *s)
@@ -214,8 +227,46 @@ static void draw_title(void)
         put_str(t + 32, "modified");
 }
 
-/* Draw one window row (screen row r+1) from logical offset p (a line
-   start); returns the next line's start (or doclen when past the end). */
+/* Rows WRAP: a logical line longer than the window occupies as many display
+   rows as it needs, rather than being cut off at column 40. BASIC lines run to
+   80 characters, so without this the right-hand half of a listing is invisible
+   and the cursor sticks against the edge.
+
+   Everything below therefore works in display ROWS, not logical lines. A row
+   ends at a CR or at COLS characters, whichever comes first; a row start is
+   any offset a row begins at (every line start is one). Cursor up/down still
+   move by logical LINE, which is what an editor of this kind should do. */
+
+/* Start of the display row following the one beginning at rs. */
+static unsigned int row_next(unsigned int rs)
+{
+    unsigned int dl = doclen(), p = rs;
+    unsigned char c = 0;
+
+    while (p < dl && c < COLS) {
+        if (chat(p) == CR_CH)
+            return p + 1;               /* past the CR */
+        ++p;
+        ++c;
+    }
+    return p;
+}
+
+/* Start of the display row containing p. */
+static unsigned int row_start(unsigned int p)
+{
+    unsigned int rs = line_start(p), nx;
+
+    for (;;) {
+        nx = row_next(rs);
+        if (nx > p || nx == rs)
+            return rs;
+        rs = nx;
+    }
+}
+
+/* Draw one window row (screen row r+1) from row start p; returns the next
+   row's start (or doclen when past the end). */
 static unsigned int render_row(unsigned char r, unsigned int p)
 {
     unsigned int dl = doclen();
@@ -223,26 +274,26 @@ static unsigned int render_row(unsigned char r, unsigned int p)
     unsigned char c = 0;
     unsigned char ch;
 
-    while (p < dl) {
+    while (p < dl && c < COLS) {
         ch = chat(p);
-        if (ch == CR_CH)
+        if (ch == CR_CH) {
+            ++p;                /* step past the CR; the row ends here */
             break;
-        if (c < COLS)
-            row[c] = scrc(ch);
-        ++c;
+        }
+        row[c++] = scrc(ch);
         ++p;
     }
     while (c < COLS)
         row[c++] = 0x20;
-    if (p < dl)
-        ++p;                    /* step past the CR */
     return p;
 }
 
-static void show_cursor(unsigned char crow, unsigned int cl)
+static void show_cursor(unsigned char crow, unsigned int rs)
 {
-    unsigned char ccol = (unsigned char)(gs - cl > 39 ? 39 : gs - cl);
+    unsigned char ccol = (unsigned char)(gs - rs);
 
+    if (ccol > COLS - 1)                /* only when the row is the last one */
+        ccol = COLS - 1;
     SCREEN[(crow + 1) * COLS + ccol] |= 0x80;
 }
 
@@ -257,7 +308,7 @@ static void render(void)
     unsigned int p = top;
     unsigned char r;
     unsigned char crow = 255;
-    unsigned int cl = line_start(gs);
+    unsigned int cl = row_start(gs);
 
     draw_title();
     for (r = 0; r < ROWS; ++r) {
@@ -287,10 +338,11 @@ static void render_line(unsigned char flipped)
     show_cursor(cur_row, cur_ls);
 }
 
-/* Keep the cursor's line inside the window. */
+/* Keep the cursor's display ROW inside the window. Counting CRs is not enough
+   once rows wrap: a single long line can fill the window by itself. */
 static void ensure_visible(void)
 {
-    unsigned int cl = line_start(gs);
+    unsigned int cl = row_start(gs);
     unsigned int p;
     unsigned char r;
 
@@ -301,14 +353,13 @@ static void ensure_visible(void)
     for (;;) {
         p = top;
         r = 0;
-        while (p < cl) {
-            if (chat(p) == CR_CH)
-                ++r;
-            ++p;
+        while (p < cl && r < ROWS) {    /* how many rows down is the cursor? */
+            p = row_next(p);
+            ++r;
         }
         if (r < ROWS)
             return;
-        top = line_end(top) + 1;            /* scroll down one line */
+        top = row_next(top);            /* scroll down one row */
     }
 }
 
@@ -425,6 +476,9 @@ static unsigned char prompt_name(void)
 /* Set when the buffer holds a listing expanded from a tokenized BASIC program
    (see load_file). save_file refuses while it is set: there is no tokenizer
    yet, so writing the listing back would replace the program with its source. */
+/* ^V pressed: the NEXT key is inserted as text rather than obeyed. */
+static unsigned char literal_next;
+
 static unsigned char basic_mode;
 
 
@@ -852,6 +906,7 @@ void edit_main(void)
     modified = 0;
     msg_hold = 0;
     chain = 0;
+    literal_next = 0;
     build_sctab();
     fnlen = 0;
     if (BD_ARGC > 1) {
@@ -877,7 +932,26 @@ void edit_main(void)
         light = 0;
         if (c != 0x0B && c != 0x03)
             chain = 0;          /* any other key breaks a cut/copy chain */
+        if (literal_next) {     /* ^V: take this key as text, whatever it is */
+            literal_next = 0;
+            insert_ch(c);
+            modified = 1;
+            ensure_visible();
+            render();
+            continue;
+        }
         switch (c) {
+        case 0x16:                          /* ^V insert the next key literally */
+            /* PETSCII white is $05, which IS ^E -- the line-end binding eats
+               it, so CTRL+2 could never reach the text. The same clash waits
+               for every control code an editor binds: cursor down ($11), home
+               ($13), clear ($93) and the rest are all legal inside a BASIC
+               string. One escape key settles the whole class instead of
+               rebinding keys one at a time. */
+            literal_next = 1;
+            msg("literal: next key");
+            continue;           /* NOT return -- that is how ^X quits */
+
         case 0x18:                          /* ^X exit */
             if (!modified)
                 goto out;
@@ -949,7 +1023,8 @@ void edit_main(void)
             /* Printable text, plus the PETSCII colour codes (CTRL/C= 1-8).
                Those are control bytes, so they would otherwise be swallowed
                here -- and they are the only way to put a colour into a BASIC
-               string. */
+               string. ($05 white is the exception: it collides with ^E and
+               needs ^V, above.) */
             if ((c >= 0x20 && c <= 0x7E) || c == 0x05 || c == 0x1C ||
                 c == 0x1E || c == 0x1F || (c >= 0x81 && c <= 0x9F &&
                 c != 0x8D && c != 0x91 && c != 0x93 && c != 0x9D)) {
@@ -962,7 +1037,7 @@ void edit_main(void)
            line start matching the last full render), so nothing scrolled --
            repaint one row instead of the whole window. Crossing to another
            line, RETURN, cut/paste, and cursor up/down take the full path. */
-        if (light && line_start(gs) == cur_ls) {
+        if (light && row_start(gs) == cur_ls) {
             if (had_msg)
                 draw_help();
             render_line(modified != was_mod);
