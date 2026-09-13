@@ -215,11 +215,12 @@ header:
         .byte "pa4", $0D, "pa5", $0D, "pa6", $0D, "pa7", $0D
         .byte $0D
         .byte "* closed  . open", $0D, $0D
-        .byte "held = an outside device is pulling", $0D
-        .byte "that line low, so its column is always", $0D
+        .byte "held = something outside is pulling", $0D
+        .byte "that line low: its column is always", $0D
         .byte "selected and its 8 keys misread. pa0-", $0D
-        .byte "pa4 are shared with control port 2:", $0D
-        .byte "unplug the joystick. a line stuck at", $0D
-        .byte "ff instead is an open wire.", $0D
+        .byte "pa4 are control port 2, so unplug the", $0D
+        .byte "joystick. a flickering cell may be its", $0D
+        .byte "autofire, or a dirty contact. a line", $0D
+        .byte "stuck at ff is an open wire.", $0D
         .byte $0D
         .byte "run/stop quits.", 0

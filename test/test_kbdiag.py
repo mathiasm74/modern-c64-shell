@@ -71,8 +71,9 @@ def test_debug_prints_all_of_its_text(v):
     rows = _run_debug(v)
     text = "\n".join(rows)
 
-    for line in ("unplug the joystick",
+    for line in ("unplug the",
                  "control port 2",
+                 "autofire",
                  "an open wire",
                  "run/stop quits"):
         assert line in text, \
