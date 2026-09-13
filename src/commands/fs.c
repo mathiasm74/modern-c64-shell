@@ -231,6 +231,120 @@ void bank_dispatch(unsigned char entry, int argc, char *argv[])
 }
 
 
+/* edit - open the editor that suits the file.
+ *
+ * TWO constraints shape this, and between them they leave one design.
+ *
+ * (1) The choice cannot be made inside either editor, because A BANK CANNOT CALL
+ *     ANOTHER BANK -- the switch pulls the caller's code out from under the CPU.
+ *     So whatever decides has to run before the bank call.
+ *
+ * (2) It should not be a bank call of its own. The first attempt put a sniff
+ *     entry in the disk bank -- the usual instinct here, since the 16KB image is
+ *     the scarce thing -- and the decisive problem is TESTABILITY: only one bank
+ *     is served at a time, so `edit` needing the disk bank AND then an editor
+ *     bank cannot complete in VICE at all, and the routing (the half a user
+ *     notices, because it opens the wrong editor) could only ever be checked on
+ *     hardware. Resident, `edit` makes exactly one bank call, and
+ *     test_hex::test_edit_picks_the_hex_editor_for_a_binary can seed the hex bank
+ *     and watch a binary actually arrive there.
+ *
+ *     (A second reason was claimed here first -- that the extra bank call paid an
+ *     RBCP timeout and blew the suite's wall time to 1299s. That measurement was
+ *     contaminated: the run also carried a real bug of mine, `edit` with no name
+ *     printing usage instead of opening a new document, so a dozen tests were
+ *     waiting out their retry loops, and the machine had slept mid-run. The cost
+ *     of the second swap was never cleanly measured; testability is the reason
+ *     that stands.)
+ *
+ * So the sniff is resident. It costs ~420 bytes of the 16KB image, which is the
+ * honest price of being able to test the thing.
+ */
+#define SNIFFN 48               /* enough to judge by, cheap enough not to feel */
+
+/* 0 = text or BASIC (the text editor), 1 = binary (the hex editor).
+   Errs towards the TEXT editor: it is the one that reports a missing file, a
+   wrong device and a drive error properly, so anything unreadable lands
+   somewhere that explains itself rather than in a hex dump of nothing.
+
+   One pass, no buffer: only the first four bytes need keeping (for the BASIC
+   test) and everything else is just counted, which is ~100 bytes less code than
+   reading into an array and walking it again. */
+static unsigned char sniff_binary(const char *name)
+{
+    unsigned char h[4];
+    unsigned char n = 0, c, good = 0;
+
+    iec_set_fa(default_device);
+    iec_set_sa(2);                      /* a data channel */
+    /* By name only, no type suffix: a suffix makes the drive report the other
+       kind as missing, and we must look at PRG and SEQ alike. */
+    iec_setname(name);
+    iec_open();
+    if (iec_status() & ST_NODEV) {
+        iec_close();
+        iec_clrchn();
+        return 0;
+    }
+    iec_chkin();
+    while (n < SNIFFN) {
+        c = iec_getbyte();
+        if (iec_status() & (ST_TIMEOUT | ST_NODEV))
+            break;
+        if ((iec_status() & ST_EOI) && !c)
+            break;                      /* a 1541 sends a real last byte; a
+                                           Meatloaf synthesises a $00 with
+                                           nothing behind it -- do not count it */
+        if (n < 4)
+            h[n] = c;
+        /* Count from byte 2: in a PRG the first two are the load address and
+           usually are not text, which would drag a short text PRG over the line
+           by themselves. CR/LF/TAB and printable ASCII count as text -- CBM text
+           uses $41-$5A for letters either way round, so this covers PETSCII
+           without admitting the high range, which machine code is full of. */
+        if (n >= 2 && (c == CR || c == 0x0A || c == 0x09
+                       || (c >= 0x20 && c <= 0x7E)))
+            ++good;
+        ++n;
+        if (iec_status() & ST_EOI)
+            break;
+    }
+    iec_close();
+    iec_clrchn();
+
+    if (n < 4)
+        return 0;                       /* too little to judge on */
+
+    /* Tokenized BASIC: loads at $0801 and its first line link points forward
+       past itself. The address alone also matches data that happens to start
+       $01,$08, which is why the link is checked too -- the same test the text
+       editor uses to decide to show a listing. */
+    if (h[0] == 0x01 && h[1] == 0x08
+        && (unsigned int)(h[2] | ((unsigned int)h[3] << 8)) > 0x0801)
+        return 0;
+
+    /* Binary unless nearly all of it reads as text: machine code has plenty of
+       incidental $20-$7E bytes, so a simple majority is not enough. */
+    return (unsigned char)((unsigned int)good * 8 < (unsigned int)(n - 2) * 7);
+}
+
+void cmd_edit(int argc, char *argv[])
+{
+    /* No name: a NEW empty document, which is what `edit` has always done and is
+       a text document by definition -- there is nothing to sniff, and sniffing
+       would cost a pointless drive access. (This is where the file browser goes
+       when it is written.) */
+    if (argc < 2) {
+        bank_dispatch((BANK_EDIT << 5) | 0, argc, argv);
+        return;
+    }
+    if (sniff_binary(argv[1]))
+        bank_dispatch((BANK_HEX << 5) | 0, argc, argv);
+    else
+        bank_dispatch((BANK_EDIT << 5) | 0, argc, argv);
+}
+
+
 /* run - call the most recently loaded program like SYS. It returns here (and
    the shell reprompts) if the program ends in RTS; a program that loops or
    takes over the machine never returns. */

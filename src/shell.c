@@ -73,7 +73,7 @@ const struct command shell_commands[] = {
     { "device", BANK_CMD(BANK_FILES, 10) },
     { "devices", BANK_CMD(BANK_FILES, 11) },
     { "dir",    BANK_CMD(BANK_DISK, 0) },
-    { "edit",   BANK_CMD(BANK_EDIT, 0) },
+    { "edit",   cmd_edit },
     { "fload",  BANK_CMD(BANK_DISK, 3) },
     { "font",   cmd_font   },
     { "help",   BANK_CMD(BANK_FILES, 9) },

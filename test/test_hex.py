@@ -1001,3 +1001,46 @@ def test_hex_undo_clears_the_yellow_mark_when_the_byte_is_back(v):
     _keys(v, [CTRL_X])
     assert _wait(v, "8>"), \
         "an fully-undone file should exit without prompting\n%s" % v.screen_text()
+
+
+def test_edit_picks_the_hex_editor_for_a_binary(v):
+    """`edit <name>` opens the editor that suits the file.
+
+    The choice is made resident, before any bank call, because a bank cannot call
+    another bank -- so by the time either editor has looked at the file it is too
+    late to hand over. That resident placement is also what makes this testable:
+    only ONE bank is served at a time, so with the hex bank seeded, `edit` on a
+    binary reaching the hex editor proves both the sniff and the routing.
+
+    `prog` is machine code (load address $2000, then 6502), so it is binary.
+    `doc` is text, and must NOT come here -- without that half, a sniff that
+    simply always answered "binary" would pass.
+    """
+    seed_hex(v)
+    v.run_for(0.3)
+    _to_prompt(v)
+    _keys(v, "clear")
+    _keys(v, [CR])
+    v.run_for(0.3)
+
+    _keys(v, "edit prog")
+    _keys(v, [CR])
+    assert _wait(v, "hex: prog"), \
+        "edit on a machine-code file should open the hex editor\n%s" % v.screen_text()
+    _close_hex(v)
+
+    _keys(v, "clear")
+    _keys(v, [CR])
+    v.run_for(0.3)
+    _keys(v, "edit doc")
+    _keys(v, [CR])
+    for _ in range(12):
+        v.run_for(0.2)
+        if "bank unavailable" in v.screen_text():
+            break
+    text = v.screen_text()
+    assert "hex: doc" not in text, \
+        "edit on a text file must NOT open the hex editor\n%s" % text
+    assert "bank unavailable" in text, \
+        "expected it to try the TEXT editor (whose bank is not seeded here)\n%s" \
+        % text
