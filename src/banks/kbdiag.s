@@ -58,12 +58,23 @@ FLAGOFF   = 28                  ; "<held" flag column, relative to GRIDCOL
         .segment "CODE"
 
 kbdiag_main:
-        ldx #0
-@hdr:   lda header,x
+        ; A 16-bit walk, because the text is longer than a page. It was `ldx #0 /
+        ; lda header,x / inx / bne`, which quietly stops when X wraps at 256 -- and
+        ; this text is 339 bytes, so the last third never printed. The line it cut
+        ; was "unplug the joystick", i.e. precisely the sentence that names the
+        ; fault this whole tool exists to find.
+        lda #<header
+        sta scrptr
+        lda #>header
+        sta scrptr+1
+@hdr:   ldy #0                  ; reloaded each pass: CHROUT is free to use Y
+        lda (scrptr),y
         beq @go
         jsr CHROUT
-        inx
+        inc scrptr
         bne @hdr
+        inc scrptr+1
+        jmp @hdr
 
 @go:    sei                     ; the IRQ scan drives PRA too -- take the port,
                                 ; or it would overwrite our select mid-read

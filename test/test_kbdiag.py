@@ -57,6 +57,28 @@ def _run_debug(v):
                          + "\n".join(v.screen_rows()[:14]))
 
 
+def test_debug_prints_all_of_its_text(v):
+    """Every line, not just the first 255 bytes of it.
+
+    The header walk was `ldx #0 / lda header,x / inx / bne`, which stops silently
+    when X wraps at 256 -- and the text is 339 bytes, so the last third never
+    printed. What it cut was "unplug the joystick": the one sentence that names
+    the fault this tool exists to find. Assert the LAST line is on screen, which
+    is the cheapest way to pin the whole string.
+    """
+    _boot(v)
+    seed_util_bank(v)
+    rows = _run_debug(v)
+    text = "\n".join(rows)
+
+    for line in ("unplug the joystick",
+                 "control port 2",
+                 "an open wire",
+                 "run/stop quits"):
+        assert line in text, \
+            "%r is missing -- the header is being truncated:\n%s" % (line, text)
+
+
 def test_debug_shows_every_select_line_as_open(v):
     _boot(v)
     seed_util_bank(v)
