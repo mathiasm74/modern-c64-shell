@@ -335,6 +335,15 @@ rbcp_trampoline:
 @no_se:
 
         ; --- carry the shell's colours across the handover -------------------
+        ; MEASURED COST OF A SLOT_POKE (hardware, 2026-09-14): 255 pokes took 9
+        ; jiffies = 150 ms, so ~588 us each. The three below are imperceptible,
+        ; as are the Swedish patch's 16 (9 ms) -- and the number that mattered:
+        ; the ~680 bytes of an Epyx loader patched into the KERNAL's tape space
+        ; would cost ~400 ms at swap time, which is nothing against loading a
+        ; game. So that plan needs no bulk-write primitive and no plugin. 588 us
+        ; is ~9 raster lines, so much of it is rbcp_vic_guard waiting for a
+        ; badline-free window; blanking the display during a long patch would
+        ; cut it further, the same trick the boot-path swap relies on.
         ; Three more SLOT_POKEs, and a deliberate proof of a bigger point: the
         ; served stock KERNAL can be PATCHED before it is switched in, so a byte
         ; anywhere in it is ours to change. The Swedish tables above were the
@@ -344,11 +353,13 @@ rbcp_trampoline:
         ; RAM wedge at $C000 would not.
         ;
         ; The stock KERNAL's boot colours are light blue on blue: the border and
-        ; background come from its VIC init table at $ECB9 (indices $20/$21, so
-        ; slot offsets $0CD9/$0CDA) and the text colour from the `lda #$0E`
-        ; immediate at $E535 (offset $0535) that feeds `sta $0286`. Poking the
-        ; LIVE register values there means `basic` comes up looking like the
-        ; shell you left, instead of flashing back to blue.
+        ; background come from its VIC init table at $ECB9 (indices $20/$21) and
+        ; the text colour from the `lda #$0E` immediate at $E535 (offset $0535)
+        ; that feeds `sta $0286`. Only the TEXT colour is patched, deliberately:
+        ; carrying the shell's background and border across too made stock BASIC
+        ; look like the shell and the two became easy to mix up. Stock keeps its
+        ; own blue-on-blue frame; the white text is just enough to tell you which
+        ; one you are in.
         ;
         ; Failures are ignored on purpose -- a colour is never worth wedging a
         ; swap, so a device without SLOT_POKE just boots stock blue.
@@ -372,7 +383,7 @@ rbcp_trampoline:
         tax
         bcs @no_col                     ; unsupported: leave the rest alone
         inx
-        cpx #3
+        cpx #1                          ; text colour only -- see above
         bne @col_loop
 @no_col:
 
@@ -398,29 +409,21 @@ rbcp_trampoline:
         ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
 
-; The live value for colour-patch entry X: 0 border, 1 background, 2 text.
-; Read at swap time rather than baked in, so whatever the user last set is what
-; the stock ROMs come up with.
+; The live value for colour-patch entry X. Only entry 0 (text) is used now;
+; the border ($D020) and background ($D021) readers stay written down here
+; because their slot offsets are the awkward part to rediscover -- $ECD9 and
+; $ECDA, entries $20/$21 of the VIC init table at $ECB9 that CINT copies into
+; $D000.. Re-enable by restoring the table below and the loop's count.
 col_value:
-        cpx #0
-        bne :+
-        lda $D020
-        rts
-:       cpx #1
-        bne :+
-        lda $D021
-        rts
-:       lda $0286
+        lda $0286
         rts
 
-; Slot offsets of the three bytes, KERNAL-first (offset 0 = $E000):
-;   $ECD9 border and $ECDA background -- entries $20/$21 of the VIC init table
-;   at $ECB9, which CINT copies into $D000..; $E535 text -- the immediate of
-;   the `lda #$0E` feeding `sta $0286`.
+; Slot offset of the patched byte, KERNAL-first (offset 0 = $E000): $E535, the
+; immediate of the `lda #$0E` that feeds `sta $0286`.
 col_off_lo:
-        .byte $D9, $DA, $35
+        .byte $35
 col_off_hi:
-        .byte $0C, $0C, $05
+        .byte $05
 
 ; Swedish keyboard patch (used by the trampoline above). The 8 cells that differ
 ; from the US layout in each of the stock KERNAL's two decode tables -- the
@@ -750,6 +753,7 @@ FONT_MB_RAM   = $02CA
 _font_apply:
         jsr rbcp_copy_to_ram
         jmp rbcp_font_tramp
+
 
 ; -------------------------------------------------------------------------
 ; Bank dispatch -- ROM-expansion PoC (docs/ROM-EXPANSION.md, Option A).
