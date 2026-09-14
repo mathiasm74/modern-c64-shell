@@ -433,3 +433,84 @@ def test_exit_wedge_targets_the_real_escape(v):
     assert "$4C, $4D, $4F, $50, $33, $34" in launch, \
         "the vector-patch table must carry ILOAD ($4C/$4D), IGONE ($4F/$50) " \
         "and the wedge's escape vector ($33/$34)"
+
+
+def test_basic_command_text_area_agrees_between_the_two_sides(v):
+    """`basic <command>` passes a line to the stub through fixed addresses.
+
+    fs.c writes it and the stub (c_io.s) reads it, with nothing linking the two
+    but matching literals -- and it cannot be exercised in VICE, since the swap
+    is inert and the planted CBM80 would have our own reset relaunch the stub in
+    a loop. So check the contract statically: same addresses, a text area that
+    clears both the stub and RUN_PARAMS, and a length that the keyboard buffer
+    can actually hold.
+    """
+    (void) = v
+
+    asm = _read("src", "c_io.s")
+    c = _read("src", "commands", "fs.c")
+
+    def const(text, name, pat):
+        m = re.search(pat, text)
+        assert m, "%s not found" % name
+        return int(m.group(1), 16)
+
+    tlen_asm = const(asm, "RUN_TLEN (asm)", r"RUN_TLEN\s*=\s*\$([0-9A-Fa-f]{4})")
+    text_asm = const(asm, "RUN_TEXT (asm)", r"RUN_TEXT\s*=\s*\$([0-9A-Fa-f]{4})")
+    tlen_c = const(c, "RUN_TLEN (C)", r"RUN_TLEN.*?0x([0-9A-Fa-f]{4})")
+    text_c = const(c, "RUN_TEXT (C)", r"RUN_TEXT.*?0x([0-9A-Fa-f]{4})")
+
+    assert tlen_asm == tlen_c, \
+        "RUN_TLEN is $%04X in c_io.s but $%04X in fs.c" % (tlen_asm, tlen_c)
+    assert text_asm == text_c, \
+        "RUN_TEXT is $%04X in c_io.s but $%04X in fs.c" % (text_asm, text_c)
+
+    m = re.search(r"#define RUN_TMAX\s+(\d+)", c)
+    assert m, "RUN_TMAX not found"
+    tmax = int(m.group(1))
+    assert tmax <= 10, \
+        "RUN_TMAX is %d, but the keyboard buffer at $0277 holds 10" % tmax
+
+    # The text must sit clear of the stub below it and RUN_PARAMS above it.
+    L = _labels()
+    end = 0xCF00 + (L["_run_stub_end"] - L["_run_stub"])
+    assert tlen_asm >= end, \
+        "the text area starts at $%04X but the stub runs to $%04X -- copying " \
+        "the stub would overwrite the command" % (tlen_asm, end - 1)
+    assert text_asm + tmax <= 0xCFF8, \
+        "the text area runs to $%04X and would collide with RUN_PARAMS at $CFF8" \
+        % (text_asm + tmax - 1)
+
+    # And the stub must actually branch on mode 2, or the text is never typed.
+    assert re.search(r"lda RUN_MODE\s*\n\s*cmp #2", asm), \
+        "the stub no longer tests for mode 2"
+
+
+def test_run_stub_has_no_absolute_jumps_into_our_rom(v):
+    """The stub is assembled in our ROM but RUNS at $CF00 after being copied.
+
+    So every internal jump must be relocated (RUN_STUB_BASE + offset) or stay a
+    PC-relative branch. A plain `jmp @label` assembles the ROM address and, once
+    copied, jumps into our KERNAL -- which by then has been swapped away for the
+    stock ROMs, so it lands in whatever stock code occupies that address. This
+    caught exactly that: `jmp @ml` became `JMP $E9C2`.
+    """
+    (void) = v
+
+    L = _labels()
+    lo, hi = L["_run_stub"], L["_run_stub_end"]
+    rom = open(os.path.join(_BUILD, "kernal.bin"), "rb").read()
+    stub = rom[lo - 0xE000:hi - 0xE000]
+
+    bad = []
+    i = 0
+    while i < len(stub) - 2:
+        if stub[i] in (0x4C, 0x20):             # JMP abs / JSR abs
+            t = stub[i + 1] | (stub[i + 2] << 8)
+            if lo <= t < hi:                    # a target inside the stub's own
+                bad.append((0xCF00 + i, t))     # ROM image = unrelocated
+        i += 1
+    assert not bad, \
+        "unrelocated internal jumps in the run stub: %s -- use " \
+        "RUN_STUB_BASE + (label - _run_stub)" \
+        % ", ".join("$%04X -> $%04X" % (a, t) for a, t in bad)

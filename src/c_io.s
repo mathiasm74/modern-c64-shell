@@ -102,6 +102,11 @@ RUN_PARAMS = $CFF8              ; load lo/hi, end lo/hi (4 bytes)
 RUN_MODE   = $CFFC              ; 0 = RUN, nonzero = drop to BASIC READY.
 RUN_DEV    = $CFFD              ; current device (FA) to restore -- see below
 RUN_FIRST  = $CFFE              ; mode-0 run: 1 = skip the pre-RUN READY (IMAIN)
+RUN_TLEN   = $CFED              ; mode-2: length of the line to type (incl. CR)
+RUN_TEXT   = $CFEE              ; mode-2: the line, 10 bytes max -- the keyboard
+                                ; buffer at $0277 is 10, so "sys 54301"+CR is
+                                ; exactly the limit. Below $CFF8 and above the
+                                ; stub, so RAMTAS (pages 0-3 only) leaves it.
 RUN_STUB_BASE = $CF00           ; where launch_stock_program copies the stub, so
                                 ; an in-stub label's RUN address is BASE+offset
                                 ; (the stub is assembled in ROM but runs here)
@@ -134,12 +139,23 @@ _run_stub:
         ; below don't touch $BA, so once here is enough for both paths.)
         lda RUN_DEV
         sta $BA
+        lda RUN_MODE
+        cmp #2
+        bne :+                  ; `basic <command>`: empty BASIC, then type it
+        ; @typed is out of branch reach, and a plain `jmp @typed` would bake in
+        ; the ASSEMBLED address -- this stub lives in ROM but RUNS at $CF00. Any
+        ; internal jump has to be relocated the same way the $0302 hook is.
+        jmp RUN_STUB_BASE + (@typed - _run_stub)
+:
         lda RUN_PARAMS+0        ; load address lo
         cmp #$01
-        bne @ml
-        lda RUN_PARAMS+1        ; load address hi
+        beq :+                  ; jmp, not bne: the stub grew past a branch's
+        jmp RUN_STUB_BASE + (@ml - _run_stub)   ; reach when mode 2 was added
+:       lda RUN_PARAMS+1        ; load address hi
         cmp #$08
-        bne @ml
+        beq :+
+        jmp RUN_STUB_BASE + (@ml - _run_stub)
+:
         ; --- BASIC program at $0801 -------------------------------------
         ; RAMTAS already set MEMSTR=$0800 / MEMSIZ=$A000, which E3BF reads.
         jsr $E453               ; init BASIC indirect vectors ($0300-$030B)
@@ -185,6 +201,39 @@ _run_stub:
         jmp $A474               ; READY. -> MAIN reads "RUN" -> runs the program
 @ready: cli
         jmp $A474               ; READY. - stock BASIC immediate mode (LIST/RUN)
+
+; --- mode 2: `basic <command>` ----------------------------------------------
+; Stock BASIC, empty, with a line already in the keyboard buffer so MAIN reads
+; and executes it at the first READY. That is how `run` types "RUN" (above); the
+; only difference is the text and that no IMAIN hook is installed, so you stay in
+; BASIC afterwards instead of being pulled back to the shell.
+;
+; Deliberately EMPTY rather than preserving a loaded program: with nothing
+; loaded, RUN_PARAMS is zero, and taking the normal path would either JMP $0000
+; (the ML branch) or hand BASIC a garbage program and a zero VARTAB. If you want
+; your loaded program, plain `basic` is the command that keeps it.
+@typed:
+        jsr $E453               ; BASIC's indirect vectors ($0300-$030B)
+        jsr $E3BF               ; BASIC RAM init (TXTTAB=$0801, no NEW)
+        lda #$00
+        sta $0801               ; an empty program: a $0000 link at TXTTAB
+        sta $0802
+        lda #$03
+        sta $2D                 ; VARTAB = $0803
+        lda #$08
+        sta $2E
+        jsr $A659               ; CLR - TXTPTR, ARYTAB/STREND, FRETOP
+        ldy RUN_TLEN
+        beq @ready
+@tl:    dey
+        lda RUN_TEXT,y
+        sta $0277,y
+        cpy #$00
+        bne @tl
+        lda RUN_TLEN
+        sta $C6                 ; NDX: characters pending
+        cli
+        jmp $A474
 @ml:    ; --- machine-code program: jump through its load address --------
         ; Same IMAIN hook for mode 0: an ML program that quits by returning to
         ; BASIC READY (the usual fb/pterm exit) then bounces back to the shell.

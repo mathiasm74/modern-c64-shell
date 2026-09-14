@@ -374,7 +374,7 @@ static void launch_stock_program(unsigned char mode)
     *(unsigned char *)0xCFF9 = (unsigned char)(load_start >> 8);
     *(unsigned char *)0xCFFA = (unsigned char)(load_end & 0xff);
     *(unsigned char *)0xCFFB = (unsigned char)(load_end >> 8);
-    *(unsigned char *)0xCFFC = mode;                /* 0 = RUN, 1 = READY. */
+    *(unsigned char *)0xCFFC = mode;                /* 0 RUN, 1 READY., 2 typed */
     *(unsigned char *)0xCFFD = default_device;      /* FA: PEEK(186) for the program */
 
     n = (unsigned int)(run_stub_end - run_stub);
@@ -457,10 +457,43 @@ void cmd_sys(int argc, char *argv[])
    clear of the $FE00 back-channel window -- the bank dispatcher (launch.s
    _bank_call) must live in the static KERNAL half, so it spends the budget
    there and cmd_basic/font move here to make room. */
+/* basic [command] - swap to the stock ROMs.
+ *
+ * With a command, it is typed at the stock prompt and executed: `basic sys 54301`
+ * reaches a SIDKick pico's menu, which our own `sys` cannot -- that runs the
+ * routine in OUR environment, and anything the device feeds back wants a C64
+ * (stock ROM internals, not just the published entry points). The line goes into
+ * the keyboard buffer for BASIC's own MAIN to read, exactly as `run` types "RUN".
+ *
+ * Ten characters including the CR, because that is the keyboard buffer -- and
+ * UPPERCASED, because the shell's argv is lowercase ASCII while BASIC wants
+ * PETSCII uppercase: `sys` as $73,$79,$73 is three graphics characters to a
+ * stock C64, and would be a syntax error.
+ */
+#define RUN_TLEN (*(unsigned char *)0xCFED)
+#define RUN_TEXT ((unsigned char *)0xCFEE)
+#define RUN_TMAX 10
+
 void cmd_basic(int argc, char *argv[])
 {
-    (void)argc; (void)argv;
+    unsigned char n = 0, i, j, c;
+
     settings_save();                    /* snapshot colors + history before leaving */
+    if (argc > 1) {
+        for (i = 1; i < (unsigned char)argc && n < RUN_TMAX - 1; ++i) {
+            if (i > 1)
+                RUN_TEXT[n++] = ' ';
+            for (j = 0; argv[i][j] && n < RUN_TMAX - 1; ++j) {
+                c = (unsigned char)argv[i][j];
+                if (c >= 'a' && c <= 'z')
+                    c = (unsigned char)(c - 32);
+                RUN_TEXT[n++] = c;
+            }
+        }
+        RUN_TEXT[n++] = 0x0D;
+        RUN_TLEN = n;
+        launch_stock_program(2);        /* never returns */
+    }
     /* With a program loaded, hand it to stock BASIC intact (init-without-NEW +
        LINKPRG) and stop at READY. so it can be LISTed / RUN -- a bare cold swap
        would NEW it away. With nothing loaded, just swap: the user gets a fresh
