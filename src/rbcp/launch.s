@@ -334,6 +334,48 @@ rbcp_trampoline:
         bne @se_loop
 @no_se:
 
+        ; --- carry the shell's colours across the handover -------------------
+        ; Three more SLOT_POKEs, and a deliberate proof of a bigger point: the
+        ; served stock KERNAL can be PATCHED before it is switched in, so a byte
+        ; anywhere in it is ours to change. The Swedish tables above were the
+        ; first use; this is the second, and the same mechanism is what would let
+        ; the Epyx loader be patched into the stock KERNAL's tape routines -- ROM,
+        ; not RAM, so it survives RESTOR and a program clobbering memory, which a
+        ; RAM wedge at $C000 would not.
+        ;
+        ; The stock KERNAL's boot colours are light blue on blue: the border and
+        ; background come from its VIC init table at $ECB9 (indices $20/$21, so
+        ; slot offsets $0CD9/$0CDA) and the text colour from the `lda #$0E`
+        ; immediate at $E535 (offset $0535) that feeds `sta $0286`. Poking the
+        ; LIVE register values there means `basic` comes up looking like the
+        ; shell you left, instead of flashing back to blue.
+        ;
+        ; Failures are ignored on purpose -- a colour is never worth wedging a
+        ; swap, so a device without SLOT_POKE just boots stock blue.
+        ldx #0
+@col_loop:
+        lda col_off_lo,x
+        sta rbcp_arg1                   ; offset lo
+        lda col_off_hi,x
+        sta rbcp_arg2                   ; offset mid
+        lda #$00
+        sta rbcp_arg3                   ; offset hi
+        txa
+        pha
+        jsr col_value                   ; A = the live value for this entry
+        and #$0F
+        sta rbcp_arg0
+        lda #RBCP_STOCK_RAM_SLOT
+        sta rbcp_arg4
+        jsr rbcp_cmd_slot_poke
+        pla
+        tax
+        bcs @no_col                     ; unsupported: leave the rest alone
+        inx
+        cpx #3
+        bne @col_loop
+@no_col:
+
         lda #RBCP_STOCK_RAM_SLOT
         jsr rbcp_cmd_switch_and_exit    ; activate it; the device begins
                                         ; serving the new slot immediately
@@ -355,6 +397,30 @@ rbcp_trampoline:
         ; they can't rely on them, and keeping the handoff a single JMP avoids
         ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
+
+; The live value for colour-patch entry X: 0 border, 1 background, 2 text.
+; Read at swap time rather than baked in, so whatever the user last set is what
+; the stock ROMs come up with.
+col_value:
+        cpx #0
+        bne :+
+        lda $D020
+        rts
+:       cpx #1
+        bne :+
+        lda $D021
+        rts
+:       lda $0286
+        rts
+
+; Slot offsets of the three bytes, KERNAL-first (offset 0 = $E000):
+;   $ECD9 border and $ECDA background -- entries $20/$21 of the VIC init table
+;   at $ECB9, which CINT copies into $D000..; $E535 text -- the immediate of
+;   the `lda #$0E` feeding `sta $0286`.
+col_off_lo:
+        .byte $D9, $DA, $35
+col_off_hi:
+        .byte $0C, $0C, $05
 
 ; Swedish keyboard patch (used by the trampoline above). The 8 cells that differ
 ; from the US layout in each of the stock KERNAL's two decode tables -- the
