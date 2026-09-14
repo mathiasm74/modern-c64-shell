@@ -32,7 +32,7 @@
 .import rbcp_cmd_nv_poke_commit, rbcp_cmd_nv_poke_discard
 .import rbcp_cmd_switch_slot     ; live char-ROM (font) switch
 .import rbcp_cmd_slot_poke       ; patch bytes into a loaded slot (Swedish kbd)
-.import __KLOAD_LOAD__, __KLOAD_SIZE__   ; src/kload.s, stored in our KERNAL ROM
+.import __KLOAD_IMG__, __KLOAD_IMG_SIZE__  ; src/kload_blob.s: the patch, as data
 
 ; Where the library sits in ROM (load) and runs (run); both defined by ld65
 ; when the RBCP_CODE segment has `define = yes`.
@@ -397,9 +397,9 @@ rbcp_trampoline:
         ;
         ; $FB-$FE as scratch: reset.s's string pointers, idle since boot, and we
         ; are under SEI on a one-way trip out of the shell.
-        lda #<__KLOAD_LOAD__
+        lda #<__KLOAD_IMG__
         sta $FB
-        lda #>__KLOAD_LOAD__
+        lda #>__KLOAD_IMG__
         sta $FC
         lda #<KLOAD_SLOT_OFF
         sta $FD
@@ -426,10 +426,10 @@ rbcp_trampoline:
         bne :+
         inc $FE
 :       lda $FB
-        cmp #<(__KLOAD_LOAD__ + __KLOAD_SIZE__)
+        cmp #<(__KLOAD_IMG__ + __KLOAD_IMG_SIZE__)
         bne @kl_loop
         lda $FC
-        cmp #>(__KLOAD_LOAD__ + __KLOAD_SIZE__)
+        cmp #>(__KLOAD_IMG__ + __KLOAD_IMG_SIZE__)
         bne @kl_loop
 
         ; The body is in. NOW repoint ILOAD -- last, and only on success, so the

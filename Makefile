@@ -112,7 +112,7 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s \
-         src/iec_clkwait.s src/svc.s src/parse_addr.s src/kload.s \
+         src/iec_clkwait.s src/svc.s src/parse_addr.s src/kload_blob.s \
          src/rbcp/rbcp.s src/rbcp/launch.s
 SRC_C := src/shell.c src/parser.c \
          src/commands/builtins.c src/commands/fs.c \
@@ -201,6 +201,25 @@ $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_ban
 	$(LD) -C cfg/disk_bank.cfg -o $@ $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_bank_c.o \
 	      $(BANK_SHARED_OBJ) $(RTLIB) -Ln $(BUILD)/banks/disk_bank.labels -m $(BUILD)/banks/disk_bank.map
 	@echo "  disk_bank.bin : $$(wc -c < $@) bytes"
+
+# The STOCK-KERNAL PATCH: linked to run at $F8E2 inside the served stock KERNAL's
+# tape space (docs/TAPE-SPACE.md), then carried in our ROM as data and poked
+# across before the swap. Its own link, because it needs its own copies of the
+# Epyx receiver/sender/clock-wait and those names are already taken in the shell.
+KLOAD_OBJ := $(BUILD)/kload/kload.o $(BUILD)/kload/fastload_recv.o \
+             $(BUILD)/kload/fastload_send.o $(BUILD)/kload/iec_clkwait.o
+
+$(BUILD)/kload/%.o: src/%.s | $(BUILD)
+	@mkdir -p $(BUILD)/kload
+	$(AS) $(ASFLAGS) -D KLOAD_BUILD=1 -o $@ $<
+
+$(BUILD)/kload.bin: $(KLOAD_OBJ) cfg/kload.cfg
+	$(LD) -C cfg/kload.cfg -o $@ $(KLOAD_OBJ) \
+	      -Ln $(BUILD)/kload.labels -m $(BUILD)/kload.map
+	@echo "  kload.bin     : $$(wc -c < $@) bytes of 684 in the tape space"
+
+# The blob is .incbin'd, so the ROM must wait for it.
+$(BUILD)/kload_blob.o: $(BUILD)/kload.bin
 
 # The UTIL BANK: tab completion (src/complete.s), assembled into its own image.
 # Separate from the disk bank because it needs no cc65 runtime at all, so it

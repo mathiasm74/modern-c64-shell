@@ -35,7 +35,9 @@ OPSUM = $FE            ; the checksum byte to send last
 ; Segment: the KERNAL half normally, but the DISK BANK links this same source
 ; into its own image at $A000 (docs/ROM-EXPANSION.md), where CODE2 does not
 ; exist. One source, two homes -- see src/iec_clkwait.s for the same pattern.
-.ifdef BANK_BUILD
+.ifdef KLOAD_BUILD
+.define CSEG "KLOAD"
+.elseif .defined(BANK_BUILD)
 .define CSEG "CODE"
 .else
 .define CSEG "CODE2"

@@ -184,12 +184,22 @@ def test_bank_ram_ceiling_and_loader_guards_agree(v):
         "the bank RAM window must be PAGE-ALIGNED ($%04X): the Epyx receiver's " \
         "guard tests only the destination's high byte" % disk
 
-    m = re.search(r"^BANKPG\s*=\s*\$([0-9A-Fa-f]{2})",
-                  _read("src", "fastload_recv.s"), re.M)
-    assert m, "BANKPG missing from src/fastload_recv.s"
-    assert int(m.group(1), 16) == disk >> 8, \
+    # There are TWO guard pages now: the receiver is built for the bank AND, via
+    # KLOAD_BUILD, for the patch that runs inside the stock KERNAL, where there
+    # is no bank to protect and the thing to stay out of is the I/O window.
+    # Match them separately -- a plain search finds whichever comes first in the
+    # conditional and silently checks the wrong one against the wrong ceiling.
+    src = _read("src", "fastload_recv.s")
+    kl = re.search(r"\.ifdef KLOAD_BUILD\s*\nBANKPG\s*=\s*\$([0-9A-Fa-f]{2})", src)
+    bank = re.search(r"\.else\s*\nBANKPG\s*=\s*\$([0-9A-Fa-f]{2})", src)
+    assert kl and bank, "the two BANKPG definitions are not both in fastload_recv.s"
+    assert int(bank.group(1), 16) == disk >> 8, \
         "Epyx receiver guard page $%02X != bank RAM page $%02X -- a fast load " \
-        "would overrun the bank's own stack" % (int(m.group(1), 16), disk >> 8)
+        "would overrun the bank's own stack" % (int(bank.group(1), 16), disk >> 8)
+    assert int(kl.group(1), 16) == 0xD0, \
+        "the stock-KERNAL patch's guard is $%02X, not $D0 -- a load there must " \
+        "stop below the I/O window, not at a bank window that does not exist" \
+        % int(kl.group(1), 16)
 
     m = re.search(r"#define BANK_RAM_FLOOR\s+0x([0-9A-Fa-f]{4})",
                   _read("src", "banks", "disk_bank.c"))
@@ -305,42 +315,46 @@ def test_bank_entry_indices_match_the_entry_tables(v):
 
 
 def test_kload_is_linked_for_the_stock_kernals_tape_space(v):
-    """The LOAD wedge must be built to run where the tape code is, and the poke
-    loop must be told where to put it.
+    """The LOAD patch must be built to run where the tape code is, and must fit.
 
-    None of this can be exercised in VICE -- the swap and every RBCP command are
-    inert without a One ROM -- but the parts that are just arithmetic can still be
-    pinned, and they are the parts that silently rot: the segment's run address,
-    the slot offset derived from it, and the ILOAD vector-table entry. Get any of
-    them wrong and the patch lands somewhere harmless-looking and the machine
-    dies later, under stock ROMs, with nothing to see.
+    None of it can be exercised in VICE -- the swap and every RBCP command are
+    inert without a One ROM -- but the arithmetic can be pinned, and it is the
+    part that rots silently: the link address, the size against the space that is
+    actually free, and the ILOAD vector-table entry it repoints. Get any of them
+    wrong and the patch lands somewhere plausible and the machine dies later,
+    under stock ROMs, with nothing on screen to say why.
 
     docs/TAPE-SPACE.md establishes $F8E2-$FB8D as reachable only from the tape
     paths; tools/kernal_map.py regenerates that.
     """
     (void) = v
 
-    L = _labels()
-    run = L.get("kload_entry")
-    assert run is not None, "kload_entry is not exported"
-    assert run == 0xF8E2, \
-        "the wedge is linked to run at $%04X, not $F8E2 -- cfg/rom.cfg's " \
-        "KLOADRUN and docs/TAPE-SPACE.md disagree" % run
+    kl = os.path.join(_BUILD, "kload.labels")
+    assert os.path.exists(kl), "build/kload.labels missing -- the patch did not link"
+    syms = {}
+    with open(kl) as f:
+        for line in f:
+            p = line.split()
+            if len(p) >= 3 and p[0] == "al":
+                syms[p[2].lstrip(".")] = int(p[1], 16) & 0xFFFF
 
-    end = L.get("kload_end")
-    assert end is not None and end > run, "kload_end missing or before the start"
-    assert end <= 0xFB8E, \
-        "the wedge runs to $%04X, past the end of the tape-only region at " \
-        "$FB8D -- it would overwrite code the stock KERNAL still uses" % (end - 1)
+    assert syms.get("kload_entry") == 0xF8E2, \
+        "the patch entry is at $%04X, not $F8E2 -- cfg/kload.cfg and " \
+        "docs/TAPE-SPACE.md disagree" % (syms.get("kload_entry") or 0)
 
-    # The stock ILOAD vector-table entry it repoints, checked against the real
-    # stock image rather than trusted: $FD4C must currently hold $F4A5.
+    img = os.path.join(_BUILD, "kload.bin")
+    size = os.path.getsize(img)
+    assert 0xF8E2 + size - 1 <= 0xFB8D, \
+        "the patch is %d bytes and would run to $%04X, past the end of the " \
+        "tape-only region at $FB8D -- it would overwrite live stock code" \
+        % (size, 0xF8E2 + size - 1)
+
+    # The stock vector-table entry it repoints, read from the real image rather
+    # than trusted: $FD4C must currently hold $F4A5 (the stock ILOAD).
     stock = os.path.join(_BUILD, "..", "stock-roms", "kernal.901227-03.bin")
     if os.path.exists(stock):
         rom = open(stock, "rb").read()
         off = 0xFD4C - 0xE000
         assert rom[off] | (rom[off + 1] << 8) == 0xF4A5, \
-            "the ILOAD entry at $FD4C is not $F4A5 in this KERNAL -- the " \
-            "vector table moved, so the poke offsets are wrong"
-        # ...and that the region we overwrite is where we think it is.
-        assert 0xF8E2 - 0xE000 + (end - run) <= len(rom), "wedge runs off the image"
+            "the ILOAD entry at $FD4C is not $F4A5 in this KERNAL -- the vector " \
+            "table moved, so the poke offsets are wrong"

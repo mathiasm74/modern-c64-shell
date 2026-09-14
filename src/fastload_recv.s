@@ -35,10 +35,16 @@ A3TMP = $02A9           ; scratch while computing A3LOC (unused page-3 KERNAL RA
 RETRY = $02AA           ; wait_ready retry countdown (memory: wait_clk_hi eats X)
 RES = $FB               ; assembled byte scratch (reset's boot pointer; free now)
 
-; Segment: the KERNAL half normally, but the DISK BANK links this same source
-; into its own image at $A000 (docs/ROM-EXPANSION.md), where CODE2 does not
-; exist. One source, two homes -- see src/iec_clkwait.s for the same pattern.
-.ifdef BANK_BUILD
+; Segment: THREE homes for one source. The KERNAL half normally; the DISK BANK
+; links it into its own image at $A000 (docs/ROM-EXPANSION.md), where CODE2 does
+; not exist; and KLOAD_BUILD puts it in the patch that is poked into the served
+; STOCK KERNAL's tape space (src/kload.s, docs/TAPE-SPACE.md), where it runs with
+; our ROM gone entirely. Everything it touches -- $FB-$FE, $02A8-$02B0, $FFD2 --
+; is as free under the stock ROMs as under ours, which is what makes the third
+; home a segment change rather than a port.
+.ifdef KLOAD_BUILD
+.define CSEG "KLOAD"
+.elseif .defined(BANK_BUILD)
 .define CSEG "CODE"
 .else
 .define CSEG "CODE2"
@@ -195,8 +201,36 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ;     bit permutation; see _epyx_gen_descramble).  ---
         txa
         eor A3LOC
+.ifdef KLOAD_BUILD
+        ; TWO 16-BYTE TABLES instead of one 256-byte one. The permutation is
+        ; nibble-separable -- the folded value's low nibble becomes the result's
+        ; HIGH nibble and vice versa, and both go through the SAME nibble
+        ; permutation (swap bits 0 and 3), verified identical to the big table
+        ; for all 256 inputs. That matters because the stock KERNAL's tape space
+        ; is 684 bytes total and the big table alone would eat 256 of them.
+        ;
+        ; It costs ~26 cycles a byte over the single lookup. Affordable: the
+        ; drive waits on our DATA-high before every byte, so a slower host is a
+        ; slower transfer, never a corrupt one -- and even 30% off is still an
+        ; order of magnitude up on the stock loader this replaces.
+        tax                             ; keep the folded byte (X is clobbered
+                                        ; on return anyway -- see the ldx below)
+        and #$0F
+        tay
+        lda ds_hi,y
+        sta A3TMP
+        txa
+        lsr a
+        lsr a
+        lsr a
+        lsr a
+        tay
+        lda ds_lo,y
+        ora A3TMP
+.else
         tay
         lda descramble,y
+.endif
         ldx #$00
         rts
 .endproc
@@ -215,12 +249,24 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 ; largest program the machine can load. Assembling it also drops the generator
 ; and the per-entry call to it in crt0_disk.s (a bank re-inits on EVERY entry, so
 ; that was rebuilding the same 256 bytes before every disk command).
-.ifdef BANK_BUILD
+.ifdef KLOAD_BUILD
+.define RSEG "KLOAD"
+.elseif .defined(BANK_BUILD)
 .define RSEG "RODATA"
 .else
 .define RSEG "RODATA2"
 .endif
 
+.ifdef KLOAD_BUILD
+.segment RSEG
+; ds_hi[n] = P(n EOR $0F) << 4 and ds_lo[n] = P(n EOR $0F), where P swaps bits 0
+; and 3 of a nibble. The EOR carries the protocol's bit inversion, which commutes
+; with a permutation, so it folds into the tables for free.
+ds_hi:  .byte $F0, $70, $D0, $50, $B0, $30, $90, $10
+        .byte $E0, $60, $C0, $40, $A0, $20, $80, $00
+ds_lo:  .byte $0F, $07, $0D, $05, $0B, $03, $09, $01
+        .byte $0E, $06, $0C, $04, $0A, $02, $08, $00
+.else
 .export descramble
 
 .segment RSEG
@@ -228,6 +274,7 @@ descramble:
 .repeat 256, v
         .byte ((((~v) & $01) << 7) | (((~v) & $02) << 4) | (((~v) & $04) << 4) | (((~v) & $08) << 1) | (((~v) & $10) >> 1) | (((~v) & $20) >> 4) | (((~v) & $40) >> 4) | (((~v) & $80) >> 7))
 .endrepeat
+.endif
 
 .segment CSEG
 
@@ -258,9 +305,17 @@ DOTS  = $02AE           ; progress dots printed so far (one per 1024 bytes)
 LADRL = $02AF           ; PRG load address, read back by the C wrapper
 LADRH = $02B0
 BIGFL = $03A4           ; set when the stream ran into the bank's own RAM
+; The destination ceiling, tested on each page crossing. In the bank it is the
+; bank's own RAM window -- the loader would otherwise overwrite the C stack it is
+; running on. In the stock-KERNAL patch there is no bank to protect, so the only
+; thing to stay out of is the I/O window at $D000.
+.ifdef KLOAD_BUILD
+BANKPG = $D0
+.else
 BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
                         ; The banks share one window, so this is the ceiling for
                         ; ANY loaded program.
+.endif
 
 .proc _epyx_recv_prg
         lda #0
@@ -315,8 +370,10 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
         cmp #3                          ; fewer than 3 bytes -> failure
         bcc @fail
 @ok:
+.ifndef KLOAD_BUILD
         lda #$0D
         jsr CHROUT                      ; CR: fresh line after the dots
+.endif
         lda DST                         ; return end address (VARTAB)
         ldx DST+1
         rts
@@ -335,6 +392,13 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
 .proc next_byte
         lda BLK
         bne @have
+.ifdef KLOAD_BUILD
+        ; No progress dots in the stock-KERNAL patch. Two reasons, either enough:
+        ; this loader serves a RUNNING PROGRAM's LOAD, and scribbling dots across
+        ; whatever it has on screen is not ours to do (the stock loader honours
+        ; MSGFLG $9D for exactly this reason); and the space is needed -- the
+        ; tape region is 684 bytes and the descramble table alone is 256.
+.else
         ; --- block boundary: one progress dot per 1024 bytes -----------------
         ; want = bytes>>10 = TOTH>>2 = kilobytes so far; catch DOTS up to it.
         ; (Emitted here, in the inter-block gap where the drive is fetching, so
@@ -351,6 +415,7 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
         inc DOTS
         jmp @dotchk
 @nodot:
+.endif
         jsr _epyx_wait_ready            ; A=0 ready, A=1 timeout
         bne @tmo
         jsr _epyx_recv_byte             ; block length

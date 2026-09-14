@@ -13,7 +13,9 @@
 ; Epyx paths are cycle-counted, and an extra indirection is exactly the kind of
 ; jitter the receiver's badline pacing exists to avoid.
 
-.ifdef BANK_BUILD
+.ifdef KLOAD_BUILD
+.segment "KLOAD"
+.elseif .defined(BANK_BUILD)
 .segment "CODE"
 .else
 .segment "KCODE"
