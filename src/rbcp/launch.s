@@ -32,7 +32,8 @@
 .import rbcp_cmd_nv_poke_commit, rbcp_cmd_nv_poke_discard
 .import rbcp_cmd_switch_slot     ; live char-ROM (font) switch
 .import rbcp_cmd_slot_poke       ; patch bytes into a loaded slot (Swedish kbd)
-.import __KLOAD_IMG__, __KLOAD_IMG_SIZE__  ; src/kload_blob.s: the patch, as data
+.import __KLOAD_IMG__, __KLOAD_IMG_SIZE__    ; src/kload_blob.s: the patch,
+.import __KLOAD2_IMG__, __KLOAD2_IMG_SIZE__  ; as data, in its two pieces
 
 ; Where the library sits in ROM (load) and runs (run); both defined by ld65
 ; when the RBCP_CODE segment has `define = yes`.
@@ -397,40 +398,19 @@ rbcp_trampoline:
         ;
         ; $FB-$FE as scratch: reset.s's string pointers, idle since boot, and we
         ; are under SEI on a one-way trip out of the shell.
+        ; Two pieces: the code to $F8E2 and the tables to $FBA6. The tape space
+        ; is not one run -- $FB8E-$FBA5 between them is live stock code -- and
+        ; splitting this way is what makes 701 bytes fit in it.
         lda #<__KLOAD_IMG__
-        sta $FB
-        lda #>__KLOAD_IMG__
-        sta $FC
-        lda #<KLOAD_SLOT_OFF
-        sta $FD
-        lda #>KLOAD_SLOT_OFF
-        sta $FE
-@kl_loop:
-        ldy #0
-        lda ($FB),y
-        sta rbcp_arg0
-        lda $FD
-        sta rbcp_arg1                   ; offset lo
-        lda $FE
-        sta rbcp_arg2                   ; offset mid
-        lda #$00
-        sta rbcp_arg3                   ; offset hi
-        lda #RBCP_STOCK_RAM_SLOT
-        sta rbcp_arg4
-        jsr rbcp_cmd_slot_poke
+        ldx #>__KLOAD_IMG__
+        ldy #$00                        ; piece 0
+        jsr kl_poke_block
         bcs @no_kload                   ; a partial body must NOT be pointed at
-        inc $FB
-        bne :+
-        inc $FC
-:       inc $FD
-        bne :+
-        inc $FE
-:       lda $FB
-        cmp #<(__KLOAD_IMG__ + __KLOAD_IMG_SIZE__)
-        bne @kl_loop
-        lda $FC
-        cmp #>(__KLOAD_IMG__ + __KLOAD_IMG_SIZE__)
-        bne @kl_loop
+        lda #<__KLOAD2_IMG__
+        ldx #>__KLOAD2_IMG__
+        ldy #$03                        ; piece 1 (descriptor index 3)
+        jsr kl_poke_block
+        bcs @no_kload
 
         ; The body is in. NOW repoint ILOAD -- last, and only on success, so the
         ; vector never points at a half-written patch. And the ROM's own vector
@@ -481,10 +461,67 @@ rbcp_trampoline:
         ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
 
+; Poke one piece of the patch into the served stock image. A = source lo,
+; X = source hi, Y = index into the descriptor tables below (the destination
+; offset and the byte count -- three bytes each, hence Y = 0 or 3).
+;
+; $F7-$F9 and $FB-$FE as scratch: the IRQ scan's and reset.s's, both idle, and we
+; are under SEI on a one-way trip out of the shell.
+kl_poke_block:
+        sta $FB
+        stx $FC
+        lda kl_desc,y                   ; destination offset lo
+        sta $FD
+        lda kl_desc+1,y                 ; ...mid
+        sta $FE
+        lda kl_desc+2,y                 ; byte count (pieces are < 256 apart in
+        sta $F7                         ; size; the code piece needs 16 bits)
+        lda kl_desc_hi,y
+        sta $F8
+@byte:
+        ldy #$00
+        lda ($FB),y
+        sta rbcp_arg0
+        lda $FD
+        sta rbcp_arg1
+        lda $FE
+        sta rbcp_arg2
+        lda #$00
+        sta rbcp_arg3
+        lda #RBCP_STOCK_RAM_SLOT
+        sta rbcp_arg4
+        jsr rbcp_cmd_slot_poke
+        bcs @out                        ; carry set: the caller gives up
+        inc $FB
+        bne :+
+        inc $FC
+:       inc $FD
+        bne :+
+        inc $FE
+:       lda $F7                         ; count down 16 bits
+        bne :+
+        dec $F8
+:       dec $F7
+        lda $F7
+        ora $F8
+        bne @byte
+        clc
+@out:   rts
+
+; Per piece: destination slot offset (lo, mid) and size low byte; sizes' high
+; bytes are alongside, indexed the same way.
+kl_desc:
+        .byte <KLOAD_SLOT_OFF,  >KLOAD_SLOT_OFF,  <__KLOAD_IMG_SIZE__
+        .byte <KLOAD2_SLOT_OFF, >KLOAD2_SLOT_OFF, <__KLOAD2_IMG_SIZE__
+kl_desc_hi:
+        .byte >__KLOAD_IMG_SIZE__, 0, 0
+        .byte >__KLOAD2_IMG_SIZE__, 0, 0
+
 ; Where kload.s goes in the served stock image: $F8E2, KERNAL-first so offset 0
 ; is $E000. And the two bytes of the ILOAD entry in the stock vector table at
 ; $FD4C, pointed at it.
-KLOAD_SLOT_OFF = $F8E2 - $E000
+KLOAD_SLOT_OFF  = $F8E2 - $E000
+KLOAD2_SLOT_OFF = $FBA6 - $E000
 kload_vec_off:
         .byte $4C, $4D                  ; $FD4C/$FD4D
 kload_vec_byte:

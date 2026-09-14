@@ -10,11 +10,19 @@
 ; is there by definition.
 
 .export __KLOAD_IMG__, __KLOAD_IMG_SIZE__
+.export __KLOAD2_IMG__, __KLOAD2_IMG_SIZE__
 
 .segment "KLOADIMG"
 
+; Two pieces, because the tape space is two runs with live stock code between
+; them: the code goes to $F8E2 and the tables to $FBA6 (cfg/kload.cfg).
 __KLOAD_IMG__:
         .incbin "build/kload.bin"
 __KLOAD_IMG_END__:
 
-__KLOAD_IMG_SIZE__ = __KLOAD_IMG_END__ - __KLOAD_IMG__
+__KLOAD2_IMG__:
+        .incbin "build/kload2.bin"
+__KLOAD2_IMG_END__:
+
+__KLOAD_IMG_SIZE__  = __KLOAD_IMG_END__ - __KLOAD_IMG__
+__KLOAD2_IMG_SIZE__ = __KLOAD2_IMG_END__ - __KLOAD2_IMG__

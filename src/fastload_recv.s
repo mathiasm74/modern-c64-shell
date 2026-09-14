@@ -250,7 +250,7 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 ; and the per-entry call to it in crt0_disk.s (a bank re-inits on EVERY entry, so
 ; that was rebuilding the same 256 bytes before every disk command).
 .ifdef KLOAD_BUILD
-.define RSEG "KLOAD"
+.define RSEG "KLDATA"
 .elseif .defined(BANK_BUILD)
 .define RSEG "RODATA"
 .else

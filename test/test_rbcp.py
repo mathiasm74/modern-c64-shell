@@ -342,12 +342,29 @@ def test_kload_is_linked_for_the_stock_kernals_tape_space(v):
         "the patch entry is at $%04X, not $F8E2 -- cfg/kload.cfg and " \
         "docs/TAPE-SPACE.md disagree" % (syms.get("kload_entry") or 0)
 
-    img = os.path.join(_BUILD, "kload.bin")
-    size = os.path.getsize(img)
-    assert 0xF8E2 + size - 1 <= 0xFB8D, \
-        "the patch is %d bytes and would run to $%04X, past the end of the " \
-        "tape-only region at $FB8D -- it would overwrite live stock code" \
-        % (size, 0xF8E2 + size - 1)
+    # Two pieces, because the tape space is two runs with LIVE stock code between
+    # them ($FB8E-$FBA5). Each must stay inside its own run: overflow here is not
+    # a link error, it is the stock KERNAL quietly losing a routine.
+    for name, start, last in (("kload.bin", 0xF8E2, 0xFB8D),
+                              ("kload2.bin", 0xFBA6, 0xFC92)):
+        size = os.path.getsize(os.path.join(_BUILD, name))
+        assert start + size - 1 <= last, \
+            "%s is %d bytes and would run to $%04X, past its tape-only region " \
+            "at $%04X -- it would overwrite live stock code" \
+            % (name, size, start + size - 1, last)
+
+    # The entry must actually reach the fast path, not just fall through to the
+    # stock loader: a wedge that only ever jumps to $F4B8 is the stage-1 stub and
+    # would look identical from outside, minus the speed.
+    body = open(os.path.join(_BUILD, "kload.bin"), "rb").read()
+    fast = syms.get("kl_fast")
+    assert fast, "kl_fast is not exported"
+    jsr = bytes([0x20, fast & 0xFF, fast >> 8])
+    assert jsr in body, \
+        "nothing calls kl_fast -- the dispatch never tries the Epyx path"
+    assert bytes([0x4C, 0xB8, 0xF4]) in body, \
+        "the fallback to the stock serial loader ($F4B8) is gone; without it a " \
+        "drive that cannot do Epyx has no way to load at all"
 
     # The stock vector-table entry it repoints, read from the real image rather
     # than trusted: $FD4C must currently hold $F4A5 (the stock ILOAD).

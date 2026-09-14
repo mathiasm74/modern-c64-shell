@@ -213,13 +213,14 @@ $(BUILD)/kload/%.o: src/%.s | $(BUILD)
 	@mkdir -p $(BUILD)/kload
 	$(AS) $(ASFLAGS) -D KLOAD_BUILD=1 -o $@ $<
 
-$(BUILD)/kload.bin: $(KLOAD_OBJ) cfg/kload.cfg
+$(BUILD)/kload.bin $(BUILD)/kload2.bin: $(KLOAD_OBJ) cfg/kload.cfg
 	$(LD) -C cfg/kload.cfg -o $@ $(KLOAD_OBJ) \
 	      -Ln $(BUILD)/kload.labels -m $(BUILD)/kload.map
-	@echo "  kload.bin     : $$(wc -c < $@) bytes of 684 in the tape space"
+	@echo "  kload.bin     : $$(wc -c < $(BUILD)/kload.bin) of 684 bytes at \$$F8E2"
+	@echo "  kload2.bin    : $$(wc -c < $(BUILD)/kload2.bin) of 237 bytes at \$$FBA6"
 
 # The blob is .incbin'd, so the ROM must wait for it.
-$(BUILD)/kload_blob.o: $(BUILD)/kload.bin
+$(BUILD)/kload_blob.o: $(BUILD)/kload.bin $(BUILD)/kload2.bin
 
 # The UTIL BANK: tab completion (src/complete.s), assembled into its own image.
 # Separate from the disk bank because it needs no cc65 runtime at all, so it
