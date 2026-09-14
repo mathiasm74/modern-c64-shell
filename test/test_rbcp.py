@@ -302,3 +302,45 @@ def test_bank_entry_indices_match_the_entry_tables(v):
     for n, name in ((3, "_ub_border"), (4, "_ub_bg"), (5, "_ub_text")):
         assert through_init("util", n) == label("util", name), \
             "util entry %d does not reach %s" % (n, name)
+
+
+def test_kload_is_linked_for_the_stock_kernals_tape_space(v):
+    """The LOAD wedge must be built to run where the tape code is, and the poke
+    loop must be told where to put it.
+
+    None of this can be exercised in VICE -- the swap and every RBCP command are
+    inert without a One ROM -- but the parts that are just arithmetic can still be
+    pinned, and they are the parts that silently rot: the segment's run address,
+    the slot offset derived from it, and the ILOAD vector-table entry. Get any of
+    them wrong and the patch lands somewhere harmless-looking and the machine
+    dies later, under stock ROMs, with nothing to see.
+
+    docs/TAPE-SPACE.md establishes $F8E2-$FB8D as reachable only from the tape
+    paths; tools/kernal_map.py regenerates that.
+    """
+    (void) = v
+
+    L = _labels()
+    run = L.get("kload_entry")
+    assert run is not None, "kload_entry is not exported"
+    assert run == 0xF8E2, \
+        "the wedge is linked to run at $%04X, not $F8E2 -- cfg/rom.cfg's " \
+        "KLOADRUN and docs/TAPE-SPACE.md disagree" % run
+
+    end = L.get("kload_end")
+    assert end is not None and end > run, "kload_end missing or before the start"
+    assert end <= 0xFB8E, \
+        "the wedge runs to $%04X, past the end of the tape-only region at " \
+        "$FB8D -- it would overwrite code the stock KERNAL still uses" % (end - 1)
+
+    # The stock ILOAD vector-table entry it repoints, checked against the real
+    # stock image rather than trusted: $FD4C must currently hold $F4A5.
+    stock = os.path.join(_BUILD, "..", "stock-roms", "kernal.901227-03.bin")
+    if os.path.exists(stock):
+        rom = open(stock, "rb").read()
+        off = 0xFD4C - 0xE000
+        assert rom[off] | (rom[off + 1] << 8) == 0xF4A5, \
+            "the ILOAD entry at $FD4C is not $F4A5 in this KERNAL -- the " \
+            "vector table moved, so the poke offsets are wrong"
+        # ...and that the region we overwrite is where we think it is.
+        assert 0xF8E2 - 0xE000 + (end - run) <= len(rom), "wedge runs off the image"

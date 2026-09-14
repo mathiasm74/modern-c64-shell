@@ -112,7 +112,7 @@ RTLIB       := $(CC65_LIBDIR)/none.lib
 
 # Link order matters: reset.o must come first so `reset` lands at $E000.
 SRC_S := src/reset.s src/irq.s src/screen.s src/kernal_stubs.s src/c_io.s src/iec.s \
-         src/iec_clkwait.s src/svc.s src/parse_addr.s \
+         src/iec_clkwait.s src/svc.s src/parse_addr.s src/kload.s \
          src/rbcp/rbcp.s src/rbcp/launch.s
 SRC_C := src/shell.c src/parser.c \
          src/commands/builtins.c src/commands/fs.c \

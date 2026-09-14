@@ -32,6 +32,7 @@
 .import rbcp_cmd_nv_poke_commit, rbcp_cmd_nv_poke_discard
 .import rbcp_cmd_switch_slot     ; live char-ROM (font) switch
 .import rbcp_cmd_slot_poke       ; patch bytes into a loaded slot (Swedish kbd)
+.import __KLOAD_LOAD__, __KLOAD_SIZE__   ; src/kload.s, stored in our KERNAL ROM
 
 ; Where the library sits in ROM (load) and runs (run); both defined by ld65
 ; when the RBCP_CODE segment has `define = yes`.
@@ -387,6 +388,77 @@ rbcp_trampoline:
         bne @col_loop
 @no_col:
 
+        ; --- patch our LOAD wedge into the stock KERNAL's tape space ---------
+        ; src/kload.s is linked to run at $F8E2 but stored in OUR KERNAL ROM,
+        ; which is still mapped here (the switch is the last thing we do, and the
+        ; RBCP command page lives at $E0xx, so the ROM has to be there anyway).
+        ; Copy it byte by byte into the served stock image -- see
+        ; docs/TAPE-SPACE.md for why that region is free.
+        ;
+        ; $FB-$FE as scratch: reset.s's string pointers, idle since boot, and we
+        ; are under SEI on a one-way trip out of the shell.
+        lda #<__KLOAD_LOAD__
+        sta $FB
+        lda #>__KLOAD_LOAD__
+        sta $FC
+        lda #<KLOAD_SLOT_OFF
+        sta $FD
+        lda #>KLOAD_SLOT_OFF
+        sta $FE
+@kl_loop:
+        ldy #0
+        lda ($FB),y
+        sta rbcp_arg0
+        lda $FD
+        sta rbcp_arg1                   ; offset lo
+        lda $FE
+        sta rbcp_arg2                   ; offset mid
+        lda #$00
+        sta rbcp_arg3                   ; offset hi
+        lda #RBCP_STOCK_RAM_SLOT
+        sta rbcp_arg4
+        jsr rbcp_cmd_slot_poke
+        bcs @no_kload                   ; a partial body must NOT be pointed at
+        inc $FB
+        bne :+
+        inc $FC
+:       inc $FD
+        bne :+
+        inc $FE
+:       lda $FB
+        cmp #<(__KLOAD_LOAD__ + __KLOAD_SIZE__)
+        bne @kl_loop
+        lda $FC
+        cmp #>(__KLOAD_LOAD__ + __KLOAD_SIZE__)
+        bne @kl_loop
+
+        ; The body is in. NOW repoint ILOAD -- last, and only on success, so the
+        ; vector never points at a half-written patch. And the ROM's own vector
+        ; TABLE at $FD4C, not $0330: RESTOR copies the table out, so this hook
+        ; survives any later RESTOR the program does. $0330 would not.
+        ldx #0
+@kl_vec:
+        lda kload_vec_off,x
+        sta rbcp_arg1
+        lda #$1D
+        sta rbcp_arg2                   ; $FD4C/$FD4D -> slot offsets $1D4C/$1D4D
+        lda #$00
+        sta rbcp_arg3
+        lda kload_vec_byte,x
+        sta rbcp_arg0
+        lda #RBCP_STOCK_RAM_SLOT
+        sta rbcp_arg4
+        txa
+        pha
+        jsr rbcp_cmd_slot_poke
+        pla
+        tax
+        bcs @no_kload
+        inx
+        cpx #2
+        bne @kl_vec
+@no_kload:
+
         lda #RBCP_STOCK_RAM_SLOT
         jsr rbcp_cmd_switch_and_exit    ; activate it; the device begins
                                         ; serving the new slot immediately
@@ -408,6 +480,15 @@ rbcp_trampoline:
         ; they can't rely on them, and keeping the handoff a single JMP avoids
         ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
+
+; Where kload.s goes in the served stock image: $F8E2, KERNAL-first so offset 0
+; is $E000. And the two bytes of the ILOAD entry in the stock vector table at
+; $FD4C, pointed at it.
+KLOAD_SLOT_OFF = $F8E2 - $E000
+kload_vec_off:
+        .byte $4C, $4D                  ; $FD4C/$FD4D
+kload_vec_byte:
+        .byte <$F8E2, >$F8E2
 
 ; The live value for colour-patch entry X. Only entry 0 (text) is used now;
 ; the border ($D020) and background ($D021) readers stay written down here
