@@ -392,3 +392,44 @@ def test_kload_is_linked_for_the_stock_kernals_tape_space(v):
         assert rom[off] | (rom[off + 1] << 8) == 0xF4A5, \
             "the ILOAD entry at $FD4C is not $F4A5 in this KERNAL -- the vector " \
             "table moved, so the poke offsets are wrong"
+
+
+def test_exit_wedge_targets_the_real_escape(v):
+    """`EXIT` in stock BASIC must jump to where the swap-back actually is.
+
+    The wedge is linked separately (cfg/kload.cfg) and cannot import
+    rbcp_escape_tramp, so kload.s hardcodes its RUN address. That is a
+    cross-link constant with nothing holding it together: move RBCP_CODE by a
+    byte and `EXIT` jumps into the middle of some other routine, under stock
+    ROMs, with no way to tell what happened. Pin it here instead.
+    """
+    (void) = v
+
+    # The address is POKED in, not hardcoded -- so what there is to check is
+    # that the wedge jumps INDIRECTLY through its own vector, and that the
+    # trampoline fills that vector from the real symbol.
+    src = _read("src", "kload.s")
+    assert "jmp (escape_vec)" in src, \
+        "the EXIT wedge no longer jumps through escape_vec -- if it hardcodes " \
+        "an address again, it will go stale the next time RBCP_CODE moves"
+    launch = _read("src", "rbcp", "launch.s")
+    assert "<rbcp_escape_tramp, >rbcp_escape_tramp" in launch, \
+        "the swap trampoline does not poke the escape address into the wedge"
+
+    # ...and that it is actually reached: the wedge must be in the poked image,
+    # and BASIC's IGONE table entry ($E44F, slot offset $044F) repointed at it.
+    size = os.path.getsize(os.path.join(_BUILD, "kload3.bin"))
+    assert 0xF533 + size - 1 <= 0xF5A8, \
+        "the EXIT wedge is %d bytes and overruns its tape run at $F5A8" % size
+
+    stock = os.path.join(_BUILD, "..", "stock-roms", "kernal.901227-03.bin")
+    if os.path.exists(stock):
+        rom = open(stock, "rb").read()
+        off = 0xE44F - 0xE000
+        assert rom[off] | (rom[off + 1] << 8) == 0xA7E4, \
+            "BASIC's IGONE entry at $E44F is not $A7E4 in this KERNAL -- the " \
+            "vector table moved, so the poke offset is wrong"
+
+    assert "$4C, $4D, $4F, $50, $33, $34" in launch, \
+        "the vector-patch table must carry ILOAD ($4C/$4D), IGONE ($4F/$50) " \
+        "and the wedge's escape vector ($33/$34)"

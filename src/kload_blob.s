@@ -11,6 +11,7 @@
 
 .export __KLOAD_IMG__, __KLOAD_IMG_SIZE__
 .export __KLOAD2_IMG__, __KLOAD2_IMG_SIZE__
+.export __KLOAD3_IMG__, __KLOAD3_IMG_SIZE__
 
 .segment "KLOADIMG"
 
@@ -24,5 +25,10 @@ __KLOAD2_IMG__:
         .incbin "build/kload2.bin"
 __KLOAD2_IMG_END__:
 
+__KLOAD3_IMG__:
+        .incbin "build/kload3.bin"
+__KLOAD3_IMG_END__:
+
 __KLOAD_IMG_SIZE__  = __KLOAD_IMG_END__ - __KLOAD_IMG__
 __KLOAD2_IMG_SIZE__ = __KLOAD2_IMG_END__ - __KLOAD2_IMG__
+__KLOAD3_IMG_SIZE__ = __KLOAD3_IMG_END__ - __KLOAD3_IMG__

@@ -33,7 +33,8 @@
 .import rbcp_cmd_switch_slot     ; live char-ROM (font) switch
 .import rbcp_cmd_slot_poke       ; patch bytes into a loaded slot (Swedish kbd)
 .import __KLOAD_IMG__, __KLOAD_IMG_SIZE__    ; src/kload_blob.s: the patch,
-.import __KLOAD2_IMG__, __KLOAD2_IMG_SIZE__  ; as data, in its two pieces
+.import __KLOAD2_IMG__, __KLOAD2_IMG_SIZE__  ; as data, in its three pieces
+.import __KLOAD3_IMG__, __KLOAD3_IMG_SIZE__
 
 ; Where the library sits in ROM (load) and runs (run); both defined by ld65
 ; when the RBCP_CODE segment has `define = yes`.
@@ -411,6 +412,11 @@ rbcp_trampoline:
         ldy #$03                        ; piece 1 (descriptor index 3)
         jsr kl_poke_block
         bcs @no_kload
+        lda #<__KLOAD3_IMG__
+        ldx #>__KLOAD3_IMG__
+        ldy #$06                        ; piece 2: the EXIT wedge
+        jsr kl_poke_block
+        bcs @no_kload
 
         ; The body is in. NOW repoint ILOAD -- last, and only on success, so the
         ; vector never points at a half-written patch. And the ROM's own vector
@@ -420,8 +426,8 @@ rbcp_trampoline:
 @kl_vec:
         lda kload_vec_off,x
         sta rbcp_arg1
-        lda #$1D
-        sta rbcp_arg2                   ; $FD4C/$FD4D -> slot offsets $1D4C/$1D4D
+        lda kload_vec_mid,x
+        sta rbcp_arg2
         lda #$00
         sta rbcp_arg3
         lda kload_vec_byte,x
@@ -435,7 +441,7 @@ rbcp_trampoline:
         tax
         bcs @no_kload
         inx
-        cpx #2
+        cpx #6
         bne @kl_vec
 @no_kload:
 
@@ -460,6 +466,15 @@ rbcp_trampoline:
         ; they can't rely on them, and keeping the handoff a single JMP avoids
         ; executing stock ROM code before the game expects it.
         jmp ($FFFC)
+
+; --- in ROM, deliberately --------------------------------------------------
+; This helper and its tables sit in KCODE, not in the RAM trampoline, and the
+; reason is space: RBCP_CODE has to fit $C800-$CDFF (the completion name cache
+; owns $CE00 and the run stub $CF00), and three pieces plus four vector bytes
+; pushed it 23 bytes over. It is safe to call from the trampoline because the
+; whole patch happens BEFORE switch_and_exit, with our KERNAL still served -- it
+; must be, since every RBCP command is a READ of the command page at $E0xx.
+.segment "KCODE"
 
 ; Poke one piece of the patch into the served stock image. A = source lo,
 ; X = source hi, Y = index into the descriptor tables below (the destination
@@ -513,19 +528,41 @@ kl_poke_block:
 kl_desc:
         .byte <KLOAD_SLOT_OFF,  >KLOAD_SLOT_OFF,  <__KLOAD_IMG_SIZE__
         .byte <KLOAD2_SLOT_OFF, >KLOAD2_SLOT_OFF, <__KLOAD2_IMG_SIZE__
+        .byte <KLOAD3_SLOT_OFF, >KLOAD3_SLOT_OFF, <__KLOAD3_IMG_SIZE__
 kl_desc_hi:
         .byte >__KLOAD_IMG_SIZE__, 0, 0
         .byte >__KLOAD2_IMG_SIZE__, 0, 0
+        .byte >__KLOAD3_IMG_SIZE__, 0, 0
+
+
+.segment "RBCP_CODE"
 
 ; Where kload.s goes in the served stock image: $F8E2, KERNAL-first so offset 0
 ; is $E000. And the two bytes of the ILOAD entry in the stock vector table at
 ; $FD4C, pointed at it.
 KLOAD_SLOT_OFF  = $F8E2 - $E000
 KLOAD2_SLOT_OFF = $FBA6 - $E000
+KLOAD3_SLOT_OFF = $F533 - $E000
+; The two vector-table entries we repoint, in the STOCK image. Both are tables
+; the ROM copies into RAM at init, which is the whole point: patch the table and
+; the hook reinstalls itself on every RESTOR / BASIC start, where patching the
+; RAM vector would be undone by the next one.
+;   $FD4C  ILOAD, in the KERNAL's table at $FD30 -> the fast loader at $F8E2
+;   $E44F  IGONE, in BASIC's table at $E447 (which lives in the KERNAL ROM, in
+;          the region BASIC overflows into) -> the EXIT wedge at $F533
+; Six bytes, three pointers:
+;   $FD4C  ILOAD, in the KERNAL's table at $FD30  -> the fast loader at $F8E2
+;   $E44F  IGONE, in BASIC's table at $E447       -> the EXIT wedge at $F535
+;   $F533  the wedge's own escape_vec             -> rbcp_escape_tramp, wherever
+;          it linked. Poking it beats hardcoding: the first version hardcoded the
+;          address and moving one routine out of RBCP_CODE shifted it 71 bytes.
 kload_vec_off:
-        .byte $4C, $4D                  ; $FD4C/$FD4D
+        .byte $4C, $4D, $4F, $50, $33, $34
+kload_vec_mid:
+        .byte $1D, $1D, $04, $04, $15, $15
 kload_vec_byte:
-        .byte <$F8E2, >$F8E2
+        .byte <$F8E2, >$F8E2, <$F535, >$F535
+        .byte <rbcp_escape_tramp, >rbcp_escape_tramp
 
 ; The live value for colour-patch entry X. Only entry 0 (text) is used now;
 ; the border ($D020) and background ($D021) readers stay written down here

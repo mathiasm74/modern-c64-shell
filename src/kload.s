@@ -215,3 +215,60 @@ mw_tail: .byte $63, $B6, $9F            ; make the chunk sums $53 / $A6 / $8F
 
 kload_end:
         .export kload_entry, kload_end, kl_fast
+
+; ============================================================================
+; EXIT -- typing it at the stock BASIC prompt comes back to the shell.
+;
+; A BASIC keyword wedge was prototyped in v0.1.83 and reverted in v0.1.84: it
+; cost ~50 bytes of the 16KB image for something that only runs while Tardis is
+; swapped out. Two things changed. The bytes now live here, in the tape space,
+; carried as blob data rather than as shell code -- and more importantly the hook
+; is durable. The old one patched $0308 in RAM, which BASIC's own init overwrites;
+; this patches the ROM TABLE at $E44F that BASIC copies FROM, so BASIC installs
+; the wedge itself on every cold and warm start, including the $E453 call `run`'s
+; stub already makes.
+;
+; IGONE fires before EVERY BASIC statement, so the cost to a running program is
+; the thing to watch. CURLIN's high byte is $FF only in direct mode, so a program
+; pays one compare and a branch -- seven cycles -- and the string compare only
+; ever happens on a line someone typed.
+; ============================================================================
+
+CURLIN_HI = $3A                 ; $FF = direct mode (no line number)
+TXTPTR    = $7A                 ; $7A/$7B: BASIC's text pointer
+STOCK_IGONE = $A7E4
+
+        .segment "KLEXIT"
+
+; The shell's swap-back (rbcp_escape_tramp) lives in the RBCP block copied to
+; $C800, and this link cannot see that symbol. Hardcoding its address was the
+; first attempt and it was stale within the hour -- moving one routine out of
+; RBCP_CODE shifted it by 71 bytes. So the address is POKED in at patch time
+; instead, from launch.s, which can just name the symbol.
+;
+; The vector is deliberately FIRST in the segment: that pins it at $F533 and the
+; wedge at $F535, both compile-time constants on the poking side, so neither end
+; has to know anything about the other's layout.
+escape_vec:
+        .word $0000                     ; filled in by the swap trampoline
+
+exit_wedge:
+        lda CURLIN_HI
+        cmp #$FF
+        bne @stock                      ; running program: straight on
+        ldy #$01                        ; stock IGONE does CHRGET first, so the
+@cmp:   lda (TXTPTR),y                  ; statement text starts one past TXTPTR
+        cmp exit_kw-1,y
+        bne @stock
+        iny
+        cpy #$05
+        bne @cmp
+        jmp (escape_vec)
+@stock: jmp STOCK_IGONE
+
+; PETSCII, which for unshifted letters is the same as ASCII uppercase. Nothing
+; tokenizes it: CRUNCH finds no keyword at E ("EXP" diverges at the third
+; character), X, I or T, so "EXIT" reaches us as four plain bytes.
+exit_kw: .byte "EXIT"
+
+        .export exit_wedge, escape_vec
