@@ -43,6 +43,8 @@ STOCK_SERIAL = $F4B8            ; LOAD's serial path, entered past its device
                                 ; VERCK and ST set, which we do below.
 STOCK_ILLEGAL = $F713           ; "illegal device number"
 STOCK_NONAME  = $F710           ; "missing file name"
+STOCK_SEARCHING = $F5AF         ; "SEARCHING FOR ..."  (checks MSGFLG $9D)
+STOCK_LOADING   = $F5D2         ; "LOADING"/"VERIFYING" (checks MSGFLG $9D)
 
         .segment "KLOAD"
 
@@ -86,12 +88,6 @@ kload_entry:
         ; had before.
         lda VERCK
         bne @stock                      ; VERIFY: not implemented here
-        lda SA
-        beq @stock                      ; SA=0 is "load at the X/Y address", and
-                                        ; the receiver always uses the address in
-                                        ; the file. That is the ",8,1" case, which
-                                        ; is what a program loading its own data
-                                        ; uses; plain LOAD"x",8 stays stock.
         lda FNLEN
         beq @noname
         jsr kl_fast
@@ -112,12 +108,17 @@ kload_entry:
 ; Carry clear = loaded, end address in $AE/$AF. Carry set = caller falls back.
 ; ---------------------------------------------------------------------------
 kl_fast:
+        jsr STOCK_SEARCHING             ; "SEARCHING FOR <name>" -- the stock
+                                        ; routine, which checks MSGFLG itself, so
+                                        ; a running program still gets silence and
+                                        ; direct mode still looks like a C64.
         jsr kl_install
         lda ST
         and #$80
         bne @fail                       ; nobody home on the bus
         jsr kl_header
         bne @fail                       ; drive never signalled ready: not Epyx
+        jsr STOCK_LOADING               ; "LOADING" / "VERIFYING", MSGFLG-gated
         jsr _epyx_recv_prg              ; A/X = end address, 0/0 = failure
         sta EAL
         stx EAL+1

@@ -334,6 +334,21 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
         bcs @fail
         sta DST+1
         sta LADRH
+.ifdef KLOAD_BUILD
+        ; SA=0 means "load at the address the CALLER passed in X/Y", which LOAD
+        ; stashed at $C3/$C4 before jumping through the vector. The Epyx stream
+        ; always carries the file's own address, so honouring that form means
+        ; overriding the destination here -- the real Epyx cartridge declines to,
+        ; which is why it is slow in `,8` mode and we are not. LADRL/LADRH keep
+        ; the file's address; only where the bytes go changes.
+        lda $B9                         ; SA
+        bne :+
+        lda $C3                         ; MEMUSS lo
+        sta DST
+        lda $C4
+        sta DST+1
+:
+.endif
         lda #2
         sta TOTL                        ; the two address bytes are counted
         ; --- stream the rest into (DST), crossing block boundaries -----------

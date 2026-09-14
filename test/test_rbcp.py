@@ -366,6 +366,23 @@ def test_kload_is_linked_for_the_stock_kernals_tape_space(v):
         "the fallback to the stock serial loader ($F4B8) is gone; without it a " \
         "drive that cannot do Epyx has no way to load at all"
 
+    # SA=0 ("load at the caller's X/Y") must be handled, not refused. The Epyx
+    # stream always carries the file's own address, so honouring that form means
+    # overriding the destination with MEMUSS ($C3/$C4) -- which is what puts us
+    # ahead of the real cartridge, since it declines and stays slow in `,8`.
+    assert bytes([0xA5, 0xB9]) in body, "the receiver never reads SA ($B9)"
+    assert bytes([0xA5, 0xC3]) in body and bytes([0xA5, 0xC4]) in body, \
+        "MEMUSS ($C3/$C4) is never read -- a LOAD\"x\",8 would land at the " \
+        "file's own address instead of where the caller asked"
+
+    # The stock LOAD messages. Both routines gate on MSGFLG themselves, so a
+    # running program still gets silence -- but without them a BASIC LOAD in
+    # direct mode would go quiet, which is a visible change in behaviour.
+    assert bytes([0x20, 0xAF, 0xF5]) in body, \
+        "SEARCHING ($F5AF) is not printed"
+    assert bytes([0x20, 0xD2, 0xF5]) in body, \
+        "LOADING ($F5D2) is not printed"
+
     # The stock vector-table entry it repoints, read from the real image rather
     # than trusted: $FD4C must currently hold $F4A5 (the stock ILOAD).
     stock = os.path.join(_BUILD, "..", "stock-roms", "kernal.901227-03.bin")
