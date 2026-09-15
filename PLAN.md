@@ -560,6 +560,31 @@ at random addresses; small local files are reliable).
 first real step needs a clean **large-local** test -- blocked on getting a file
 onto Meatloaf (an SD card). May end up documented as a Meatloaf limit.
 
+### 6. Type-in support (magazine listings)
+
+Entering a type-in program from a magazine, with the checking those listings were
+designed around -- Compute!'s `MLX` for machine code and the Automatic
+Proofreader for BASIC. Both are line-at-a-time entry with a per-line checksum, so
+a typo is caught on the line you made it on rather than at RUN.
+
+Most of the machinery already exists and the question is which shape to give it:
+
+* **In the hex editor** -- an MLX-style mode: enter a line's bytes, get the
+  checksum, compare. It already has the address column, the byte grid, edit marks
+  and undo; what it lacks is line-oriented entry and the checksum.
+* **In the text editor** -- a proofreader for BASIC listings: show a per-line
+  checksum beside each line so it can be checked against the printed one. The
+  tokenizer is already there and round-trips byte-exact, which is most of the
+  hard part.
+* **As a command** -- verify an existing file against a listing's checksums,
+  rather than entering it here at all.
+
+Worth pinning down before building: which checksum (there were several -- MLX's
+changed between magazines and years), and whether the value is entering listings
+on a modern machine at all versus checking a file typed elsewhere. The editors
+are the reason this is cheap now; it would not have been before the hex editor
+and the tokenizer existed.
+
 ### Already in the plan, re-rank as you like
 
 AUTOEXEC (deferred, Phase 8) · broader drive testing -- real 1541 fast-load
