@@ -8,6 +8,8 @@ Each test that types a command starts with a clear ($93) so it works from a
 known screen regardless of the boot banner and prompt position.
 """
 
+import os
+
 CLEAR = 0x93
 CR = 0x0D
 DEL = 0x14
@@ -113,3 +115,40 @@ def test_bank_command_is_known_not_unknown(v):
         "a bank command with no bank should report it is unavailable\n%s" % txt
     assert "Command not found" not in txt, \
         "a bank command must not report as unknown -- it IS a known command\n%s" % txt
+
+
+def test_command_names_live_in_the_kernal_half(v):
+    """The dispatch table and its name strings must be KERNAL-side.
+
+    Only the KERNAL half is reachable from a bank, and the files bank walks this
+    table for `help` -- following each row's name pointer. Put the strings in the
+    BASIC half and the bank reads its own code instead, which is the "help
+    printed structured garbage" bug.
+
+    It is worth pinning because the pressure that keeps it right can reverse: the
+    table is in RODATA2 only by a deliberately unmatched `#pragma rodata-name`
+    push in shell.c, and v0.2.38 moved the CODE2 blocks around it back to the
+    BASIC half. One stray `pop` and this goes quietly wrong -- on hardware only,
+    since a VICE bank runs from RAM where both halves are readable.
+    """
+    (void) = v
+
+    labels = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "..", "build", "labels.txt")
+    addr = None
+    with open(labels) as f:
+        for line in f:
+            p = line.split()
+            if len(p) >= 3 and p[2] == "._shell_commands":
+                addr = int(p[1], 16) & 0xFFFF
+    assert addr is not None, "_shell_commands not in build/labels.txt"
+    assert addr >= 0xE000, \
+        "the dispatch table is at $%04X, in the BASIC half -- a bank cannot " \
+        "reach it, so `help` would read its own code" % addr
+
+    kernal = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "..", "build", "kernal.bin"), "rb").read()
+    for name in (b"devices", b"border", b"status", b"debug", b"hex"):
+        assert name in kernal, \
+            "the command name %r is not in the KERNAL half -- the table's " \
+            "pointers would dangle into the swapped-out BASIC half" % name

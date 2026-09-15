@@ -25,7 +25,10 @@
 .export _parse_addr
 .importzp ptr1, ptr2, tmp1, tmp2
 
-.segment "CODE2"                ; KERNAL half (the BASIC half is the tight one)
+.segment "CODE"                 ; BASIC half. It was in CODE2 (the KERNAL half)
+                                ; when the BASIC ROM was the tight one; carrying the
+                                ; stock-KERNAL patch reversed that. `sys` is resident
+                                ; and nothing in a bank calls this.
 
 _parse_addr:
         sta ptr1

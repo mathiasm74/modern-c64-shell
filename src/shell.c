@@ -361,7 +361,11 @@ static unsigned char readline(void)
     }
 }
 
-#pragma code-name (push, "CODE2")
+/* Code back in the BASIC half (v0.2.38); see fs.c for why. The RODATA2 push
+   below STAYS: shell.c's literal pool holds the dispatch table's name strings,
+   which the files bank follows for `help`, and only the KERNAL half is reachable
+   from a bank. (That was the "help printed structured garbage" bug.) */
+#pragma code-name (push, "CODE")
 #pragma rodata-name (push, "RODATA2")
 /* JiffyDOS-style wedge aliases: rewrite the line in place before parsing.
  * "@" = status, "@$" = dir, "@#<n>" = device <n>, "/x" and "%x" = load x

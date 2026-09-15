@@ -23,15 +23,16 @@ void cmd_clear(int argc, char *argv[])
     chrout(CLEAR);
 }
 
-/* ver parks its code + string in the KERNAL ROM (CODE2/RODATA2): the BASIC ROM
-   is full, and it's small and cold. */
-#pragma code-name (push, "CODE2")
-#pragma rodata-name (push, "RODATA2")
+/* `ver` used to park its code and string in the KERNAL ROM because the BASIC ROM
+   was full. It is not any more -- the KERNAL half is now the tight one -- so this
+   is back where it belongs. */
+#pragma code-name (push, "CODE")
+#pragma rodata-name (push, "RODATA")
 void cmd_ver(int argc, char *argv[])
 {
     (void)argc; (void)argv;
     /* Brand + version; kept in step with the boot banner's version (reset.s). */
-    puts_raw("Tardis DOS v0.2.37");
+    puts_raw("Tardis DOS v0.2.38");
     chrout(CR);
 }
 #pragma rodata-name (pop)

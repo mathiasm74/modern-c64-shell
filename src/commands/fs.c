@@ -348,7 +348,14 @@ void cmd_edit(int argc, char *argv[])
 /* run - call the most recently loaded program like SYS. It returns here (and
    the shell reprompts) if the program ends in RTS; a program that loops or
    takes over the machine never returns. */
-#pragma code-name (push, "CODE2")
+/* Back in the BASIC half (v0.2.38). This block sat in CODE2 -- the KERNAL half
+   -- only because the BASIC ROM was full when it was written. That pressure has
+   reversed: carrying the stock-KERNAL patch as data left the KERNAL half with
+   ~770 bytes free while the BASIC half had 3400. Nothing here needs to be
+   KERNAL-side: a bank binds only to fixed addresses (the SVC table at $FF80 and
+   _line at $C000, see the bank cfgs), never to a resident C function, and
+   bank_try/bank_dispatch already live here and work. */
+#pragma code-name (push, "CODE")
 /* in src/c_io.s: the autostart stub copied into the tape buffer. */
 extern unsigned char run_stub[];
 extern unsigned char run_stub_end[];
