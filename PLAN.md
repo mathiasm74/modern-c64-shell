@@ -580,7 +580,7 @@ skoe's Programmer's Reference):
 
 | today (One ROM) | EasyFlash |
 |---|---|
-| KERNAL half `$E000`, always mapped | **ROML `$8000-$9FFF`**, always mapped |
+| KERNAL half `$E000`, always mapped | **ROML `$8000-$9FFF`** — the SAME image in every bank (see below) |
 | banks served at `$A000` | **ROMH `$A000-$BFFF`**, `$DE00` selects the bank |
 | `SWITCH_SLOT` over RBCP, ~588 us, hardware-only | a **register write**, three cycles, and VICE emulates it |
 | 10 flash sets | **64 banks of 16 KB** (1 MB) |
@@ -625,9 +625,39 @@ of the C= graphics or colour-code work). The alternative is to keep `screen.s` a
 `irq.s` in ROML and hook the RAM vectors (`$0314`, `$0326`, `$032A`), which costs
 ~1.2 KB of ROML and keeps Tardis recognisably Tardis. Recommend the latter.
 
+#### What phase 1 found (the spike is built and green)
+
+`make ef-spike` builds it, `test_ef_spike.py` runs it on a stock machine with the
+cart attached, and all four steps pass in VICE: boot from Ultimax, bank via
+`$DE00`, kill to stock BASIC via `$DE02`, and return from BASIC. Three findings
+change the plan above, and none were predictable from the docs alone:
+
+* **`$DE00` banks BOTH windows at once** — the spec's "the bank is valid for both
+  chips, ROML and ROMH". A static half at `$8000` with switched banks at `$A000`
+  therefore does NOT work as first written: selecting a bank switches the running
+  code away with it, which is exactly how the spike crashed. **The fix is to put
+  the same ROML image in every bank**, so only `$A000` appears to change. At 8 KB
+  per bank out of 1 MB that is free.
+* **The mode switch cannot run from the window it is switching.** The start-up
+  code lives at `$E000` in Ultimax and vanishes the instant `$DE02` selects 16K,
+  so it copies a three-instruction stub to RAM and jumps there. Same shape as
+  `bank_call` living in the One ROM build's static half — and the reason the
+  `$DF00` RAM exists.
+* **VICE's `-easyflashjumper` is the inverse of what the spec's wording suggests**:
+  the jumper *disabled* is the setting that boots the cartridge.
+
+A fourth, smaller one confirms the screen decision: the spike prints lowercase
+ASCII through the stock CHROUT and it comes out as uppercase PETSCII. Under a
+stock KERNAL the shell would not look like Tardis, which is why `screen.s` and
+`irq.s` are to be kept and hooked on the RAM vectors.
+
+**Still to confirm on hardware**: that KFF/Ultimate implement the full register
+behaviour, particularly switching the ROM back on with it off. Emulating enough
+to run EF game images is a lower bar.
+
 #### Phases
 
-1. **Spike, in VICE then on hardware.** A minimal EF cart that boots from Ultimax,
+1. ~~**Spike, in VICE**~~ — done. Hardware confirmation still outstanding. A minimal EF cart that boots from Ultimax,
    prints, switches a ROMH bank, kills itself to BASIC, and comes back. Perhaps
    200 lines. It proves the whole mechanism and nothing else in the plan is worth
    starting until it does. Test with `x64sc -cartef`, then on Kung Fu Flash —

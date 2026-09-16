@@ -202,6 +202,29 @@ $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_ban
 	      $(BANK_SHARED_OBJ) $(RTLIB) -Ln $(BUILD)/banks/disk_bank.labels -m $(BUILD)/banks/disk_bank.map
 	@echo "  disk_bank.bin : $$(wc -c < $@) bytes"
 
+# The EASYFLASH SPIKE (PLAN.md section 7, phase 1): the proof of mechanism for a
+# second target. Not part of any Tardis image -- `make ef-spike` builds it, and
+# test_ef_spike.py runs it on a STOCK machine with the cart attached.
+EF_IMAGES := $(BUILD)/ef/roml0.bin $(BUILD)/ef/romh0.bin $(BUILD)/ef/romh1.bin
+
+$(BUILD)/ef/spike.o: src/ef/spike.s | $(BUILD)
+	@mkdir -p $(BUILD)/ef
+	$(AS) $(ASFLAGS) -o $@ $<
+
+$(EF_IMAGES): $(BUILD)/ef/spike.o cfg/ef_spike.cfg
+	$(LD) -C cfg/ef_spike.cfg -o /dev/null $(BUILD)/ef/spike.o -m $(BUILD)/ef/spike.map
+
+# Every bank carries the SAME ROML: $DE00 banks both windows together, so the
+# always-mapped half has to be identical in each bank or a switch takes the
+# running code with it.
+$(BUILD)/ef/spike.crt: $(EF_IMAGES) tools/make_ef_crt.py
+	python3 tools/make_ef_crt.py $@ \
+		0:l=$(BUILD)/ef/roml0.bin 0:h=$(BUILD)/ef/romh0.bin \
+		1:l=$(BUILD)/ef/roml0.bin 1:h=$(BUILD)/ef/romh1.bin
+
+ef-spike: $(BUILD)/ef/spike.crt
+.PHONY: ef-spike
+
 # The STOCK-KERNAL PATCH: linked to run at $F8E2 inside the served stock KERNAL's
 # tape space (docs/TAPE-SPACE.md), then carried in our ROM as data and poked
 # across before the swap. Its own link, because it needs its own copies of the
@@ -340,7 +363,7 @@ run: all
 # The banks are prerequisites too: the VICE tests seed them into the RAM under
 # $A000 (most commands live in a bank now), so a test run straight after a
 # clean would otherwise fail with a confusing FileNotFoundError.
-test: all $(BANK_BINS)
+test: all $(BANK_BINS) $(BUILD)/ef/spike.crt
 	$(PYTHON) test/run_tests.py $(M)
 
 # Build a One ROM firmware image holding both halves as a single multi-ROM set
