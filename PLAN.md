@@ -560,6 +560,98 @@ at random addresses; small local files are reliable).
 first real step needs a clean **large-local** test -- blocked on getting a file
 onto Meatloaf (an SD card). May end up documented as a Meatloaf limit.
 
+### 7. A second target: EasyFlash, alongside One ROM
+
+Wanted for the C64 Ultimate and for a C64 with an Ultimate II+ — and as a bonus
+it runs on Kung Fu Flash and on real EasyFlash hardware, because EF is a
+*format* those devices emulate rather than a competing product.
+
+**Why not the obvious routes.** An REU is RAM behind a DMA controller; it cannot
+appear in a ROM window, so it cannot be Tardis. And a custom KERNAL on the
+Ultimate is a configuration-menu setting applied at boot, with no UCI command to
+change it (the control target has 17 commands — freeze, reboot, REU load/save,
+drive power, palette — and nothing for ROM selection). That makes it a one-way
+door: `run` could never reach the stock ROMs it needs. EasyFlash inverts the
+problem, because the expansion port was designed to let *software* control
+banking.
+
+**The mapping is nearly one-to-one with what we already have** (all figures from
+skoe's Programmer's Reference):
+
+| today (One ROM) | EasyFlash |
+|---|---|
+| KERNAL half `$E000`, always mapped | **ROML `$8000-$9FFF`**, always mapped |
+| banks served at `$A000` | **ROMH `$A000-$BFFF`**, `$DE00` selects the bank |
+| `SWITCH_SLOT` over RBCP, ~588 us, hardware-only | a **register write**, three cycles, and VICE emulates it |
+| 10 flash sets | **64 banks of 16 KB** (1 MB) |
+| `run`/`basic`: flash swap + CBM80 + reset | `$DE02` = `MXG 100`, "cartridge ROM off" — a plain C64, ROMs intact, RAM untouched, no reset |
+| `EXIT` / RUN-STOP-RESTORE | `$DE02` = `MXG 111` back to 16K |
+| `bank_call` lives in the static half so it survives the switch | the **256 bytes of RAM at `$DF00`**, which the spec says is "always visible" and stays available with the ROM off |
+
+Confirmed before planning: `$DE00` works "no matter which memory configuration is
+set" (§2.4); `MXG=100` is documented as "Cartridge ROM off (RAM at $DF00 still
+available)"; and VICE's `easyflash.c` registers the I/O1 handler at attach with no
+mode check, so `$DE02` keeps responding with the ROM off. The hardware reason is
+that the ROM windows follow `/GAME` and `/EXROM` while the I/O windows are decoded
+from the separate `I/O1`/`I/O2` lines.
+
+#### What is shared, and what is not
+
+Shared unchanged: `shell.c`, `parser.c`, every command, every **bank** (same
+`"bnk"` ABI at `$A000`), the editors, `dir.c`, the Epyx code.
+
+The platform-specific set is small and already has a natural seam — **the SVC
+table is the HAL**. Banks reach the outside world only through it and the KERNAL
+entry points; point those entries at different implementations and the bank source
+does not change. Per target:
+
+* **`bank_call`** — `SWITCH_SLOT` vs a `$DE00` write.
+* **leave / return to stock** — RBCP swap vs `$DE02`.
+* **IEC** — ours (`iec.o`, 902 bytes) vs thin SVC wrappers over the stock
+  KERNAL's `$FFB1`/`$FFA8`/`$FFA5`. EF gets those 902 bytes back for free, which
+  matters: ROML is 8 KB, the same budget as the KERNAL half.
+* **reset / boot** — our reset vector vs EF's Ultimax start-up (the cart supplies
+  `$E000-$FFFF` at reset, so **it still boots straight into the shell**; the
+  start-up code then switches to 16K mode).
+* **settings** — One ROM NV flash vs a file on disk (simplest, works everywhere)
+  or EF flash via EasyAPI.
+* **`font`** — One ROM only; EF cannot serve a character ROM. Document, do not
+  emulate.
+
+Undecided, and worth deciding before Phase 3: **screen and keyboard**. On EF the
+stock KERNAL is present, so `readline` would work over stock `$FFD2`/`$FFE4` — but
+the shell would then look and behave like stock (PETSCII case, no `pet2scr`, none
+of the C= graphics or colour-code work). The alternative is to keep `screen.s` and
+`irq.s` in ROML and hook the RAM vectors (`$0314`, `$0326`, `$032A`), which costs
+~1.2 KB of ROML and keeps Tardis recognisably Tardis. Recommend the latter.
+
+#### Phases
+
+1. **Spike, in VICE then on hardware.** A minimal EF cart that boots from Ultimax,
+   prints, switches a ROMH bank, kills itself to BASIC, and comes back. Perhaps
+   200 lines. It proves the whole mechanism and nothing else in the plan is worth
+   starting until it does. Test with `x64sc -cartef`, then on Kung Fu Flash —
+   **emulating enough to run EF game images is a lower bar than the full register
+   behaviour, so hardware confirmation of the ROM-off round trip is the gate.**
+2. **Build split.** `TARGET_EF` alongside the existing build, the way
+   `TARGET_C128` already works: one source tree, a second linker config (ROML
+   `$8000` static, ROMH `$A000` banked), a second firmware artifact.
+3. **Port the static half.** Boot/start-up, `bank_call` as a `$DE00` write with
+   its trampoline in the `$DF00` RAM, the SVC table over stock-KERNAL IEC, and the
+   screen/keyboard decision above.
+4. **Port the handover.** `run`/`basic` as `$DE02` writes. This *deletes* work
+   rather than adding it: no CBM80 stub, no reset, no `RESTOR` fragility, no
+   stock-KERNAL patching. `EXIT` becomes a register write instead of a wedge.
+5. **Settings, then release.** Both artifacts from one tree.
+
+#### Why this is worth doing beyond the hardware support
+
+**The EF build would be the first fully testable one.** Today the swap, served
+banks, NV and the stock-KERNAL patch are all inert in VICE and cost real days to
+debug on hardware. `x64sc` emulates EasyFlash banking and the registers, so on
+that target the bank mechanism, the shell and the disk commands are all
+exercisable end to end — against the real path, not a harness-seeded stand-in.
+
 ### 6. Type-in support (magazine listings)
 
 Entering a type-in program from a magazine, with the checking those listings were
