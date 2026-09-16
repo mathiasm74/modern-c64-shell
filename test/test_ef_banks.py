@@ -141,3 +141,30 @@ def test_ef_editor_banks_open_a_file(v):
         _type(sv, "\x18")                    # ^X; unmodified, so it just exits
         _type(sv, "n")
         _run(sv, "edit readme", "C64 SHELL TEST DISK")
+
+
+def test_fload_declines_a_real_drive_without_killing_it(v):
+    """Installing the Epyx loader ends in an M-E: the drive RUNS what we sent.
+
+    What we send is 75 bytes of $EA fingerprint filler that Meatloaf matches by
+    checksum and never executes -- so a drive that genuinely executes it (a real
+    1541, Pi1541, SD2IEC) sleds off the end and hangs until it is reset.
+    fastload_epyx_capable() exists to stop exactly that, and dir.c has always
+    called it, but disk_fload did not -- which is also the path `run <name>`
+    takes. VICE's true drive emulation runs a real 6502 with real 1541 ROM, so
+    it reproduces this faithfully: before the fix, `ls` worked, `fload`
+    reported "not supported", and the drive was then gone.
+    """
+    (void) = v
+    if not _HAVE:
+        print("      (skipped: no tardis.crt, stock ROMs or disk)")
+        return
+    with _vice() as sv:
+        _boot(sv)
+        _run(sv, "ls", "README")                    # the drive starts healthy
+        _type(sv, "clear\r")
+        _type(sv, "fload prog\r")
+        assert "not supported" in sv.screen_text(), \
+            "expected fload to decline VICE's 1541:\n%s" % sv.screen_text()
+        # The point of the test: it must still be there afterwards.
+        _run(sv, "ls", "README", tries=10)

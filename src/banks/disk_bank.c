@@ -161,6 +161,7 @@ void iec_chkin(void);
 void iec_clrchn(void);
 unsigned char iec_status(void);
 void __fastcall__ fastload_set_device(unsigned char d);
+unsigned char fastload_epyx_capable(void);
 void fastload_epyx_install(void);
 void fastload_epyx_mark_unsupported(void);
 unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen);
@@ -179,6 +180,18 @@ void disk_fload(void)
     DM_NLEN = fold_name(DM_NAME, argv[1]);
 
     fastload_set_device(MB_DEV);
+    /* PROBE BEFORE INSTALLING. Installing ends in an M-E, i.e. the drive
+       EXECUTES what we uploaded -- and what we upload is 75 bytes of $EA
+       fingerprint filler for Meatloaf, not real 6502. A drive that genuinely
+       runs it (a real 1541, Pi1541, SD2IEC) sleds off the end and hangs until
+       it is reset: `ls` worked, `fload` reported "not supported", and the
+       drive was then dead. dir.c has always probed; this path did not, and it
+       is the one `run <name>` uses too. */
+    if (!fastload_epyx_capable()) {
+        puts_bank("fast load not supported");
+        k_chrout(CR);
+        return;
+    }
     fastload_epyx_install();
     if (iec_status() & ST_NODEV) {
         report_no_device();
