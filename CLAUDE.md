@@ -113,6 +113,18 @@ Four rules this target imposes, each of which failed silently first:
   ROM build. Getting this wrong popped the stock handler's registers as a return
   address and JAMmed the CPU at `$FF09`.
 
+**`ef_cold` must take the screen back from CINT.** It calls the stock
+IOINIT/RAMTAS/RESTOR/CINT, and CINT leaves a stock-looking machine: blue on
+blue, colour RAM filled light blue, and **`$D018 = $15`, the uppercase/graphics
+charset**. That last one is not cosmetic -- Tardis runs the lowercase/text
+charset at `$1800`, which is what makes its encoding ASCII-consistent (`pet2scr`
+maps `'a'` to screen code `$01`), so left alone the shell comes up in the wrong
+font and every lowercase letter it prints is a graphic. `ef_screen` re-applies
+`$D018`/`$D016`, the boot colours (light-red border, dark-red background, white
+text) and repaints colour RAM, *after* CINT.
+`test_ef_boot::test_ef_boot_applies_the_tardis_screen_not_the_stock_one` pins
+it, including the banner's actual screen codes.
+
 **Screen and keyboard stay ours** on this target: `screen.s`/`irq.s` live in ROML
 and hook `$0314`/`$0326`/`$032A`. The stock `$FFD2`/`$FFE4` *are* `jmp ($0326)` /
 `jmp ($032A)`, so a bank calling `$FFD2` lands in our chrout unchanged -- which

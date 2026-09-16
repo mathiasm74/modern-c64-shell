@@ -315,6 +315,11 @@ $(BUILD)/ef/tardis.crt: $(EF_ROML) $(EF_ROMH0) $(BUILD)/ef/romh-filler.bin \
 	  $(foreach b,1 2 3 4 5,$(b):l=$(EF_ROML) $(b):h=$(EF_BANK_$(b)))
 
 ef: $(BUILD)/ef/tardis.crt
+
+# Launch the cartridge on a STOCK machine (./ef-run.sh forwards extra args).
+.PHONY: ef-run
+ef-run:
+	@DISK=$(DISK) ./ef-run.sh
 .PHONY: ef
 
 # The EASYFLASH SPIKE (PLAN.md section 7, phase 1): the proof of mechanism for a

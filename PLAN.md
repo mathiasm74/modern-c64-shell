@@ -738,6 +738,12 @@ to run EF game images is a lower bar.
    dispatch table's name pointers into the bank's own code) cannot be reproduced
    in VICE on the other target at all.
 
+   A follow-up from the first live session: `ef_cold` has to re-apply the
+   screen setup after CINT. CINT leaves stock blue *and* `$D018 = $15`, the
+   uppercase/graphics charset -- and Tardis runs the lowercase one, which is
+   what makes its encoding ASCII-consistent, so the shell came up in the wrong
+   font with every lowercase letter drawn as a graphic.
+
    Known gap: `fload` reports *fast load not supported* against VICE's 1541.
    That is the documented Meatloaf-only limitation of our Epyx install payload,
    not an EF regression -- a real 1541 needs genuine Epyx drive bytes.

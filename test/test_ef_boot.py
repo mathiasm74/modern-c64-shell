@@ -84,6 +84,39 @@ def _type(sv, text):
     sv.run_for(0.8)
 
 
+def test_ef_boot_applies_the_tardis_screen_not_the_stock_one(v):
+    """ef_cold calls stock CINT, which leaves a stock-looking machine behind.
+
+    Two things have to be taken back afterwards, and the second is not
+    cosmetic: CINT sets $D018 = $15, the UPPERCASE/graphics charset, and
+    Tardis runs the LOWERCASE/text one -- that is what makes its encoding
+    ASCII-consistent ('a' -> screen code $01, via pet2scr). Left alone, the
+    shell comes up in the wrong font and every lowercase letter it prints is a
+    graphic. (Reported from a live session: "the screen is blue, and the font
+    is uppercase and symbols".)
+    """
+    (void) = v
+    if not _HAVE:
+        print("      (skipped: no tardis.crt or no stock ROMs)")
+        return
+    with _vice() as sv:
+        _boot(sv)
+        # $D018 bit 0 is unused and reads back set, so mask it off.
+        assert sv.read_byte(0xD018) & 0xFE == 0x16, \
+            "charset/screen base is $%02X, not $16 (lowercase @ $1800)" \
+            % sv.read_byte(0xD018)
+        assert sv.read_byte(0xD020) & 0x0F == 0x0A, "border is not light red"
+        assert sv.read_byte(0xD021) & 0x0F == 0x02, "background is not dark red"
+        assert sv.read_byte(0x0286) == 0x01, "text colour is not white"
+        assert sv.read_byte(0xD800) & 0x0F == 0x01, \
+            "colour RAM still holds CINT's fill, so drawn text is invisible"
+        # And prove the encoding end to end: the banner's "Tardis" must be
+        # stored as T=$54 then lowercase a,r,d,i,s = $01,$12,$04,$09,$13.
+        row2 = bytes(sv.read_memory(0x0400 + 40 * 2, 40))
+        assert bytes([0x54, 0x01, 0x12, 0x04, 0x09, 0x13]) in row2, \
+            "banner is not in the lowercase charset's codes: %s" % row2.hex(' ')
+
+
 def test_ef_util_bank_commands_run(v):
     """The util bank ports to EF unchanged except for where its RAM lives.
 

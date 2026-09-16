@@ -104,6 +104,7 @@ ef_cold:
         jsr RAMTAS
         jsr RESTOR
         jsr CINT
+        jsr ef_screen           ; ...then make it look like Tardis, not stock
         ; Take over the RAM vectors. This is what keeps Tardis looking like
         ; Tardis under a stock KERNAL: our screen code, our keyboard scan, our
         ; encoding -- and $FFD2/$FFE4 route through these, so the banks reach
@@ -162,6 +163,42 @@ CSTACK_TOP = $C800              ; grows down through $C7xx-$C5xx
 ; ---------------------------------------------------------------------------
         .segment "EFCODE"
 ; ---------------------------------------------------------------------------
+
+; --- the screen, the way reset.s sets it up on the other target -------------
+; CINT leaves the machine looking like a stock C64: blue on blue, and $D018 =
+; $15, the UPPERCASE/graphics charset. Tardis runs the LOWERCASE/text charset --
+; that is what makes its whole encoding ASCII-consistent (pet2scr maps 'a' to
+; screen code $01), so without this the shell would come up in the wrong font
+; and every lowercase letter it printed would be a graphic.
+;
+; It has to run AFTER CINT, which writes $D018 and fills colour RAM itself.
+ef_screen:
+        lda #MEMPTR_0400
+        sta $D018
+        lda #CTRL2_40COL
+        sta $D016
+        lda #COLOR_LTRED
+        sta $D020
+        lda #COLOR_RED
+        sta $D021
+        lda #COLOR_WHITE
+        sta $0286               ; text colour for everything drawn from here
+        ; CINT filled colour RAM with its own light blue; the screen is already
+        ; blank, so repaint the colour nybbles to match what we draw in.
+        ldx #$00
+@col:   sta $D800 + $000,x
+        sta $D800 + $100,x
+        sta $D800 + $200,x
+        sta $D800 + $2E8,x      ; tail: covers through $DBE7
+        inx
+        bne @col
+        rts
+
+MEMPTR_0400 = $16               ; screen @ $0400, lowercase/text charset @ $1800
+CTRL2_40COL = $C8
+COLOR_WHITE = $01
+COLOR_RED   = $02               ; background (dark red), as reset.s boots to
+COLOR_LTRED = $0A               ; border (light red)
 
 ; --- the startup banner ----------------------------------------------------
 ; reset.s draws this straight into screen RAM because on the One ROM build it
