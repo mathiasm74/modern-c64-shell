@@ -123,13 +123,60 @@ serve a character ROM) and **no NV settings** (`_nv_*` return failure, so
 `tools/patch_freemem.py` takes `--ef` and patches the ROML/ROMH figures into the
 banner the same way it does BASIC/KERNAL.
 
-**Not done yet** (phase 3+): the bank images are still linked against the One ROM
-SVC address (`$FF80`, which here belongs to the stock KERNAL), so banks 1..5 are
-`$FF` filler and every bank command reports *bank unavailable (5)*; the ~500
-bytes of `STUB_*` in ROML are dead weight on this target; `run`/`basic` still go
-through the CBM80/reset path rather than a plain `$DE02` write. **Hardware
-confirmation of the ROM-off round trip on KFF/Ultimate is the gate** -- emulating
-enough to run EF game images is a lower bar than the full register behaviour.
+**All five banks are served** (EF banks 1-5 = disk/util/files/edit/hex), so every
+shell command works on this target. The bank images are the One ROM ones
+**relinked, not rewritten**: same C, same shared asm, only `crt0_*.s`
+reassembled with `-D EF_BANK=1`, which picks the relocated RAM window
+(`src/bank_cstack.inc`) and the `$9Fxx` entry points (`src/kernal_shims.inc`).
+The bank linker configs are **generated** from the One ROM ones by
+`tools/make_ef_bank_cfg.py`, which applies exactly two rewrites and *asserts*
+it found what it expected, so a config change that breaks the shape fails the
+build instead of quietly emitting a wrong one.
+
+**The fixed tables live at the top of ROML, at the One ROM addresses with
+`$Fxxx` -> `$9xxx`:** SVC `$9F80`, SETLFS `$9FBA`, CHROUT `$9FD2`, GETIN
+`$9FE4`, and so on (pinned by `cfg/ef_rom.cfg`, whose areas tile `$8000-$9FFF`
+exactly so the file offsets line up). One nibble, nothing else moves. The
+`STUB_*` segments are therefore **not** dead weight on this target after all:
+routing the banks' file I/O through our own `iec.s` keeps every path identical
+to the One ROM build -- the synthesized EOI byte for drives that go idle instead
+of sending one, and CHROUT's one-byte deferral so CLRCHN sends the last byte
+with EOI. The alternative, letting the banks fall through to the stock KERNAL's
+`$FFBA`+, would have put two IEC drivers on one set of lines. `$0326`/`$032A`
+are pointed at **`$9FD2`/`$9FE4`**, our own published entries, rather than at
+the implementations behind them -- so the stock `$FFD2` (which *is*
+`jmp ($0326)`) and the `$9FD2` a bank calls route identically. CHROUT
+especially: after a bank's CHKOUT it belongs to the drive, and aiming `$0326`
+straight at `chrout_impl` would print a copied file to the screen.
+
+**Bank RAM moves to `$C800-$CDFF`** on this target. `$9D00-$9FFF` is plain RAM
+under the One ROM's `$A000` window but **inside ROML** here: a write lands in
+the RAM underneath and the read comes back from flash, so the window is
+*write-only* and every C bank entry runs its init and then silently does
+nothing (`border 3` left `$D020` alone, no error; `about`, being assembly that
+skips `bank_init`, worked and hid it).
+`test_ef_boot::test_ef_bank_ram_window_is_readable_memory` rejects any generated
+config pointing into ROML. `$C000-$CFFF` is the only RAM this target can keep
+readable state in, and it is now fully allocated -- LINEBUF `$C000`, DATA/BSS to
+`$C4FF`, the shell's C stack down from `$C800`, the bank window, then the
+`$CE00` completion cache and `run_stub` at `$CF00`; `cfg/ef_rom.cfg` declares
+the real bound so an overflowing BSS is a link error, and there are only ~140
+spare bytes.
+
+**This target tests what the One ROM build cannot.** There a served bank is
+inert in VICE (`bank_call` falls back to the RAM under `$A000`, so the suite
+drives a stand-in and the serving path is hardware-only). Here the banking is
+emulated, so `test_ef_banks.py` exercises the real mechanism -- including
+`help`, whose failure mode (a bank following the dispatch table's name pointers
+into its own code) is not reproducible in VICE on the other target at all.
+
+**Not done yet** (phase 4+): `run`/`basic` still go through the CBM80/reset path
+rather than a plain `$DE02` write; settings have nowhere to live. `fload`
+reports *fast load not supported* against VICE's 1541 -- that is the documented
+Meatloaf-only limitation of our Epyx install payload, not an EF fault.
+**Hardware confirmation of the ROM-off round trip on KFF/Ultimate is the gate**
+-- emulating enough to run EF game images is a lower bar than the full register
+behaviour.
 
 `make run` delegates to `./run.sh`, which builds the ROM (unless `SKIP_BUILD=1`) and launches `x64sc -kernal build/kernal.bin -basic build/basic.bin`. Run `./run.sh` directly to forward extra VICE arguments, e.g. `./run.sh -warp`. To try the disk commands, attach an image with `DISK=`: `make run DISK=test/data/test.d64` (or `DISK=... ./run.sh`). It mounts a fresh writable *copy* (`build/run-disk.d64`) with `-drive8truedrive`, so a session's `cp`/`rm` never mutate the tracked image. True drive emulation is required — we replaced the KERNAL, so VICE's virtual-device traps never fire. Without a disk, typing `ls` reports a read error after a short timeout rather than wedging.
 

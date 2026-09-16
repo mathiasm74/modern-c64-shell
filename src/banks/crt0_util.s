@@ -24,18 +24,7 @@
 .import copydata, zerobss
 .importzp sp
 
-; The C stack top, which is also the top of the bank's RAM window.
-;
-; On the One ROM build that is $A000: the bank is served at $A000-$BFFF and
-; $8000-$9FFF underneath it is plain RAM. On EASYFLASH it cannot be -- ROML
-; occupies $8000-$9FFF, so a write there lands in RAM but the read comes back
-; from flash, and the bank's DATA/BSS/C-stack would be write-only. The EF
-; window sits in $C800-$CDFF instead, below the $CE00 completion cache.
-.ifdef EF_BANK
-CSTACK_TOP = $CE00              ; grows down through $C9xx-$CDxx RAM
-.else
-CSTACK_TOP = $A000              ; grows down into $9Exx/$9Fxx RAM
-.endif
+.include "bank_cstack.inc"
 
 .segment "ENTRY"
         .byte "bnk", 1          ; $A000  identity: a bank, and WHICH bank

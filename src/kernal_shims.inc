@@ -14,6 +14,24 @@
 ; reached through the fixed KERNAL entry points -- which is exactly why the
 ; shell keeps them at their published addresses.
 
+; On the EasyFlash target $FFxx belongs to the STOCK KERNAL, so the shell's
+; entry points cannot be at their published addresses. They are pinned at the
+; top of ROML instead, at the same offsets with $Fxxx -> $9xxx
+; (cfg/ef_rom.cfg), so this is a one-nibble difference and nothing else moves.
+; The banks call ours either way, which is what keeps their behaviour identical
+; on both targets rather than half-inheriting the stock KERNAL's.
+.ifdef EF_BANK
+KCHROUT = $9FD2
+KGETIN  = $9FE4
+KSETLFS = $9FBA
+KSETNAM = $9FBD
+KOPEN   = $9FC0
+KCLOSE  = $9FC3
+KCHKIN  = $9FC6
+KCHKOUT = $9FC9
+KCLRCHN = $9FCC
+KCHRIN  = $9FCF
+.else
 KCHROUT = $FFD2
 KGETIN  = $FFE4
 KSETLFS = $FFBA
@@ -24,6 +42,7 @@ KCHKIN  = $FFC6
 KCHKOUT = $FFC9
 KCLRCHN = $FFCC
 KCHRIN  = $FFCF
+.endif
 
 .export _k_chrout, _k_getin, _k_setlfs, _k_setnam, _k_open, _k_close
 .export _k_chkin, _k_chkout, _k_clrchn, _k_chrin

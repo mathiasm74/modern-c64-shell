@@ -27,7 +27,7 @@ __STARTUP__ = 1
 .import copydata, zerobss
 .importzp sp
 
-CSTACK_TOP = $A000              ; grows down into $9Fxx RAM
+.include "bank_cstack.inc"
 
 ; --- $A000 entry JMP table (the bank ABI) -----------------------------------
 ; bank_call (launch.s) JSRs $A000 + 3*entry after switching the served slot.

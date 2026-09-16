@@ -30,7 +30,10 @@ RESTOR   = $FF8A
 CINT     = $FF81
 
         .import _main
-        .import chrout_impl, getin_impl, irq_tick
+        .import irq_tick
+
+EF_KCHROUT = $9FD2              ; pinned by cfg/ef_rom.cfg
+EF_KGETIN  = $9FE4
         .import zerobss, copydata
         .import nmi_stub
         .importzp sp
@@ -105,13 +108,19 @@ ef_cold:
         ; Tardis under a stock KERNAL: our screen code, our keyboard scan, our
         ; encoding -- and $FFD2/$FFE4 route through these, so the banks reach
         ; them too.
-        lda #<chrout_impl
+        ; Point them at our own PUBLISHED entries ($9FD2/$9FE4, the top-of-ROML
+        ; mirror of $FFD2/$FFE4) rather than the implementations behind them,
+        ; so the stock $FFD2 -- which is jmp ($0326) -- and the $9FD2 a bank
+        ; calls land on exactly the same routing. CHROUT in particular must go
+        ; through chrout_route, not straight to the screen: after a bank's
+        ; CHKOUT it belongs to the drive.
+        lda #<EF_KCHROUT
         sta $0326
-        lda #>chrout_impl
+        lda #>EF_KCHROUT
         sta $0327
-        lda #<getin_impl
+        lda #<EF_KGETIN
         sta $032A
-        lda #>getin_impl
+        lda #>EF_KGETIN
         sta $032B
         lda #<ef_irq
         sta $0314

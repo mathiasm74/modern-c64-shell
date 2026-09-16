@@ -5,10 +5,8 @@ build -- only the platform layer (src/ef/platform.s) and the linker config
 differ. This checks the port boots on a STOCK machine with the cart attached,
 draws its banner, and runs commands.
 
-The UTIL bank is in (EF bank 2): `about`, `debug` and the colour cluster. The
-rest are still $FF filler, because they bind the SVC table at $FF80, which on
-this target belongs to the stock KERNAL -- bank_call is expected to report that
-rather than run it.
+All five banks are in the cart (EF banks 1-5); test_ef_banks.py drives the ones
+that need a drive. This module covers boot and the resident shell.
 """
 
 import os
@@ -38,7 +36,9 @@ def _boot(sv):
     for _ in range(40):
         sv.run_for(0.25)
         got = sv.screen_text()
-        if "8>" in got:
+        # "8>" bare, or "8: 1541>" once the boot-time identify has named the
+        # drive -- which happens when a disk is attached.
+        if "8>" in got or "8: " in got:
             return got
     raise AssertionError("the EF build never reached its prompt:\n%s" % got)
 
@@ -127,8 +127,8 @@ def test_ef_bank_ram_window_is_readable_memory(v):
     (void) = v
     import glob
     import re
-    cfgs = glob.glob(os.path.join(_HERE, "..", "cfg", "ef_*_bank.cfg"))
-    assert cfgs, "no EF bank configs found"
+    cfgs = glob.glob(os.path.join(_HERE, "..", "build", "ef", "cfg", "*_bank.cfg"))
+    assert cfgs, "no generated EF bank configs found -- run `make ef`"
     for path in cfgs:
         for line in open(path):
             m = re.match(r"\s*(DATARUN|BANKBSS|BANKRAM)\s*:.*start\s*=\s*\$([0-9A-Fa-f]+)",
@@ -139,25 +139,6 @@ def test_ef_bank_ram_window_is_readable_memory(v):
                     "%s: %s starts at $%04X, inside ROML -- reads come from " \
                     "flash, so the bank's state would be write-only" % (
                         os.path.basename(path), m.group(1), start)
-
-
-def test_ef_bank_command_reports_unavailable_rather_than_crashing(v):
-    (void) = v
-    if not _HAVE:
-        print("      (skipped: no tardis.crt or no stock ROMs)")
-        return
-    with _vice() as sv:
-        _boot(sv)
-        _type(sv, "help\r")
-        got = sv.screen_text()
-        # Banks 1..5 are $FF filler until phase 3. bank_call's "bnk" magic check
-        # must reject that -- and, crucially, the shell must survive: the switch
-        # pulls ROML out from under bank_call unless every bank repeats it.
-        assert "unavailable" in got, \
-            "a missing bank should be reported, not run:\n%s" % got
-        _type(sv, "ver\r")
-        assert "Tardis DOS v" in got or "Tardis DOS v" in sv.screen_text(), \
-            "the shell did not survive a failed bank call:\n%s" % sv.screen_text()
 
 
 def test_every_crt_bank_carries_an_identical_roml(v):

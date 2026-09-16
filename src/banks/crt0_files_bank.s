@@ -20,7 +20,7 @@ __STARTUP__ = 1
 .import copydata, zerobss
 .importzp sp
 
-CSTACK_TOP = $A000              ; grows down into $9Exx/$9Fxx RAM
+.include "bank_cstack.inc"
 
 .segment "ENTRY"
         .byte "bnk", 2          ; $A000  identity: a bank, and WHICH bank

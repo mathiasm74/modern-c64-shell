@@ -17,7 +17,7 @@ __STARTUP__ = 1
 .import copydata, zerobss
 .importzp sp
 
-CSTACK_TOP = $A000              ; grows down into the bank RAM window
+.include "bank_cstack.inc"
 
 .segment "ENTRY"
         .byte "bnk", 4          ; $A000  identity: a bank, and WHICH bank

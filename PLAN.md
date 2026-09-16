@@ -696,9 +696,51 @@ to run EF game images is a lower bar.
    Banks 1..5 are `$FF` filler for now, which `bank_call`'s `"bnk"` magic check
    rejects cleanly -- `help` reports *bank unavailable (5)* and the shell
    survives, which is itself a test.
-3. **Port the static half.** Boot/start-up, `bank_call` as a `$DE00` write with
-   its trampoline in the `$DF00` RAM, the SVC table over stock-KERNAL IEC, and the
-   screen/keyboard decision above.
+3. ~~**Port the static half.**~~ — done. Boot/start-up, `bank_call` as a `$DE00`
+   write with its trampoline in the `$DF00` RAM, the screen/keyboard hooks, and
+   **all five banks** (`disk`, `util`, `files`, `edit`, `hex`) served from EF
+   banks 1-5. Every shell command now works on this target.
+
+   The SVC table was to go "over stock-KERNAL IEC"; it does not, and the
+   alternative is better. `$FFxx` belongs to the stock KERNAL here, so the SVC
+   table and the KERNAL entry points are pinned at the **top of ROML, at the
+   same offsets with `$Fxxx` -> `$9xxx`** -- `$FF80` becomes `$9F80`, `$FFBA`
+   becomes `$9FBA`, and so on. The banks call *ours* either way, so every code
+   path stays identical to the One ROM build, quirks included (the synthesized
+   EOI byte for drives that go idle instead of sending one; CHROUT's one-byte
+   deferral so CLRCHN can send the last byte with EOI). Mixing our IEC with the
+   stock KERNAL's would have meant two bus drivers sharing one set of lines.
+
+   The bank images are the One ROM ones **relinked, not rewritten**: same C,
+   same shared asm, only `crt0_*.s` reassembled with `-D EF_BANK=1`, which picks
+   the relocated RAM window (`src/bank_cstack.inc`) and the `$9Fxx` entry points
+   (`src/kernal_shims.inc`). The linker configs are *generated* from the One ROM
+   ones by `tools/make_ef_bank_cfg.py` -- the difference is two mechanical
+   rewrites, and five hand-maintained near-duplicates would have drifted.
+
+   Two things bit, both silent:
+
+   * **The bank RAM window was write-only.** Banks keep DATA/BSS/C-stack at
+     `$9D00-$9FFF`, which is plain RAM under the One ROM's `$A000` window but
+     **inside ROML** here -- the write lands in the RAM underneath, the read
+     comes back from flash. Every C bank entry ran its init and then did
+     nothing: `border 3` left `$D020` alone, with no error. `about` hid it
+     completely, being assembly that skips `bank_init`. The window is
+     `$C800-$CDFF` now.
+   * **`bank_call` computed `entry*6`**, not `entry*3` -- two `asl`s is x4, not
+     x2 -- so `about` (entry 1) ran `debug` (entry 2).
+
+   **This target tests things the One ROM build cannot.** There, a served bank
+   is inert in VICE: `bank_call` falls back to running the image out of the RAM
+   under `$A000`, so the suite exercises a stand-in and the real serving path is
+   hardware-only. Here the banking is emulated, so `test_ef_banks.py` runs the
+   actual mechanism -- including `help`, whose failure mode (following the
+   dispatch table's name pointers into the bank's own code) cannot be reproduced
+   in VICE on the other target at all.
+
+   Known gap: `fload` reports *fast load not supported* against VICE's 1541.
+   That is the documented Meatloaf-only limitation of our Epyx install payload,
+   not an EF regression -- a real 1541 needs genuine Epyx drive bytes.
 4. **Port the handover.** `run`/`basic` as `$DE02` writes. This *deletes* work
    rather than adding it: no CBM80 stub, no reset, no `RESTOR` fragility, no
    stock-KERNAL patching. `EXIT` becomes a register write instead of a wedge.

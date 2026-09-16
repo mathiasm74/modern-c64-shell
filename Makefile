@@ -233,22 +233,26 @@ $(EF_ROML) $(EF_ROMH0): $(EF_OBJ) cfg/ef_rom.cfg tools/patch_freemem.py
 EF_BANK_COUNT := 6
 
 # Bank id -> EF bank is id + EF_FIRST_BANK (1), so the order here is the bank-id
-# order from shell.h: 0 disk, 1 util, 2 files, 3 edit, 4 hex. The util bank is
-# the one that drops in UNCHANGED -- it binds nothing outside its image but
-# `_line` at $C000, which cfg/ef_rom.cfg pins there too, and it never touches
-# the drive. The other four bind the SVC table at $FF80, which on this target
-# belongs to the stock KERNAL, so they still need relinking.
-EF_BANK_1 := $(BUILD)/ef/romh-filler.bin
+# order from shell.h: 0 disk, 1 util, 2 files, 3 edit, 4 hex.
+EF_BANK_1 := $(BUILD)/ef/banks/disk_bank.bin
 EF_BANK_2 := $(BUILD)/ef/banks/util_bank.bin
-EF_BANK_3 := $(BUILD)/ef/romh-filler.bin
-EF_BANK_4 := $(BUILD)/ef/romh-filler.bin
-EF_BANK_5 := $(BUILD)/ef/romh-filler.bin
+EF_BANK_3 := $(BUILD)/ef/banks/files_bank.bin
+EF_BANK_4 := $(BUILD)/ef/banks/edit_bank.bin
+EF_BANK_5 := $(BUILD)/ef/banks/hex_bank.bin
 
 # The bank images are RELINKED for this target: the RAM window moves out of
 # $8000-$9FFF (ROML here) and, for the banks that use it, the SVC table moves
 # with it. Only crt0_*.s needs reassembling (-D EF_BANK=1 picks the window);
 # the C objects are shared with the One ROM build.
-$(BUILD)/ef/banks/crt0_util.o: src/banks/crt0_util.s | $(BUILD)
+$(BUILD)/ef/cfg/%.cfg: cfg/%.cfg tools/make_ef_bank_cfg.py
+	@mkdir -p $(BUILD)/ef/cfg
+	@python3 tools/make_ef_bank_cfg.py $< $@
+
+# Only the crt0s are reassembled (-D EF_BANK=1 picks the RAM window and, via
+# kernal_shims.inc, the $9Fxx entry points). Every other object -- all the C,
+# and the shared asm -- is byte-identical between the targets and shared.
+$(BUILD)/ef/banks/crt0_%.o: src/banks/crt0_%.s src/bank_cstack.inc \
+                            src/kernal_shims.inc | $(BUILD)
 	@mkdir -p $(BUILD)/ef/banks
 	$(AS) $(ASFLAGS) -D EF_BANK=1 -o $@ $<
 
@@ -256,8 +260,8 @@ $(BUILD)/ef/banks/util_bank.bin: $(BUILD)/ef/banks/crt0_util.o \
                                  $(BUILD)/banks/bk_complete.o \
                                  $(BUILD)/banks/about.o $(BUILD)/banks/kbdiag.o \
                                  $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
-                                 cfg/ef_util_bank.cfg
-	$(LD) -C cfg/ef_util_bank.cfg -o $@ $(BUILD)/ef/banks/crt0_util.o \
+                                 $(BUILD)/ef/cfg/util_bank.cfg
+	$(LD) -C $(BUILD)/ef/cfg/util_bank.cfg -o $@ $(BUILD)/ef/banks/crt0_util.o \
 	      $(BUILD)/banks/bk_complete.o $(BUILD)/banks/kbdiag.o \
 	      $(BUILD)/banks/about.o \
 	      $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
@@ -265,12 +269,48 @@ $(BUILD)/ef/banks/util_bank.bin: $(BUILD)/ef/banks/crt0_util.o \
 	      -m $(BUILD)/ef/banks/util_bank.map
 	@echo "  ef util_bank  : $$(wc -c < $@) bytes"
 
+# The remaining four banks, relinked the same way. Their object lists are the
+# One ROM ones with the crt0 swapped for its EF_BANK build -- everything else,
+# all the C and the shared asm, is identical between the targets.
+$(BUILD)/ef/banks/disk_bank.bin: $(BUILD)/ef/banks/crt0_disk.o \
+                                 $(BUILD)/banks/disk_bank_c.o $(BANK_SHARED_OBJ) \
+                                 $(BUILD)/ef/cfg/disk_bank.cfg
+	$(LD) -C $(BUILD)/ef/cfg/disk_bank.cfg -o $@ $(BUILD)/ef/banks/crt0_disk.o \
+	      $(BUILD)/banks/disk_bank_c.o $(BANK_SHARED_OBJ) $(RTLIB) \
+	      -Ln $(BUILD)/ef/banks/disk_bank.labels -m $(BUILD)/ef/banks/disk_bank.map
+	@echo "  ef disk_bank  : $$(wc -c < $@) bytes"
+
+$(BUILD)/ef/banks/files_bank.bin: $(BUILD)/ef/banks/crt0_files_bank.o \
+                                  $(filter-out $(BUILD)/banks/crt0_files_bank.o,$(FILES_BANK_OBJ)) \
+                                  $(BUILD)/ef/cfg/files_bank.cfg
+	$(LD) -C $(BUILD)/ef/cfg/files_bank.cfg -o $@ $(BUILD)/ef/banks/crt0_files_bank.o \
+	      $(filter-out $(BUILD)/banks/crt0_files_bank.o,$(FILES_BANK_OBJ)) $(RTLIB) \
+	      -Ln $(BUILD)/ef/banks/files_bank.labels -m $(BUILD)/ef/banks/files_bank.map
+	@echo "  ef files_bank : $$(wc -c < $@) bytes"
+
+$(BUILD)/ef/banks/edit_bank.bin: $(BUILD)/ef/banks/crt0_edit.o \
+                                 $(filter-out $(BUILD)/banks/crt0_edit.o,$(EDIT_BANK_OBJ)) \
+                                 $(BUILD)/ef/cfg/edit_bank.cfg
+	$(LD) -C $(BUILD)/ef/cfg/edit_bank.cfg -o $@ $(BUILD)/ef/banks/crt0_edit.o \
+	      $(filter-out $(BUILD)/banks/crt0_edit.o,$(EDIT_BANK_OBJ)) $(RTLIB) \
+	      -Ln $(BUILD)/ef/banks/edit_bank.labels -m $(BUILD)/ef/banks/edit_bank.map
+	@echo "  ef edit_bank  : $$(wc -c < $@) bytes"
+
+$(BUILD)/ef/banks/hex_bank.bin: $(BUILD)/ef/banks/crt0_hex.o \
+                                $(filter-out $(BUILD)/banks/crt0_hex.o,$(HEX_BANK_OBJ)) \
+                                $(BUILD)/ef/cfg/hex_bank.cfg
+	$(LD) -C $(BUILD)/ef/cfg/hex_bank.cfg -o $@ $(BUILD)/ef/banks/crt0_hex.o \
+	      $(filter-out $(BUILD)/banks/crt0_hex.o,$(HEX_BANK_OBJ)) $(RTLIB) \
+	      -Ln $(BUILD)/ef/banks/hex_bank.labels -m $(BUILD)/ef/banks/hex_bank.map
+	@echo "  ef hex_bank   : $$(wc -c < $@) bytes"
+
 $(BUILD)/ef/romh-filler.bin:
 	@mkdir -p $(dir $@)
 	python3 -c "import sys; open(sys.argv[1],'wb').write(b'\xff'*8192)" $@
 
 $(BUILD)/ef/tardis.crt: $(EF_ROML) $(EF_ROMH0) $(BUILD)/ef/romh-filler.bin \
-                       $(EF_BANK_2) tools/make_ef_crt.py
+                       $(EF_BANK_1) $(EF_BANK_2) $(EF_BANK_3) $(EF_BANK_4) \
+                       $(EF_BANK_5) tools/make_ef_crt.py
 	python3 tools/make_ef_crt.py $@ 0:l=$(EF_ROML) 0:h=$(EF_ROMH0) \
 	  $(foreach b,1 2 3 4 5,$(b):l=$(EF_ROML) $(b):h=$(EF_BANK_$(b)))
 
