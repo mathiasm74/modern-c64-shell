@@ -328,6 +328,8 @@ $(BUILD)/ef/tardis.crt: $(EF_ROML) $(EF_ROMH0) $(BUILD)/ef/romh-filler.bin \
 ef: $(BUILD)/ef/tardis.crt
 
 # Launch the cartridge on a STOCK machine (./ef-run.sh forwards extra args).
+# Rebuilds and REPLACES a running instance -- a hard reset inside VICE re-runs
+# the image it already holds in memory and would not see the new build.
 .PHONY: ef-run
 ef-run:
 	@DISK=$(DISK) ./ef-run.sh
