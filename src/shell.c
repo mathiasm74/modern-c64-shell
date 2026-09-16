@@ -458,7 +458,11 @@ static void capture_basic_tail(void)
 {
     unsigned char i = 0, n = 0, c;
 
-    BASIC_TLEN = 0;
+    /* Touch NOTHING unless this really is a `basic <line>`. The buffer shares
+       the $CE00 page with the filename-completion cache, so an unconditional
+       clear here would corrupt a cached name on every command without
+       invalidating it. cmd_basic only reads the length on the argc > 1 path,
+       which is exactly the path that gets here, so there is nothing to reset. */
     while (kw_basic[i]) {               /* the command name, case-insensitively */
         c = (unsigned char)line[i];
         if (c >= 'A' && c <= 'Z')
@@ -471,6 +475,7 @@ static void capture_basic_tail(void)
         return;
     while (line[i] == ' ')
         ++i;
+    BASIC_TLEN = 0;                     /* from here we own the buffer */
     while (line[i] && n < BASIC_TMAX) {
         c = (unsigned char)line[i++];
         if (c >= 'a' && c <= 'z')
