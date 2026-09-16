@@ -139,8 +139,16 @@ ef_cold:
         jsr _main
 @halt:  jmp @halt               ; main() loops forever; trap if it ever returns
 
-CSTACK_TOP = $CF00              ; grows down through $CExx, above the shell's
-                                ; BSS and clear of the stock KERNAL's own RAM
+; The shell's C stack. $C000-$CFFF is the only RAM this target can keep
+; readable state in -- $8000-$9FFF is ROML and pages 0-3 belong to the stock
+; KERNAL -- so it is carved up explicitly:
+;
+;   $C000-$C05F  LINEBUF   (pinned; the completion matcher indexes it)
+;   $C060-$C4FF  DATA/BSS  (cfg/ef_rom.cfg)
+;   $C500-$C7FF  this C stack, growing down from CSTACK_TOP
+;   $C800-$CDFF  the served bank's DATA/BSS/C stack (cfg/ef_*_bank.cfg)
+;   $CE00-$CFFF  the filename completion cache, and run_stub at $CF00
+CSTACK_TOP = $C800              ; grows down through $C7xx-$C5xx
 
 ; ---------------------------------------------------------------------------
         .segment "EFCODE"
@@ -252,14 +260,13 @@ _bank_call:
         pla
         pha
         and #$1F                ; A = entry index
-        asl a
-        tax
-        asl a
-        stx EF_RAM + 1
-        clc
-        adc EF_RAM + 1
-        adc #<BANK_ENTRY        ; entry*3 into the bank's JMP table (x3, no mul)
         sta EF_RAM + 1
+        asl a                   ; entry*2 (entry <= 31, so no carry out)
+        clc
+        adc EF_RAM + 1          ; entry*3 -- the JMP table's stride
+        clc
+        adc #<BANK_ENTRY
+        sta EF_RAM + 1          ; patch the stub's operand
         pla
         lsr a
         lsr a

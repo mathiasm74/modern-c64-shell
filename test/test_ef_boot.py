@@ -5,10 +5,10 @@ build -- only the platform layer (src/ef/platform.s) and the linker config
 differ. This checks the port boots on a STOCK machine with the cart attached,
 draws its banner, and runs commands.
 
-What is NOT expected to work yet: bank commands. The bank images are still
-linked against the One ROM's SVC address ($FF80, which here belongs to the stock
-KERNAL), so the cart carries $FF filler in banks 1..5 -- and bank_call is
-expected to report that rather than run it. Phase 3 relinks them.
+The UTIL bank is in (EF bank 2): `about`, `debug` and the colour cluster. The
+rest are still $FF filler, because they bind the SVC table at $FF80, which on
+this target belongs to the stock KERNAL -- bank_call is expected to report that
+rather than run it.
 """
 
 import os
@@ -43,17 +43,6 @@ def _boot(sv):
     raise AssertionError("the EF build never reached its prompt:\n%s" % got)
 
 
-def _type(sv, text):
-    """Type a line, ten characters at a time (the keyboard buffer's depth)."""
-    for chunk in [text[i:i + 9] for i in range(0, len(text), 9)]:
-        sv.inject_keys(chunk)
-        for _ in range(40):
-            sv.run_for(0.1)
-            if sv.read_byte(0xC6) == 0:
-                break
-    sv.run_for(0.8)
-
-
 def test_ef_build_boots_to_the_tardis_prompt(v):
     (void) = v
     if not _HAVE:
@@ -82,6 +71,74 @@ def test_ef_build_runs_a_resident_command(v):
         _type(sv, "ver\r")
         got = sv.screen_text()
         assert "Tardis DOS v" in got, "ver produced nothing:\n%s" % got
+
+
+def _type(sv, text):
+    """Type a line, nine characters at a time (the keyboard buffer's depth)."""
+    for chunk in [text[i:i + 9] for i in range(0, len(text), 9)]:
+        sv.inject_keys(chunk)
+        for _ in range(40):
+            sv.run_for(0.1)
+            if sv.read_byte(0xC6) == 0:
+                break
+    sv.run_for(0.8)
+
+
+def test_ef_util_bank_commands_run(v):
+    """The util bank ports to EF unchanged except for where its RAM lives.
+
+    This is the whole bank path end to end: bank_call writes $DE00, ROML stays
+    put because every bank repeats it, the "bnk" magic checks out, and the
+    $DF00 stub JSRs the right entry. `about` is entry 1 and pure assembly;
+    the colour commands are entries 3-5 and go through bank_init, so they also
+    prove the cc65 runtime comes up in the relocated window.
+    """
+    (void) = v
+    if not _HAVE:
+        print("      (skipped: no tardis.crt or no stock ROMs)")
+        return
+    with _vice() as sv:
+        _boot(sv)
+        _type(sv, "text 5\r")
+        assert sv.read_byte(0x0286) == 0x05, \
+            "text: $0286 = $%02X" % sv.read_byte(0x0286)
+        _type(sv, "border 3\r")
+        assert sv.read_byte(0xD020) & 0x0F == 0x03, \
+            "border: $D020 = $%02X" % sv.read_byte(0xD020)
+        _type(sv, "bg 6\r")
+        assert sv.read_byte(0xD021) & 0x0F == 0x06, \
+            "bg: $D021 = $%02X" % sv.read_byte(0xD021)
+        # Entry 1, the assembly path, which skips bank_init entirely.
+        _type(sv, "clear\r")
+        _type(sv, "about\r")
+        assert "TARDIS DOS" in sv.screen_text(), \
+            "about did not run:\n%s" % sv.screen_text()
+
+
+def test_ef_bank_ram_window_is_readable_memory(v):
+    """The bank's DATA/BSS/C stack must NOT sit in $8000-$9FFF on this target.
+
+    That is ROML here: a write lands in the RAM underneath and the read comes
+    back from flash, so the window is write-only and every C bank entry
+    silently does nothing (the colour commands returned without setting a
+    single register). The One ROM build's window at $9D00 is exactly there,
+    which is why the EF configs are separate files.
+    """
+    (void) = v
+    import glob
+    import re
+    cfgs = glob.glob(os.path.join(_HERE, "..", "cfg", "ef_*_bank.cfg"))
+    assert cfgs, "no EF bank configs found"
+    for path in cfgs:
+        for line in open(path):
+            m = re.match(r"\s*(DATARUN|BANKBSS|BANKRAM)\s*:.*start\s*=\s*\$([0-9A-Fa-f]+)",
+                         line)
+            if m:
+                start = int(m.group(2), 16)
+                assert not (0x8000 <= start < 0xA000), \
+                    "%s: %s starts at $%04X, inside ROML -- reads come from " \
+                    "flash, so the bank's state would be write-only" % (
+                        os.path.basename(path), m.group(1), start)
 
 
 def test_ef_bank_command_reports_unavailable_rather_than_crashing(v):

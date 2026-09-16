@@ -232,13 +232,47 @@ $(EF_ROML) $(EF_ROMH0): $(EF_OBJ) cfg/ef_rom.cfg tools/patch_freemem.py
 # "bnk" magic check rejects cleanly instead of running garbage.
 EF_BANK_COUNT := 6
 
+# Bank id -> EF bank is id + EF_FIRST_BANK (1), so the order here is the bank-id
+# order from shell.h: 0 disk, 1 util, 2 files, 3 edit, 4 hex. The util bank is
+# the one that drops in UNCHANGED -- it binds nothing outside its image but
+# `_line` at $C000, which cfg/ef_rom.cfg pins there too, and it never touches
+# the drive. The other four bind the SVC table at $FF80, which on this target
+# belongs to the stock KERNAL, so they still need relinking.
+EF_BANK_1 := $(BUILD)/ef/romh-filler.bin
+EF_BANK_2 := $(BUILD)/ef/banks/util_bank.bin
+EF_BANK_3 := $(BUILD)/ef/romh-filler.bin
+EF_BANK_4 := $(BUILD)/ef/romh-filler.bin
+EF_BANK_5 := $(BUILD)/ef/romh-filler.bin
+
+# The bank images are RELINKED for this target: the RAM window moves out of
+# $8000-$9FFF (ROML here) and, for the banks that use it, the SVC table moves
+# with it. Only crt0_*.s needs reassembling (-D EF_BANK=1 picks the window);
+# the C objects are shared with the One ROM build.
+$(BUILD)/ef/banks/crt0_util.o: src/banks/crt0_util.s | $(BUILD)
+	@mkdir -p $(BUILD)/ef/banks
+	$(AS) $(ASFLAGS) -D EF_BANK=1 -o $@ $<
+
+$(BUILD)/ef/banks/util_bank.bin: $(BUILD)/ef/banks/crt0_util.o \
+                                 $(BUILD)/banks/bk_complete.o \
+                                 $(BUILD)/banks/about.o $(BUILD)/banks/kbdiag.o \
+                                 $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
+                                 cfg/ef_util_bank.cfg
+	$(LD) -C cfg/ef_util_bank.cfg -o $@ $(BUILD)/ef/banks/crt0_util.o \
+	      $(BUILD)/banks/bk_complete.o $(BUILD)/banks/kbdiag.o \
+	      $(BUILD)/banks/about.o \
+	      $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
+	      $(RTLIB) -Ln $(BUILD)/ef/banks/util_bank.labels \
+	      -m $(BUILD)/ef/banks/util_bank.map
+	@echo "  ef util_bank  : $$(wc -c < $@) bytes"
+
 $(BUILD)/ef/romh-filler.bin:
 	@mkdir -p $(dir $@)
 	python3 -c "import sys; open(sys.argv[1],'wb').write(b'\xff'*8192)" $@
 
-$(BUILD)/ef/tardis.crt: $(EF_ROML) $(EF_ROMH0) $(BUILD)/ef/romh-filler.bin tools/make_ef_crt.py
+$(BUILD)/ef/tardis.crt: $(EF_ROML) $(EF_ROMH0) $(BUILD)/ef/romh-filler.bin \
+                       $(EF_BANK_2) tools/make_ef_crt.py
 	python3 tools/make_ef_crt.py $@ 0:l=$(EF_ROML) 0:h=$(EF_ROMH0) \
-	  $(foreach b,1 2 3 4 5,$(b):l=$(EF_ROML) $(b):h=$(BUILD)/ef/romh-filler.bin)
+	  $(foreach b,1 2 3 4 5,$(b):l=$(EF_ROML) $(b):h=$(EF_BANK_$(b)))
 
 ef: $(BUILD)/ef/tardis.crt
 .PHONY: ef
