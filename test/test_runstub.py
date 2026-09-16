@@ -68,11 +68,11 @@ def test_run_stub_runs_basic_program(v):
         sv.write_memory(0x0200, [0x55] * 0x100)
         sv.write_memory(0x0300, [0x33] * 0x100)
         sv.write_memory(0x0801, prog)
-        sv.write_memory(0xCFF8, [0x01, 0x08, 0x10, 0x08])  # load $0801, end $0810
-        sv.write_memory(0xCFFC, [0x00])                    # mode 0 = RUN
-        sv.write_memory(0xCFFD, [0x08])                    # device (FA) to restore
-        sv.write_memory(0xCF00, stub)
-        sv.run_at(0xCF00, 1.5)
+        sv.write_memory(0xCE52, [0x01, 0x08, 0x10, 0x08])  # load $0801, end $0810
+        sv.write_memory(0xCE56, [0x00])                    # mode 0 = RUN
+        sv.write_memory(0xCE57, [0x08])                    # device (FA) to restore
+        sv.write_memory(0xCE60, stub)
+        sv.run_at(0xCE60, 1.5)
         assert sv.read_byte(0x00BA) == 0x08, \
             "stub did not restore $BA -- PEEK(186) would be wrong (?ILLEGAL DEVICE NUMBER)"
         # The stub points the stock NMI vector ($0318) at the RAM escape handler,
@@ -87,7 +87,7 @@ def test_run_stub_runs_basic_program(v):
         assert nmi == L["rbcp_nmi_escape"], \
             "stub did not install the RUN/STOP+RESTORE escape vector " \
             "($0318=%04X, want %04X)" % (nmi, L["rbcp_nmi_escape"])
-        want_imain = 0xCF00 + (L["run_imain_hook"] - L["_run_stub"])
+        want_imain = 0xCE60 + (L["run_imain_hook"] - L["_run_stub"])
         imain = sv.read_byte(0x0302) | (sv.read_byte(0x0303) << 8)
         assert imain == want_imain, \
             "mode 0 did not hook IMAIN at the in-stub run_imain_hook " \
@@ -116,10 +116,10 @@ def test_run_stub_relinks_broken_link(v):
         sv.write_memory(0x0002, [0xAA] * 254)
         sv.write_memory(0x0300, [0x33] * 0x100)
         sv.write_memory(0x0801, prog)
-        sv.write_memory(0xCFF8, [0x01, 0x08, 0x10, 0x08])  # load $0801, end $0810
-        sv.write_memory(0xCFFC, [0x00])                    # mode 0 = RUN
-        sv.write_memory(0xCF00, stub)
-        sv.run_at(0xCF00, 1.5)
+        sv.write_memory(0xCE52, [0x01, 0x08, 0x10, 0x08])  # load $0801, end $0810
+        sv.write_memory(0xCE56, [0x00])                    # mode 0 = RUN
+        sv.write_memory(0xCE60, stub)
+        sv.run_at(0xCE60, 1.5)
         link = list(sv.read_memory(0x0801, 2))
         assert link == [0x0E, 0x08], \
             "LINKPRG did not rebuild the broken line link: %r" % (link,)
@@ -142,10 +142,10 @@ def test_run_stub_ready_mode_does_not_autorun(v):
         sv.write_memory(0x0002, [0xAA] * 254)
         sv.write_memory(0x0300, [0x33] * 0x100)
         sv.write_memory(0x0801, prog)
-        sv.write_memory(0xCFF8, [0x01, 0x08, 0x0D, 0x08])  # load $0801, end $080D
-        sv.write_memory(0xCFFC, [0x01])                    # mode 1 = READY.
-        sv.write_memory(0xCF00, stub)
-        sv.run_at(0xCF00, 1.5)
+        sv.write_memory(0xCE52, [0x01, 0x08, 0x0D, 0x08])  # load $0801, end $080D
+        sv.write_memory(0xCE56, [0x01])                    # mode 1 = READY.
+        sv.write_memory(0xCE60, stub)
+        sv.run_at(0xCE60, 1.5)
         link = list(sv.read_memory(0x0801, 2))
         assert link == [0x0B, 0x08], \
             "LINKPRG did not rebuild the link in READY mode: %r" % (link,)
@@ -173,9 +173,9 @@ def test_run_stub_starts_machine_code(v):
         sv.write_memory(0x0002, [0xAA] * 254)
         sv.write_memory(0x0300, [0x33] * 0x100)
         sv.write_memory(0x2000, ml)
-        sv.write_memory(0xCFF8, [0x00, 0x20, 0x00, 0x20])  # load $2000 (ML)
-        sv.write_memory(0xCF00, stub)
-        sv.run_at(0xCF00, 1.0)
+        sv.write_memory(0xCE52, [0x00, 0x20, 0x00, 0x20])  # load $2000 (ML)
+        sv.write_memory(0xCE60, stub)
+        sv.run_at(0xCE60, 1.0)
         border = sv.read_byte(0xD020) & 0x0F
         assert border == 0x07, \
             "stub did not start the ML program (border=$%02X)" % border
@@ -242,3 +242,56 @@ def test_control_code_glyphs_match_the_kernal(v):
             " ".join("%02X" % c for c in codes),
             " ".join("%02X" % b for b in got),
             " ".join("%02X" % b for b in want))
+
+
+def test_run_stub_consumes_the_planted_cbm80(v):
+    """The CBM80 at $8000 is a ONE-SHOT baton; the stub must break it on entry.
+
+    On the One ROM build it is what gets us here: _rbcp_launch_stub plants it
+    and the stock reset's cartridge-autostart path finds it. Left armed, ANY
+    later reset re-enters the stub with the same parameters and replays the
+    last run/basic for ever -- which is what a user hit: EXIT from
+    `basic sys 54301` returned to Tardis, whose own reset runs the same
+    cartridge check, and immediately made the same SYS call again.
+
+    Gated on RUN_CBM80 because the EasyFlash build plants nothing and $8004
+    there is ordinary RAM that may hold the loaded program.
+    """
+    (void) = v
+    if not _HAVE_STOCK:
+        print("      (skipped: stock-roms/ not present)")
+        return
+    stub = _stub_bytes()
+    with _stock_vice() as sv:
+        sv.write_memory(0x8000, [0x00, 0xCE, 0x00, 0xCE,
+                                 0xC3, 0xC2, 0xCD, 0x38, 0x30])   # planted
+        sv.write_memory(0xCE52, [0x01, 0x08, 0x10, 0x08])
+        sv.write_memory(0xCE56, [0x01])          # mode 1: READY., no autorun
+        sv.write_memory(0xCE57, [0x08])
+        sv.write_memory(0xCE59, [0x01])          # RUN_CBM80: armed
+        sv.write_memory(0xCE60, stub)
+        sv.run_at(0xCE60, 1.5)
+        assert sv.read_byte(0x8004) != 0xC3, \
+            "the stub left the CBM80 signature armed at $8004 -- the next " \
+            "reset would relaunch it"
+        assert sv.read_byte(0xCE59) == 0, "RUN_CBM80 was not cleared"
+
+
+def test_run_stub_leaves_8004_alone_when_no_cbm80_was_planted(v):
+    """The negative half: with the flag clear, $8004 is the program's byte."""
+    (void) = v
+    if not _HAVE_STOCK:
+        print("      (skipped: stock-roms/ not present)")
+        return
+    stub = _stub_bytes()
+    with _stock_vice() as sv:
+        sv.write_byte(0x8004, 0x5A)              # a program byte, not a plant
+        sv.write_memory(0xCE52, [0x01, 0x08, 0x10, 0x08])
+        sv.write_memory(0xCE56, [0x01])
+        sv.write_memory(0xCE57, [0x08])
+        sv.write_memory(0xCE59, [0x00])          # RUN_CBM80: nothing planted
+        sv.write_memory(0xCE60, stub)
+        sv.run_at(0xCE60, 1.5)
+        assert sv.read_byte(0x8004) == 0x5A, \
+            "the stub scrubbed $8004 with no CBM80 planted, corrupting the " \
+            "loaded program (this is the EasyFlash case)"

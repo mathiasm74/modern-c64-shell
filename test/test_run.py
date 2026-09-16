@@ -112,7 +112,9 @@ def test_run_stub_assembled_correctly(v):
     # vectors, has the BASIC init-without-NEW ($E3BF), auto-runs by typing "RUN"
     # into the keyboard buffer and dropping to READY ($A474) rather than
     # JMP $A7AE (which was blank across the real bank swap), and keeps the
-    # machine-code fallback JMP ($CFF8).
+    # machine-code fallback JMP (RUN_PARAMS) -- read the address out of c_io.s
+    # rather than hardcoding it, which went stale when the stub's mailbox moved
+    # below the stub to give it room to grow.
     L = _labels()
     start = L["_run_stub"]
     end = L["_run_stub_end"]
@@ -130,4 +132,11 @@ def test_run_stub_assembled_correctly(v):
     assert _find(b, [0x4C, 0x74, 0xA4]) >= 0, "no JMP $A474 (READY/auto-run)"
     assert _find(b, [0x4C, 0xAE, 0xA7]) < 0, \
         "stub still JMP $A7AE -- the fragile hand-rolled RUN was reintroduced"
-    assert _find(b, [0x6C, 0xF8, 0xCF]) >= 0, "no JMP ($CFF8) ML fallback"
+    import re as _re
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "src", "c_io.s")).read()
+    m = _re.search(r"RUN_PARAMS\s*=\s*\$([0-9A-Fa-f]{4})", src)
+    assert m, "RUN_PARAMS not found in c_io.s"
+    params = int(m.group(1), 16)
+    assert _find(b, [0x6C, params & 0xFF, params >> 8]) >= 0, \
+        "no JMP ($%04X) ML fallback" % params

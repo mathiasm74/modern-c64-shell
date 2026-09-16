@@ -31,6 +31,8 @@ CINT     = $FF81
 
         .import _main
         .import irq_tick
+        .import RUN_STUB_BASE   ; c_io.s owns where the run stub runs
+        .import RUN_CBM80
 
 EF_KCHROUT = $9FD2              ; pinned by cfg/ef_rom.cfg
 EF_KGETIN  = $9FE4
@@ -262,7 +264,7 @@ ef_puts:
 @done:  rts
 
 ef_version:
-        .byte "v0.2.38", 0
+        .byte "v0.2.39", 0
 ef_brand:
         .byte "Tardis DOS - your C64 power shell", 0
 ef_ready:
@@ -377,6 +379,12 @@ EF_FIRST_BANK = 1               ; ROMH bank 0 is the shell; banks start at 1
 ; RAM ends at $8000, and BASIC would come up with 8K less memory.
 _rbcp_launch_stub:
         jsr ef_arm_escape       ; last chance: we are about to unmap ourselves
+        ; Nothing plants a CBM80 on this target, so tell the stub not to
+        ; "consume" one. The flag is ordinary RAM and powers up as garbage --
+        ; left to chance it would scrub $8004, which here is a byte of the
+        ; loaded program rather than a signature we put there.
+        lda #$00
+        sta RUN_CBM80
         ldx #(ef_to_stub_end - ef_to_stub - 1)
 @cp:    lda ef_to_stub,x
         sta EF_RAM,x
@@ -387,10 +395,8 @@ _rbcp_launch_stub:
 ef_to_stub:
         lda #MODE_OFF
         sta EF_CTRL
-        jmp RUN_STUB
+        jmp RUN_STUB_BASE
 ef_to_stub_end:
-
-RUN_STUB = $CF00                ; fs.c's launch_stock_program copies it there
 
 ; void rbcp_launch_stock(void): a bare cold swap -- `basic` with nothing
 ; loaded. Straight into the stock reset, which gives a fresh BASIC.

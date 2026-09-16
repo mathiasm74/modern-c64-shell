@@ -95,23 +95,34 @@ _soft_reset:
 ; which made the BASIC path fail unpredictably) and sets MEMSTR/MEMSIZ; its
 ; RAM test is non-destructive, so the loaded program survives. Position-
 ; independent (only PC-relative branches internally; all absolute refs are
-; fixed stock addresses or the $CFF8 params). Addresses verified against
+; fixed stock addresses or the mailbox below). Addresses verified against
 ; kernal.901227-03 / basic.901226-01.
 ; ---------------------------------------------------------------------------
-RUN_PARAMS = $CFF8              ; load lo/hi, end lo/hi (4 bytes)
-RUN_MODE   = $CFFC              ; 0 = RUN, nonzero = drop to BASIC READY.
-RUN_DEV    = $CFFD              ; current device (FA) to restore -- see below
-RUN_FIRST  = $CFFE              ; mode-0 run: 1 = skip the pre-RUN READY (IMAIN)
-RUN_TLEN   = $CFED              ; mode-2: length of the line to type (incl. CR)
-RUN_TEXT   = $CFEE              ; mode-2: the line, 10 bytes max -- the keyboard
-                                ; buffer at $0277 is 10, so "sys 54301"+CR is
-                                ; exactly the limit. Below $CFF8 and above the
-                                ; stub, so RAMTAS (pages 0-3 only) leaves it.
-RUN_STUB_BASE = $CF00           ; where launch_stock_program copies the stub, so
-                                ; an in-stub label's RUN address is BASE+offset
+; --- the run stub's mailbox, all in the $CE00 page --------------------------
+; It has to live above page 3, because the stub calls RAMTAS, which clears
+; pages 0-3. $CE00-$CFFF is the filename-completion cache, which
+; launch_stock_program invalidates anyway, and the stub has always lived in it.
+;
+; The parameters sit BELOW the stub now, not above it. Above, the stub had no
+; headroom at all: mode 2's line handling took it from 221 to 272 bytes, which
+; ran past $CFFF into the VIC registers at $D000 -- and the copy loop wrote
+; them. test_rbcp pins the fit.
+RUN_TLEN   = $CE01              ; mode-2: length of the line (no CR; see @typed)
+RUN_TEXT   = $CE02              ; mode-2: the line itself, RUN_TMAX bytes
+RUN_TMAX   = 80                 ; a full BASIC line; BUF at $0200 holds 88
+RUN_PARAMS = $CE52              ; load lo/hi, end lo/hi (4 bytes)
+RUN_MODE   = $CE56              ; 0 = RUN, 1 = BASIC READY., 2 = type a line
+RUN_DEV    = $CE57              ; current device (FA) to restore -- see below
+RUN_FIRST  = $CE58              ; mode-0 run: 1 = skip the pre-RUN READY (IMAIN)
+RUN_CBM80  = $CE59              ; 1 = a CBM80 was planted at $8000 to get us
+                                ; here, and this entry consumes it (see below)
+RUN_STUB_BASE = $CE60           ; where launch_stock_program copies the stub;
+                                ; 416 bytes to $CFFF, so there is room to grow
                                 ; (the stub is assembled in ROM but runs here)
 
 .export _run_stub
+.export RUN_STUB_BASE            ; launch.s and ef/platform.s jump here
+.export RUN_CBM80                ; both platforms set it; the stub consumes it
 .export _run_stub_end
 .export run_imain_hook          ; in-stub $0302 hook (test computes its RUN addr)
 
@@ -120,7 +131,27 @@ _run_stub:
         ldx #$ff
         txs
         cld
-        jsr $FF84               ; IOINIT  - CIA/VIC/SID
+        ; The CBM80 at $8000 is a ONE-SHOT baton. On the One ROM build it is
+        ; what got us here: _rbcp_launch_stub plants it and the stock reset's
+        ; cartridge-autostart path finds it. Leaving it armed means ANY later
+        ; reset -- the program resetting, a tool like the SIDKick pico's config
+        ; menu exiting by resetting, or coming home to Tardis, whose own reset
+        ; runs the same check -- re-enters this stub with the old parameters and
+        ; replays the last `run`/`basic` for ever. That was a real report: EXIT
+        ; from `basic sys 54301` came back to Tardis and immediately made the
+        ; same SYS call again. rbcp_escape_tramp scrubs it too, but only on the
+        ; paths that go through us; consuming it here covers every reset.
+        ;
+        ; Gated on the flag because the EasyFlash build plants NOTHING (it turns
+        ; the cartridge off and jumps straight here), and there $8004 is
+        ; ordinary RAM that may hold the loaded program.
+        lda RUN_CBM80
+        beq :+
+        lda #$00
+        sta RUN_CBM80
+        sta $8004               ; break the signature; the vector at $8000 is
+                                ; never read without it
+:       jsr $FF84               ; IOINIT  - CIA/VIC/SID
         jsr $FF87               ; RAMTAS  - clear ZP/pages 2-3, set MEMSTR/SIZ
         jsr $FF8A               ; RESTOR  - $0314-$0333 RAM vectors
         jsr $FF81               ; CINT    - screen editor (clears the screen)
@@ -223,17 +254,45 @@ _run_stub:
         lda #$08
         sta $2E
         jsr $A659               ; CLR - TXTPTR, ARYTAB/STREND, FRETOP
-        ldy RUN_TLEN
-        beq @ready
-@tl:    dey
-        lda RUN_TEXT,y
-        sta $0277,y
-        cpy #$00
-        bne @tl
         lda RUN_TLEN
-        sta $C6                 ; NDX: characters pending
+        beq @ready              ; nothing to type -> plain READY.
+        ; Do NOT stuff the line into the keyboard buffer. That buffer is TEN
+        ; BYTES ($0277-$0280, and XMAX caps it at ten), which is why `basic sys
+        ; 54301` sat exactly at the limit and anything longer was truncated.
+        ;
+        ; Hand it to BASIC through its OWN input buffer instead. MAIN is
+        ;   $A483  jsr $A560     ; INLIN: read a line into BUF, X/Y = BUF-1
+        ;   $A486  stx $7A / sty $7B
+        ;   $A48A  jsr $0073     ; CHRGET, then CRUNCH + GONE
+        ; so writing BUF ourselves and entering at $A48A is MAIN with the line
+        ; input skipped -- no dependence on the screen editor's RETURN handling
+        ; at all. (Stuffing a CR and entering at $A483 does not work: the editor
+        ; consumes the keystroke and goes back to waiting, with BUF untouched.)
+        ;
+        ; One pass: into BUF, and onto the screen so the session reads as if
+        ; someone had typed it. (CHROUT preserves X and Y, per the KERNAL's
+        ; contract, which is what lets the two share a loop.)
+        ldy #$00
+@tl:    cpy RUN_TLEN
+        bcs @tdone
+        lda RUN_TEXT,y
+        sta $0200,y
+        jsr $FFD2
+        iny
+        bne @tl
+@tdone: lda #$00
+        sta $0200,y             ; terminator
+        lda #$0D
+        jsr $FFD2               ; newline, so BASIC's output starts below it
+        lda #$FF
+        sta $7A                 ; TXTPTR = $01FF; CHRGET pre-increments to BUF
+        lda #$01
+        sta $7B
+        lda #$80
+        sta $9D                 ; MSGFLG: direct mode, so READY. and errors show
+                                ; ($A47C does this and we enter past it)
         cli
-        jmp $A474
+        jmp $A48A
 @ml:    ; --- machine-code program: jump through its load address --------
         ; Same IMAIN hook for mode 0: an ML program that quits by returning to
         ; BASIC READY (the usual fb/pterm exit) then bounces back to the shell.

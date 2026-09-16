@@ -19,6 +19,7 @@
 .export _rbcp_launch_stock
 .export _rbcp_launch_stub
 .export cbm80                    ; for the test that pins the plant
+.import RUN_STUB_BASE            ; c_io.s owns where the stub runs
 .export rbcp_trampoline               ; exported for tests / inspection only
 
 .include "rbcp_defs.s"          ; constants only (ZP/arg locations, addresses)
@@ -123,6 +124,9 @@ _rbcp_launch_stub:
         sta $8000,x
         dex
         bpl @plant
+        lda #$01
+        sta $CE59               ; RUN_CBM80: tell the stub to consume it on
+                                ; entry, so no later reset can replay the launch
         ; fall through to the swap; the stock reset picks the structure up
 
 _rbcp_launch_stock:
@@ -1279,7 +1283,7 @@ rbcp_escape_tramp:
 ; both its cold and warm vectors pointing at the run stub's home.
 .segment "KCODE"
 cbm80:
-        .byte $00, $CF                  ; cold-start vector -> $CF00
-        .byte $00, $CF                  ; warm/NMI vector   -> $CF00
+        .byte <RUN_STUB_BASE, >RUN_STUB_BASE    ; cold-start -> the run stub
+        .byte <RUN_STUB_BASE, >RUN_STUB_BASE    ; warm/NMI   -> the run stub
         .byte $C3, $C2, $CD, $38, $30   ; "CBM80"
 cbm80_end:

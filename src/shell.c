@@ -105,6 +105,8 @@ const unsigned char shell_command_count =
    builds. cfg/util_bank.cfg binds _line to the same address. */
 #pragma bss-name (push, "LINEBUF")
 char line[LINEMAX + 1];         /* non-static: complete.s imports _line */
+
+static const char kw_basic[] = "basic";   /* capture_basic_tail's prefix test */
 #pragma bss-name (pop)
 
 /* Command history: a ring of the last HIST_N submitted (non-empty) lines.
@@ -426,6 +428,60 @@ static void wedge_rewrite(void)
 
 /* Look up argv[0] in the command table and run its handler, or report that
    the command is unknown. An empty line (argc 0) just falls through. */
+/* capture_basic_tail - stash `basic <line>`'s argument before it is tokenized.
+ *
+ * `basic` is the one command whose argument is not a shell argument list but a
+ * line of a DIFFERENT language, so argv is the wrong shape for it three ways
+ * over: parse_line strips the quotes (a BASIC string needs them), collapses the
+ * spacing, and keeps only MAX_ARGS tokens -- `basic for i=1 to 3 : print
+ * "row";i : next i` reached stock BASIC as FOR I=1 TO 3 : PRINT ROW. It also
+ * tokenizes IN PLACE, writing NULs over the delimiters, so cmd_basic cannot go
+ * back for the original afterwards. Hence here, between wedge_rewrite and
+ * parse_line.
+ *
+ * UPPERCASED, because the shell's line is lowercase ASCII while stock BASIC
+ * wants PETSCII uppercase -- `sys` as $73,$79,$73 is three graphics characters
+ * and a syntax error. That applies inside strings too, so a typed string comes
+ * out uppercase; the C64 is in its uppercase charset there, so that is what it
+ * would look like anyway.
+ *
+ * The buffer is the run stub's mailbox at $CE02 (see src/c_io.s): it has to
+ * live above page 3, since the stub calls RAMTAS before reading it. Writing
+ * there costs the filename-completion cache, which shares the page -- a fair
+ * trade on a command that is about to leave the shell entirely. */
+#define BASIC_TLEN (*(unsigned char *)0xCE01)
+#define BASIC_TEXT ((unsigned char *)0xCE02)
+#define BASIC_TMAX 80                   /* a full BASIC line: two screen rows */
+#define BASIC_CACHE_OK (*(unsigned char *)0xCE00)
+
+static void capture_basic_tail(void)
+{
+    unsigned char i = 0, n = 0, c;
+
+    BASIC_TLEN = 0;
+    while (kw_basic[i]) {               /* the command name, case-insensitively */
+        c = (unsigned char)line[i];
+        if (c >= 'A' && c <= 'Z')
+            c = (unsigned char)(c + 32);
+        if (c != (unsigned char)kw_basic[i])
+            return;
+        ++i;
+    }
+    if (line[i] != ' ')                 /* bare `basic`, or a longer word */
+        return;
+    while (line[i] == ' ')
+        ++i;
+    while (line[i] && n < BASIC_TMAX) {
+        c = (unsigned char)line[i++];
+        if (c >= 'a' && c <= 'z')
+            c = (unsigned char)(c - 32);
+        BASIC_TEXT[n++] = c;
+    }
+    BASIC_TLEN = n;
+    if (n)
+        BASIC_CACHE_OK = 0;             /* we just wrote over the name cache */
+}
+
 static void dispatch(struct command_line *cl)
 {
     unsigned char i;
@@ -629,6 +685,7 @@ void main(void)
         print_prompt();
         n = readline();
         wedge_rewrite();                 /* "@$" -> "dir", "/x" -> "load x", ... */
+        capture_basic_tail();            /* before parse_line eats the quotes */
         parse_line(line, &cl);
         dispatch(&cl);
         if (n > 0)                       /* skip empty RETURNs */

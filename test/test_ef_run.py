@@ -91,6 +91,35 @@ def test_basic_with_a_command_types_it(v):
         assert " 2" in got, "BASIC did not evaluate the typed line:\n%s" % got
 
 
+def test_basic_passes_a_long_line_verbatim(v):
+    """`basic <line>` used to be capped at ten characters and lose its quotes.
+
+    Ten because the line went through the KEYBOARD BUFFER at $0277, which holds
+    exactly that -- `basic sys 54301` (9 + RETURN) sat precisely at the limit
+    and anything longer was silently truncated. And the text was rebuilt from
+    argv, so parse_line had already stripped the quotes, collapsed the spacing
+    and dropped everything past MAX_ARGS (8) tokens.
+
+    Now shell.c captures the RAW line before tokenizing and the stub writes
+    BASIC's own input buffer at $0200, entering MAIN just past INLIN. This line
+    is 37 characters and 11 tokens, and carries a quoted string.
+    """
+    (void) = v
+    if not _HAVE:
+        print("      (skipped: no tardis.crt, stock ROMs or disk)")
+        return
+    with _vice() as sv:
+        _boot(sv)
+        _type(sv, 'basic for i=1 to 3 : print "row";i : next i\r')
+        got = _wait(sv, "row 3")
+        low = got.lower()
+        for want in ("row 1", "row 2", "row 3"):
+            assert want in low, "the loop did not run:\n%s" % got
+        # The line is echoed too, so the session reads as if it were typed.
+        assert 'print "row"' in low, \
+            "the quotes did not survive the shell's tokenizer:\n%s" % got
+
+
 def test_a_loaded_program_survives_into_stock_basic(v):
     """`basic` with a program loaded: init-without-NEW + LINKPRG, then READY."""
     (void) = v

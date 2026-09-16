@@ -19,6 +19,18 @@ _BUILD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build")
 _LABELS = os.path.join(_BUILD, "labels.txt")
 
 
+def _stub_base(asm):
+    m = re.search(r"RUN_STUB_BASE\s*=\s*\$([0-9A-Fa-f]+)", asm)
+    assert m, "RUN_STUB_BASE not found in c_io.s"
+    return int(m.group(1), 16)
+
+
+def params_asm(asm):
+    m = re.search(r"RUN_PARAMS\s*=\s*\$([0-9A-Fa-f]+)", asm)
+    assert m, "RUN_PARAMS not found in c_io.s"
+    return int(m.group(1), 16)
+
+
 def _labels():
     out = {}
     with open(_LABELS) as f:
@@ -438,17 +450,18 @@ def test_exit_wedge_targets_the_real_escape(v):
 def test_basic_command_text_area_agrees_between_the_two_sides(v):
     """`basic <command>` passes a line to the stub through fixed addresses.
 
-    fs.c writes it and the stub (c_io.s) reads it, with nothing linking the two
-    but matching literals -- and it cannot be exercised in VICE, since the swap
-    is inert and the planted CBM80 would have our own reset relaunch the stub in
-    a loop. So check the contract statically: same addresses, a text area that
-    clears both the stub and RUN_PARAMS, and a length that the keyboard buffer
-    can actually hold.
+    shell.c's capture_basic_tail() writes it -- from the RAW line, before
+    parse_line strips the quotes -- and the stub (c_io.s) reads it, with nothing
+    linking the two but matching literals. On the One ROM build it cannot be
+    exercised in VICE, since the swap is inert. So check the contract
+    statically: same addresses, a text area that clears both the stub and
+    RUN_PARAMS, and a stub that fits in the page pair.
+    (test_ef_run.py runs the real thing on the EasyFlash target.)
     """
     (void) = v
 
     asm = _read("src", "c_io.s")
-    c = _read("src", "commands", "fs.c")
+    c = _read("src", "shell.c")            # capture_basic_tail lives here now
 
     def const(text, name, pat):
         m = re.search(pat, text)
@@ -457,29 +470,37 @@ def test_basic_command_text_area_agrees_between_the_two_sides(v):
 
     tlen_asm = const(asm, "RUN_TLEN (asm)", r"RUN_TLEN\s*=\s*\$([0-9A-Fa-f]{4})")
     text_asm = const(asm, "RUN_TEXT (asm)", r"RUN_TEXT\s*=\s*\$([0-9A-Fa-f]{4})")
-    tlen_c = const(c, "RUN_TLEN (C)", r"RUN_TLEN.*?0x([0-9A-Fa-f]{4})")
-    text_c = const(c, "RUN_TEXT (C)", r"RUN_TEXT.*?0x([0-9A-Fa-f]{4})")
+    tlen_c = const(c, "BASIC_TLEN (C)", r"BASIC_TLEN.*?0x([0-9A-Fa-f]{4})")
+    text_c = const(c, "BASIC_TEXT (C)", r"BASIC_TEXT.*?0x([0-9A-Fa-f]{4})")
 
     assert tlen_asm == tlen_c, \
-        "RUN_TLEN is $%04X in c_io.s but $%04X in fs.c" % (tlen_asm, tlen_c)
+        "RUN_TLEN is $%04X in c_io.s but $%04X in shell.c" % (tlen_asm, tlen_c)
     assert text_asm == text_c, \
-        "RUN_TEXT is $%04X in c_io.s but $%04X in fs.c" % (text_asm, text_c)
+        "RUN_TEXT is $%04X in c_io.s but $%04X in shell.c" % (text_asm, text_c)
 
-    m = re.search(r"#define RUN_TMAX\s+(\d+)", c)
-    assert m, "RUN_TMAX not found"
+    m = re.search(r"#define BASIC_TMAX\s+(\d+)", c)
+    assert m, "BASIC_TMAX not found"
     tmax = int(m.group(1))
-    assert tmax <= 10, \
-        "RUN_TMAX is %d, but the keyboard buffer at $0277 holds 10" % tmax
+    # 80, not 10: the line no longer goes through the keyboard buffer at $0277
+    # (which holds ten, and is why `basic sys 54301` was exactly at the limit).
+    # The stub writes BASIC's own input buffer at $0200, which holds 88.
+    assert tmax <= 88, \
+        "BASIC_TMAX is %d, but BASIC's input buffer at $0200 holds 88" % tmax
 
-    # The text must sit clear of the stub below it and RUN_PARAMS above it.
+    # The mailbox sits BELOW the stub, and the stub must fit above it without
+    # running off the end of the page pair. It once did not: mode 2's line
+    # handling took it 221 -> 272 bytes, past $CFFF, and the copy loop wrote
+    # over the VIC registers at $D000 -- a blank screen with no other symptom.
     L = _labels()
-    end = 0xCF00 + (L["_run_stub_end"] - L["_run_stub"])
-    assert tlen_asm >= end, \
-        "the text area starts at $%04X but the stub runs to $%04X -- copying " \
-        "the stub would overwrite the command" % (tlen_asm, end - 1)
-    assert text_asm + tmax <= 0xCFF8, \
-        "the text area runs to $%04X and would collide with RUN_PARAMS at $CFF8" \
-        % (text_asm + tmax - 1)
+    base = _stub_base(asm)
+    end = base + (L["_run_stub_end"] - L["_run_stub"])
+    assert end <= 0x10000 and end <= 0xD000, \
+        "the stub runs to $%04X, past the $CFFF end of its page pair" % (end - 1)
+    assert text_asm + tmax <= base, \
+        "the text area runs to $%04X and would collide with the stub at $%04X" \
+        % (text_asm + tmax - 1, base)
+    assert params_asm(asm) >= text_asm + tmax, \
+        "RUN_PARAMS overlaps the mode-2 text area"
 
     # And the stub must actually branch on mode 2, or the text is never typed.
     assert re.search(r"lda RUN_MODE\s*\n\s*cmp #2", asm), \
@@ -538,18 +559,26 @@ def test_launch_stub_plants_the_cbm80_and_falls_into_the_swap(v):
 
     kernal = open(os.path.join(_BUILD, "kernal.bin"), "rb").read()
     off = labels["cbm80"] - 0xE000
-    assert kernal[off:off + 9] == bytes(
-        [0x00, 0xCF, 0x00, 0xCF, 0xC3, 0xC2, 0xCD, 0x38, 0x30]), \
-        "CBM80 structure is wrong: %s" % kernal[off:off + 9].hex(' ')
+    # Both vectors must point at wherever the stub actually runs, which c_io.s
+    # owns -- hardcoding $CF00 here would have gone stale when it moved.
+    base = _stub_base(_read("src", "c_io.s"))
+    want = bytes([base & 0xFF, base >> 8, base & 0xFF, base >> 8,
+                  0xC3, 0xC2, 0xCD, 0x38, 0x30])
+    assert kernal[off:off + 9] == want, \
+        "CBM80 structure is %s, want %s (stub base $%04X)" % (
+            kernal[off:off + 9].hex(' '), want.hex(' '), base)
 
     stub, stock = labels["_rbcp_launch_stub"], labels["_rbcp_launch_stock"]
     assert stub < stock, \
         "_rbcp_launch_stub ($%04X) must sit before _rbcp_launch_stock ($%04X)" \
         % (stub, stock)
+    # The check is "nothing leaves", not "it ends on the branch": the block
+    # also arms RUN_CBM80 after the loop. A byte scan is approximate (an
+    # immediate could look like an opcode) but it is what catches the real
+    # mistake, and it is verified to fail against an inserted rts.
     body = kernal[stub - 0xE000:stock - 0xE000]
-    assert body[-2] == 0x10, \
-        "the plant loop must end on its bpl and fall through; found %s" \
-        % body[-2:].hex(' ')
-    for opc in (0x60, 0x4C, 0x6C):          # rts, jmp abs, jmp ind
+    for opc, what in ((0x60, "rts"), (0x4C, "jmp"), (0x6C, "jmp ()")):
         assert opc not in body, \
-            "a $%02X between the plant and the swap breaks the fall-through" % opc
+            "a %s between the plant and the swap breaks the fall-through -- " \
+            "the device would swap without a CBM80 planted, and the stock " \
+            "reset would cold-boot BASIC instead of running the program" % what
