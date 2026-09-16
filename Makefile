@@ -144,11 +144,22 @@ $(BUILD)/%.o: src/%.s | $(BUILD)
 	@mkdir -p $(@D)
 	$(AS) $(ASFLAGS) -o $@ $<
 
-# The RBCP library uses `.include "rbcp_defs.s"` / `.include "rbcp_config.s"`,
-# which ca65 resolves but make doesn't track. Force a rebuild of rbcp.o (and
-# launch.o, which includes the defs too) if either include changes.
+# ca65 resolves `.include` itself; make does not track it, so an edited include
+# leaves every object that pulls it in stale. That is not a cosmetic hazard
+# here: a stale BANK image is packed into the One ROM firmware and the mismatch
+# only shows up on real hardware, as a bank command failing for no visible
+# reason. (One such case cost a debugging session; `make clean` fixed it.)
+# Every include therefore gets an explicit dependency. Keep this list in step --
+# `grep -rn '^\s*\.include' src --include='*.s'` lists them all.
 $(BUILD)/rbcp/rbcp.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
+
+# Both bank crt0 includes are shared by ALL the banks, so an edit to either has
+# to rebuild every one of them -- otherwise the firmware carries a mix of old
+# and new bank images. (The EF crt0 rule lists them in its own prerequisites.)
+BANK_CRT0_SRC := $(wildcard src/banks/crt0_*.s)
+BANK_CRT0_OBJ := $(patsubst src/banks/%.s,$(BUILD)/banks/%.o,$(BANK_CRT0_SRC))
+$(BANK_CRT0_OBJ): src/bank_cstack.inc src/kernal_shims.inc
 
 # --- banks (docs/ROM-EXPANSION.md) -------------------------------------------
 # A bank is a self-contained 8KB ROM image the One ROM serves at $A000-$BFFF in
@@ -483,7 +494,7 @@ run: all
 # The banks are prerequisites too: the VICE tests seed them into the RAM under
 # $A000 (most commands live in a bank now), so a test run straight after a
 # clean would otherwise fail with a confusing FileNotFoundError.
-test: all $(BANK_BINS) $(BUILD)/ef/spike.crt
+test: all $(BANK_BINS) $(BUILD)/ef/spike.crt $(BUILD)/ef/tardis.crt
 	$(PYTHON) test/run_tests.py $(M)
 
 # Build a One ROM firmware image holding both halves as a single multi-ROM set

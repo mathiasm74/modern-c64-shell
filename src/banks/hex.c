@@ -130,6 +130,15 @@ static unsigned char col_data;
  * searched per drawn cell, and a full repaint draws 184 of them, so even a
  * 64-entry list costs ~12k comparisons per scroll. This is two indexed loads.
  */
+/* Print a line at the shell's cursor. msg() writes the EDITOR's message row,
+   which is no use before the editor has taken the screen. */
+static void puts_line(const char *s)
+{
+    while (*s)
+        k_chrout((unsigned char)*s++);
+    k_chrout(0x0D);
+}
+
 static void msg(const char *s);         /* defined below; mark_edited reports
                                            pool exhaustion through it */
 
@@ -913,12 +922,21 @@ void hex_main(void)
     }
     fname[fnlen] = 0;
 
+    /* No name: report at the PROMPT and return, before taking the screen.
+       It used to clear, open an empty document and put the usage on the
+       message row -- which left you inside a modal editor with nothing to
+       edit and no obvious way out (reported from a real session). `edit` with
+       no name deliberately opens a new document, but that is a text editor
+       you can type into; this one is OVERWRITE-ONLY by design, so a zero-byte
+       document cannot be given any content and the editor has no purpose. */
+    if (!fnlen) {
+        puts_line("usage: hex <name>");
+        return;
+    }
+
     k_chrout(0x93);                     /* clear */
     fill_color();
-    if (fnlen)
-        load_file();
-    else
-        msg("usage: hex <name>");
+    load_file();
     edits_init();                       /* needs flen, so after the load */
     render();
 

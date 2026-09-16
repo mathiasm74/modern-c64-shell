@@ -146,6 +146,33 @@ def _dump_row(v, n=0):
     return ""
 
 
+def test_bare_hex_reports_usage_at_the_prompt(v):
+    """`hex` with no name must NOT open the editor.
+
+    It used to clear the screen, open an empty document and put the usage on
+    the editor's message row -- leaving you inside a modal editor with nothing
+    to edit (reported from a real session: "not how to get out of the app").
+    `edit` with no name deliberately opens a new document, but that is a text
+    editor you can type into; this one is OVERWRITE-ONLY by design, so a
+    zero-byte document can never be given any content.
+    """
+    seed_hex(v)
+    _to_prompt(v)
+    _keys(v, "clear\r")
+    v.run_for(0.5)
+    _keys(v, "hex\r")
+    assert _wait(v, "usage: hex"), \
+        "bare `hex` said nothing:\n%s" % v.screen_text()
+    text = v.screen_text()
+    # The editor draws its title first; if that is on screen we are inside it.
+    assert "hex: " not in text, \
+        "bare `hex` opened the editor anyway:\n%s" % text
+    # And the shell took the next command, which it could not do from inside.
+    _keys(v, "ver\r")
+    assert _wait(v, "Tardis DOS v"), \
+        "the shell did not get control back:\n%s" % v.screen_text()
+
+
 def test_hex_shows_the_bytes_of_a_file(v):
     """The dump shows the file's real bytes -- including a PRG's load address,
     which is data here, not something to hide."""
