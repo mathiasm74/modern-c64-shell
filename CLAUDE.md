@@ -170,13 +170,43 @@ emulated, so `test_ef_banks.py` exercises the real mechanism -- including
 `help`, whose failure mode (a bank following the dispatch table's name pointers
 into its own code) is not reproducible in VICE on the other target at all.
 
-**Not done yet** (phase 4+): `run`/`basic` still go through the CBM80/reset path
-rather than a plain `$DE02` write; settings have nowhere to live. `fload`
-reports *fast load not supported* against VICE's 1541 -- that is the documented
-Meatloaf-only limitation of our Epyx install payload, not an EF fault.
-**Hardware confirmation of the ROM-off round trip on KFF/Ultimate is the gate**
--- emulating enough to run EF game images is a lower bar than the full register
-behaviour.
+**`run`/`basic` are a single `$DE02` write.** The stock ROMs never went
+anywhere and RAM is untouched, so leaving is: arm the escape, turn the cartridge
+off, `JMP $CF00` (the run stub, which is target-neutral -- it does its own
+IOINIT/RAMTAS/RESTOR/CINT and the BASIC set-up). No CBM80, no reset, no
+`RESTOR` fragility, no stock-KERNAL patching. `basic` gives a real C64 with
+**38911 bytes free**. Three things this pinned down:
+- **The CBM80 plant belongs to the platform, not to `fs.c`.** It moved to
+  `_rbcp_launch_stub` in `launch.s`, which plants it and *falls through* into
+  `_rbcp_launch_stock`; `test_rbcp::test_launch_stub_plants_the_cbm80_and_falls_into_the_swap`
+  pins both the structure and the fall-through (a stray `rts` there would swap
+  without planting, cold-booting BASIC and dropping the loaded program).
+  Planting it from shared code also cost a program loaded at `$8000` its first
+  nine bytes on a target that never reads the structure.
+- **The cartridge must be off BEFORE the stub runs.** RAMTAS's non-destructive
+  walk goes to `$A000`; with ROML still mapped the readback comes from flash,
+  RAMTAS sets MEMSIZ to `$8000`, and BASIC loses 8K. `test_ef_run` asserts
+  `MEMSIZ == $A000`.
+- **The escape hatch lives in the cartridge's `$DF00` RAM** (`$DF40`), not in
+  ROML. The stub writes its address into `$0318` (RUN/STOP+RESTORE) and `$0302`
+  (a program exiting to READY) and *then* the cartridge disappears -- a ROML
+  address would by then be RAM holding the loaded program. `$DF00` stays visible
+  with the ROM off, which is exactly what it is for; both launch paths arm it
+  before switching, because afterwards no code of ours is mapped to do it.
+
+**The escape round trip is tested here and nowhere else** (`test_ef_run.py`): on
+the One ROM build the handover is inert in VICE, so `run`/`basic` and the way
+back are hardware-only.
+
+**Not done yet** (phase 5): settings have nowhere to live (`_nv_*` return
+failure, so persistence is inert). **A typed `EXIT` at the stock BASIC prompt is
+NOT ported** -- on One ROM it is an IGONE wedge patched into the stock KERNAL's
+tape space, and here the stock KERNAL is real silicon with nothing to patch;
+RUN/STOP+RESTORE is the way back. `fload` reports *fast load not supported*
+against VICE's 1541, which is the documented Meatloaf-only limitation of our
+Epyx install payload, not an EF fault. **Hardware confirmation of the ROM-off
+round trip on KFF/Ultimate is the gate** -- emulating enough to run EF game
+images is a lower bar than the full register behaviour.
 
 `make run` delegates to `./run.sh`, which builds the ROM (unless `SKIP_BUILD=1`) and launches `x64sc -kernal build/kernal.bin -basic build/basic.bin`. Run `./run.sh` directly to forward extra VICE arguments, e.g. `./run.sh -warp`. To try the disk commands, attach an image with `DISK=`: `make run DISK=test/data/test.d64` (or `DISK=... ./run.sh`). It mounts a fresh writable *copy* (`build/run-disk.d64`) with `-drive8truedrive`, so a session's `cp`/`rm` never mutate the tracked image. True drive emulation is required — we replaced the KERNAL, so VICE's virtual-device traps never fire. Without a disk, typing `ls` reports a read error after a short timeout rather than wedging.
 

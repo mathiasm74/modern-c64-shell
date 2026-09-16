@@ -32,7 +32,8 @@ void run_program(unsigned int addr);
    meaningful on a One ROM firmware that includes the user/host-control
    plugin (cfg/onerom-stock.json); without it, the protocol calls are inert
    and the JMP through (FFFC) just re-enters our own shell. */
-void rbcp_launch_stock(void);
+void rbcp_launch_stock(void);   /* bare cold swap to stock */
+void rbcp_launch_stub(void);    /* hand over to the run stub at $CF00 */
 
 /* Start address of the most recently loaded program, or 0 if none. Lives in
    BSS, so it is zero at boot. */
@@ -373,7 +374,6 @@ extern unsigned char run_stub_end[];
 static void launch_stock_program(unsigned char mode)
 {
     unsigned char *p = (unsigned char *)0xCF00;     /* run-stub home (RAMTAS-safe) */
-    unsigned char *cart = (unsigned char *)0x8000;
     unsigned int i, n;
 
     TAB_CACHE_OK = 0;               /* the stub lands on the cache's 2nd page */
@@ -388,12 +388,12 @@ static void launch_stock_program(unsigned char mode)
     for (i = 0; i < n; ++i)
         p[i] = run_stub[i];
 
-    cart[0] = 0x00; cart[1] = 0xCF;     /* cold-start vector -> $CF00 */
-    cart[2] = 0x00; cart[3] = 0xCF;     /* warm/NMI vector   -> $CF00 */
-    cart[4] = 0xC3; cart[5] = 0xC2;     /* "CBM80" autostart signature */
-    cart[6] = 0xCD; cart[7] = 0x38; cart[8] = 0x30;
-
-    rbcp_launch_stock();                /* swap; never returns */
+    /* How we reach the stub is the platform's business: the One ROM build
+       plants a CBM80 at $8000 and lets the stock reset autostart it, the
+       EasyFlash build turns the cartridge off and jumps. Doing the plant here
+       cost the loaded program its first nine bytes on a target that has no use
+       for the structure. */
+    rbcp_launch_stub();                 /* hand over; never returns */
 }
 
 void cmd_run(int argc, char *argv[])

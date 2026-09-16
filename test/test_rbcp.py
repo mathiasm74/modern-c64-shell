@@ -514,3 +514,42 @@ def test_run_stub_has_no_absolute_jumps_into_our_rom(v):
         "unrelocated internal jumps in the run stub: %s -- use " \
         "RUN_STUB_BASE + (label - _run_stub)" \
         % ", ".join("$%04X -> $%04X" % (a, t) for a, t in bad)
+
+
+def test_launch_stub_plants_the_cbm80_and_falls_into_the_swap(v):
+    """The CBM80 plant moved out of fs.c into the platform layer (launch.s).
+
+    fs.c used to write the structure itself, which cost a program loaded at
+    $8000 its first nine bytes on a target that has no use for it -- the
+    EasyFlash build reaches the run stub by turning the cartridge off and
+    jumping, with no CBM80 anywhere. Here it is still the only way in: the
+    stock KERNAL reset's cartridge-autostart path is what gets us to $CF00.
+
+    So two things must hold, and neither is visible at runtime in VICE (the
+    swap is inert here): the structure is right, and _rbcp_launch_stub FALLS
+    THROUGH into _rbcp_launch_stock. A stray rts or jmp between them would
+    swap without planting, and the stock reset would cold-boot BASIC and drop
+    the loaded program instead of running it.
+    """
+    (void) = v
+    labels = _labels()
+    for name in ("cbm80", "_rbcp_launch_stub", "_rbcp_launch_stock"):
+        assert name in labels, "%s not exported" % name
+
+    kernal = open(os.path.join(_BUILD, "kernal.bin"), "rb").read()
+    off = labels["cbm80"] - 0xE000
+    assert kernal[off:off + 9] == bytes(
+        [0x00, 0xCF, 0x00, 0xCF, 0xC3, 0xC2, 0xCD, 0x38, 0x30]), \
+        "CBM80 structure is wrong: %s" % kernal[off:off + 9].hex(' ')
+
+    stub, stock = labels["_rbcp_launch_stub"], labels["_rbcp_launch_stock"]
+    assert stub < stock, \
+        "_rbcp_launch_stub ($%04X) must sit before _rbcp_launch_stock ($%04X)" \
+        % (stub, stock)
+    body = kernal[stub - 0xE000:stock - 0xE000]
+    assert body[-2] == 0x10, \
+        "the plant loop must end on its bpl and fall through; found %s" \
+        % body[-2:].hex(' ')
+    for opc in (0x60, 0x4C, 0x6C):          # rts, jmp abs, jmp ind
+        assert opc not in body, \
+            "a $%02X between the plant and the swap breaks the fall-through" % opc

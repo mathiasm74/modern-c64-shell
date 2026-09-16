@@ -741,9 +741,45 @@ to run EF game images is a lower bar.
    Known gap: `fload` reports *fast load not supported* against VICE's 1541.
    That is the documented Meatloaf-only limitation of our Epyx install payload,
    not an EF regression -- a real 1541 needs genuine Epyx drive bytes.
-4. **Port the handover.** `run`/`basic` as `$DE02` writes. This *deletes* work
-   rather than adding it: no CBM80 stub, no reset, no `RESTOR` fragility, no
-   stock-KERNAL patching. `EXIT` becomes a register write instead of a wedge.
+4. ~~**Port the handover.**~~ — done. `run`/`basic` are `$DE02` writes, and it
+   did delete work: no CBM80, no reset, no `RESTOR` fragility, no stock-KERNAL
+   patching. `basic` gives a genuine stock C64 reporting **38911 bytes free**,
+   `basic print 1+1` prints `2`, and a loaded BASIC program survives into stock
+   BASIC and LISTs.
+
+   * **The CBM80 plant moved out of `fs.c` into the platform layer.** It is a
+     One ROM handover detail -- that build only reaches the run stub through the
+     stock reset's cartridge-autostart path -- and doing it in shared code cost a
+     program loaded at `$8000` its first nine bytes on a target with no use for
+     the structure. `launch_stock_program` calls `rbcp_launch_stub()` now; One
+     ROM plants and swaps, EasyFlash turns the cart off and jumps to `$CF00`.
+   * **Order matters on the way out.** The cartridge has to be off *before* the
+     stub runs, because the stub calls RAMTAS, whose non-destructive walk goes
+     up to `$A000`. With ROML still mapped the readback comes from flash,
+     RAMTAS decides RAM ends at `$8000`, and BASIC comes up 8K short. `MEMSIZ ==
+     $A000` is asserted for exactly that reason.
+   * **The escape hatch had to move into the cartridge's `$DF00` RAM.** The stub
+     writes its address into `$0318` (RUN/STOP+RESTORE) and `$0302` (a program
+     exiting to READY) -- and then the cartridge goes away, so a ROML address
+     would be RAM holding the loaded program by the time either vector fired.
+     `$DF00` stays visible with the ROM off, which is what it is there for. It
+     is armed by both launch paths before the switch, since afterwards there is
+     no code of ours mapped to arm it.
+
+   **The escape round trip is now tested, which it never was anywhere.** On the
+   One ROM build the whole handover is inert in VICE, so `run`/`basic` and the
+   way back were hardware-only; here the only moving part is `$DE02`, and
+   `test_ef_run.py` takes the armed stub and watches Tardis come back.
+
+   **Not ported: a typed `EXIT` at the stock BASIC prompt.** On One ROM that is
+   an IGONE wedge patched into the stock KERNAL's tape space, and there is no
+   ROM to patch here -- the stock KERNAL is real silicon. The escape itself is
+   already a register write and RUN/STOP+RESTORE works; making `EXIT` work would
+   need a RAM `$0308` wedge, which is the design rejected in v0.1.84 because
+   BASIC's own init overwrites it. It is achievable -- our stub controls the
+   init, so it could hook `$0308` after `$E453` -- but bare `basic` currently
+   cold-resets and never runs our code again, so it would first have to route
+   every exit through the stub. A separate piece of work, not a register write.
 5. **Settings, then release.** Both artifacts from one tree.
 
 #### Why this is worth doing beyond the hardware support

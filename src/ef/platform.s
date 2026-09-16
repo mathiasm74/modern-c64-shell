@@ -44,7 +44,7 @@ EF_KGETIN  = $9FE4
 ; the constructor tables) out of the image.
 .export __STARTUP__ : absolute
 __STARTUP__ = 1
-        .export _bank_call, _rbcp_launch_stock
+        .export _bank_call, _rbcp_launch_stock, _rbcp_launch_stub
         .export _font_apply, _nv_capability, _nv_read, _nv_write
         .export ef_cold
 
@@ -324,13 +324,41 @@ ef_gosub_end:
 EF_FIRST_BANK = 1               ; ROMH bank 0 is the shell; banks start at 1
 
 ; --- leaving to stock ------------------------------------------------------
-; void rbcp_launch_stock(void) -- name kept so fs.c does not need an #ifdef.
+; Two ways out, both a single register write. Names kept so fs.c needs no
+; #ifdef -- the platform difference lives here, which is the point.
 ;
-; Where the One ROM build swaps flash sets, plants a CBM80 and resets, this
-; writes one register. The program in RAM is untouched and the stock ROMs never
-; went anywhere. The write has to happen from RAM, since $8000 stops existing
-; the instant it lands.
+; void rbcp_launch_stub(void): hand over to the run stub at $CF00, which sets
+; the machine up for stock BASIC (IOINIT/RAMTAS/RESTOR/CINT, then the program).
+; The One ROM build has to plant a CBM80 and reset, because it only arrives
+; through the stock reset vector. Here the stock ROMs never went anywhere and
+; RAM is untouched, so turning the cart off and jumping is the whole thing --
+; no CBM80, no reset, no RESTOR fragility.
+;
+; ORDER MATTERS: the cart must be off BEFORE the stub runs, because the stub
+; calls RAMTAS, whose non-destructive test walks up to $A000. With ROML still
+; mapped at $8000-$9FFF the readback would come from flash, RAMTAS would decide
+; RAM ends at $8000, and BASIC would come up with 8K less memory.
+_rbcp_launch_stub:
+        jsr ef_arm_escape       ; last chance: we are about to unmap ourselves
+        ldx #(ef_to_stub_end - ef_to_stub - 1)
+@cp:    lda ef_to_stub,x
+        sta EF_RAM,x
+        dex
+        bpl @cp
+        jmp EF_RAM
+
+ef_to_stub:
+        lda #MODE_OFF
+        sta EF_CTRL
+        jmp RUN_STUB
+ef_to_stub_end:
+
+RUN_STUB = $CF00                ; fs.c's launch_stock_program copies it there
+
+; void rbcp_launch_stock(void): a bare cold swap -- `basic` with nothing
+; loaded. Straight into the stock reset, which gives a fresh BASIC.
 _rbcp_launch_stock:
+        jsr ef_arm_escape
         ldx #(ef_kill_end - ef_kill - 1)
 @cp:    lda ef_kill,x
         sta EF_RAM,x
@@ -342,28 +370,42 @@ ef_kill:
         lda #MODE_OFF
         sta EF_CTRL
         lda #$00
-        sta $8004               ; scrub the CBM80's RAM shadow so the stock reset
-        jmp STOCK_RESET         ; does not see a phantom cartridge
+        sta $8004               ; nothing plants a CBM80 on this target, but
+                                ; $8000 is ordinary RAM with the cart off, so
+        jmp STOCK_RESET         ; scrub it rather than risk a phantom cartridge
 ef_kill_end:
 
 ; --- the escape hatches c_io.s's run stub expects --------------------------
-; On the One ROM build these swap the flash sets back. Here the stock ROMs never
-; went away, so "returning to the shell" is one register write -- and phase 3
-; deletes most of the stub that calls them, since `run` has nothing to hand over
-; to any more.
+; The run stub writes these two addresses into $0318 (NMI, so RUN/STOP+RESTORE
+; comes home) and $0302 (IMAIN, so a program that exits to READY does too).
+;
+; They CANNOT be addresses in ROML. The stub writes them and then the cartridge
+; is switched off -- from that moment $8000-$9FFF is ordinary RAM holding
+; whatever the loaded program put there, so both vectors would point into
+; garbage and RUN/STOP+RESTORE would crash instead of returning to the shell.
+;
+; So they live in the cartridge's own $DF00 RAM, which the spec keeps visible in
+; every mode INCLUDING with the ROM off -- the one piece of the cartridge that
+; survives its own disappearance, and exactly what it is there for. The symbols
+; are absolute: the stub stores the RAM address, not ours.
 .export rbcp_escape_tramp, rbcp_nmi_escape
-rbcp_nmi_escape:
-rbcp_escape_tramp:
+EF_ESCAPE        = EF_RAM + $40         ; clear of bank_call's stub at $DF00
+rbcp_escape_tramp = EF_ESCAPE
+rbcp_nmi_escape   = EF_ESCAPE
+
+; Install it. Called by both launch entries before the cartridge goes away --
+; there is no later chance, since afterwards this code is not mapped either.
+ef_arm_escape:
         ldx #(ef_back_end - ef_back - 1)
 @cp:    lda ef_back,x
-        sta EF_RAM,x
+        sta EF_ESCAPE,x
         dex
         bpl @cp
-        jmp EF_RAM
+        rts
 ef_back:
         lda #MODE_16K
         sta EF_CTRL             ; cartridge visible again from the next fetch
-        jmp STOCK_RESET         ; finds our CBM80 and re-enters ef_cold
+        jmp STOCK_RESET         ; finds our CBM80 at $8004 and re-enters ef_cold
 ef_back_end:
 
 ; --- features with no EasyFlash equivalent ---------------------------------

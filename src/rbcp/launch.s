@@ -17,6 +17,8 @@
 ; pseudo-regs that might collide with the library's $80-$8F block.
 
 .export _rbcp_launch_stock
+.export _rbcp_launch_stub
+.export cbm80                    ; for the test that pins the plant
 .export rbcp_trampoline               ; exported for tests / inspection only
 
 .include "rbcp_defs.s"          ; constants only (ZP/arg locations, addresses)
@@ -105,11 +107,27 @@ copy_len = $AF
 ; =========================================================================
 .segment "KCODE"
 
+; _rbcp_launch_stub - hand over to the run stub at $CF00 (fs.c's
+; launch_stock_program), as opposed to _rbcp_launch_stock's bare cold swap.
+;
+; On THIS target getting there means planting a CBM80 at $8000 and letting the
+; stock KERNAL reset's cartridge-autostart path find it -- we arrive through a
+; reset, so there is no other way in. The EasyFlash build has a different answer
+; (turn the cart off, JMP $CF00: the stock ROMs never went anywhere and RAM is
+; untouched), which is why the plant lives here in the platform layer and not in
+; fs.c. Planting it there also cost the loaded program its first nine bytes on a
+; target that does not need the structure at all.
+_rbcp_launch_stub:
+        ldx #(cbm80_end - cbm80 - 1)
+@plant: lda cbm80,x
+        sta $8000,x
+        dex
+        bpl @plant
+        ; fall through to the swap; the stock reset picks the structure up
+
 _rbcp_launch_stock:
         ; No arguments. The trampoline hands off through (FFFC) -- the stock
         ; KERNAL reset vector -- so there's nothing to patch on the way in.
-        ; Once we want a planted-CBM80-style autostart, we'll bring back an
-        ; entry argument and patch a JMP in the trampoline.
 
         ; --- Quiet our IRQ source before swapping ------------------------
         ; If we're swapping from the running shell (the late cartridge-detect
@@ -1256,3 +1274,12 @@ rbcp_escape_tramp:
         jsr rbcp_cmd_exit_cmd_resp
 @reboot:
         jmp ($FFFC)                     ; now the shell's reset vector
+
+; The autostart structure the stock KERNAL reset looks for at $8004-$8008, with
+; both its cold and warm vectors pointing at the run stub's home.
+.segment "KCODE"
+cbm80:
+        .byte $00, $CF                  ; cold-start vector -> $CF00
+        .byte $00, $CF                  ; warm/NMI vector   -> $CF00
+        .byte $C3, $C2, $CD, $38, $30   ; "CBM80"
+cbm80_end:
