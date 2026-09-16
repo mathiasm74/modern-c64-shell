@@ -5,6 +5,7 @@
 ; PETSCII into the keyboard buffer. NMI is still just an RTI stub.
 
 .export irq_handler
+.export irq_tick
 .export nmi_stub
 
 ; --- CIA #1 -------------------------------------------------------------
@@ -49,7 +50,25 @@ irq_handler:
         pha
         tya
         pha
+        jsr irq_tick
+        pla
+        tay
+        pla
+        tax
+        pla
+        rti
 
+; -------------------------------------------------------------------------
+; irq_tick - the tick proper, with A/X/Y already saved by the caller.
+;
+; Two entry shapes share it. The One ROM build owns the hardware vector and
+; comes in through irq_handler above. The EasyFlash build runs under the STOCK
+; KERNAL and hooks $0314 instead, where $FF48 has ALREADY pushed A/X/Y and the
+; handler is expected to leave through $EA81 (pull-and-RTI) -- pushing a second
+; frame there and RTI'ing pops the stock handler's registers as a return
+; address, which lands the CPU on a JAM opcode. See src/ef/platform.s.
+; -------------------------------------------------------------------------
+irq_tick:
         lda CIA1_ICR            ; acknowledge CIA #1 (clears the IRQ line)
 
         inc TIME+2              ; advance the 24-bit jiffy clock
@@ -58,14 +77,7 @@ irq_handler:
         bne @scan
         inc TIME
 @scan:
-        jsr scan_keyboard
-
-        pla
-        tay
-        pla
-        tax
-        pla
-        rti
+        jmp scan_keyboard       ; tail call
 
 ; -------------------------------------------------------------------------
 ; nmi_stub - RESTORE is wired to the NMI line. RUN/STOP + RESTORE soft-resets

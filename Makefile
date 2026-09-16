@@ -202,6 +202,47 @@ $(BUILD)/banks/disk_bank.bin: $(BUILD)/banks/crt0_disk.o $(BUILD)/banks/disk_ban
 	      $(BANK_SHARED_OBJ) $(RTLIB) -Ln $(BUILD)/banks/disk_bank.labels -m $(BUILD)/banks/disk_bank.map
 	@echo "  disk_bank.bin : $$(wc -c < $@) bytes"
 
+# TARDIS FOR EASYFLASH (PLAN.md section 7, phase 2). One source tree, a second
+# linker config: ROML $8000 is the always-mapped half (today's KERNAL half),
+# ROMH $A000 bank 0 is the shell (today's BASIC half), and banks 1..n are the
+# existing bank images -- which still need relinking against the EF SVC address,
+# so this artifact currently carries bank 0 only.
+EF_ROML := $(BUILD)/ef/tardis-roml.bin
+EF_ROMH0 := $(BUILD)/ef/tardis-romh0.bin
+EF_OBJ := $(BUILD)/ef/platform.o $(BUILD)/screen.o $(BUILD)/irq.o $(BUILD)/iec.o \
+          $(BUILD)/iec_clkwait.o $(BUILD)/c_io.o $(BUILD)/parse_addr.o \
+          $(BUILD)/svc.o $(BUILD)/kernal_stubs.o $(BUILD)/shell.o $(BUILD)/parser.o \
+          $(BUILD)/commands/builtins.o $(BUILD)/commands/fs.o
+
+$(BUILD)/ef/platform.o: src/ef/platform.s | $(BUILD)
+	@mkdir -p $(BUILD)/ef
+	$(AS) $(ASFLAGS) -o $@ $<
+
+$(EF_ROML) $(EF_ROMH0): $(EF_OBJ) cfg/ef_rom.cfg tools/patch_freemem.py
+	$(LD) -C cfg/ef_rom.cfg -o /dev/null $(EF_OBJ) $(RTLIB) \
+	      -Ln $(BUILD)/ef/tardis.labels -m $(BUILD)/ef/tardis.map
+	@python3 tools/patch_freemem.py $(BUILD) --ef   # boot-screen "rom free" line
+	@echo "  ef roml : $$(wc -c < $(EF_ROML)) bytes   ef romh0: $$(wc -c < $(EF_ROMH0)) bytes"
+
+# Every bank carries the SAME ROML. $DE00 banks both windows, so the shell's
+# always-mapped half is only "always mapped" if each bank repeats it byte for
+# byte -- otherwise bank_call's own `sta $DE00` replaces the instruction stream
+# it is executing. Banks 1..5 are the five Tardis banks (disk/util/files/edit/
+# hex); until phase 3 relinks them their ROMH is $FF filler, which bank_call's
+# "bnk" magic check rejects cleanly instead of running garbage.
+EF_BANK_COUNT := 6
+
+$(BUILD)/ef/romh-filler.bin:
+	@mkdir -p $(dir $@)
+	python3 -c "import sys; open(sys.argv[1],'wb').write(b'\xff'*8192)" $@
+
+$(BUILD)/ef/tardis.crt: $(EF_ROML) $(EF_ROMH0) $(BUILD)/ef/romh-filler.bin tools/make_ef_crt.py
+	python3 tools/make_ef_crt.py $@ 0:l=$(EF_ROML) 0:h=$(EF_ROMH0) \
+	  $(foreach b,1 2 3 4 5,$(b):l=$(EF_ROML) $(b):h=$(BUILD)/ef/romh-filler.bin)
+
+ef: $(BUILD)/ef/tardis.crt
+.PHONY: ef
+
 # The EASYFLASH SPIKE (PLAN.md section 7, phase 1): the proof of mechanism for a
 # second target. Not part of any Tardis image -- `make ef-spike` builds it, and
 # test_ef_spike.py runs it on a STOCK machine with the cart attached.

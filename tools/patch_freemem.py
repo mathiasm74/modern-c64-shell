@@ -9,52 +9,66 @@ against its LOAD area (from cfg/rom.cfg), then write the two numbers into the
 "----" placeholder fields of the `freemem` string in kernal.bin (located via
 build/labels.txt). The string keeps its length, so the binary size is unchanged.
 
-Usage: patch_freemem.py <build-dir>
+Usage: patch_freemem.py <build-dir>          # the One ROM build
+       patch_freemem.py <build-dir> --ef     # the EasyFlash build
 """
 import os
 import re
 import sys
 
 build = sys.argv[1]
+ef = "--ef" in sys.argv[2:]
+
+# Per-target: the linker config, the map/labels the link produced, the two ROM
+# areas the banner reports, and where the patched string physically lives.
+if ef:
+    CFG, MAP, LABELS = "cfg/ef_rom.cfg", "ef/tardis.map", "ef/tardis.labels"
+    AREAS = ("ROML", "ROMH0")
+    LABEL, BIN, BASE = "ef_freemem", "ef/tardis-roml.bin", 0x8000
+else:
+    CFG, MAP, LABELS = "cfg/rom.cfg", "rom.map", "labels.txt"
+    AREAS = ("BASIC", "KERNAL")
+    LABEL, BIN, BASE = "freemem", "kernal.bin", 0xE000
 CAP = 8192
 
 # segment -> load area, from the linker config
 seg_area = {}
-for line in open("cfg/rom.cfg"):
-    m = re.match(r"\s*([A-Z_0-9]+):.*\bload\s*=\s*(BASIC|KERNAL)\b", line)
+for line in open(CFG):
+    m = re.match(r"\s*([A-Z_0-9]+):.*\bload\s*=\s*(%s)\b" % "|".join(AREAS), line)
     if m:
         seg_area[m.group(1)] = m.group(2)
 
 # segment -> size, from the map's segment list
 size = {}
-for line in open(os.path.join(build, "rom.map")):
+for line in open(os.path.join(build, MAP)):
     m = re.match(r"^([A-Z_0-9]+)\s+[0-9A-Fa-f]{6}\s+[0-9A-Fa-f]{6}\s+([0-9A-Fa-f]{6})",
                  line)
     if m:
         size[m.group(1)] = int(m.group(2), 16)
 
-used = {"BASIC": 0, "KERNAL": 0}
+used = dict.fromkeys(AREAS, 0)
 for seg, area in seg_area.items():
     used[area] += size.get(seg, 0)
-free = {"BASIC": CAP - used["BASIC"], "KERNAL": CAP - used["KERNAL"]}
+free = {a: CAP - used[a] for a in AREAS}
 
-# locate `freemem` in kernal.bin
+# locate the freemem string
 addr = None
-for line in open(os.path.join(build, "labels.txt")):
+for line in open(os.path.join(build, LABELS)):
     p = line.split()
-    if len(p) >= 3 and p[0] == "al" and p[2].lstrip(".") == "freemem":
+    if len(p) >= 3 and p[0] == "al" and p[2].lstrip(".") == LABEL:
         addr = int(p[1], 16) & 0xFFFF
 if addr is None:
-    sys.exit("patch_freemem: 'freemem' label not found (export it in reset.s)")
+    sys.exit("patch_freemem: '%s' label not found" % LABEL)
 
-path = os.path.join(build, "kernal.bin")
+path = os.path.join(build, BIN)
 data = bytearray(open(path, "rb").read())
-off = addr - 0xE000
+off = addr - BASE
 text = bytes(data[off:data.index(0, off)]).decode("latin1")
 if text.count("----") != 2:
-    sys.exit("patch_freemem: freemem needs exactly two '----' fields")
-text = text.replace("----", "%4d" % free["BASIC"], 1)
-text = text.replace("----", "%4d" % free["KERNAL"], 1)
+    sys.exit("patch_freemem: %s needs exactly two '----' fields" % LABEL)
+for a in AREAS:
+    text = text.replace("----", "%4d" % free[a], 1)
 data[off:off + len(text)] = text.encode("latin1")
 open(path, "wb").write(data)
-sys.stderr.write("  rom free: basic %d, kernal %d\n" % (free["BASIC"], free["KERNAL"]))
+sys.stderr.write("  rom free: %s\n" % ", ".join(
+    "%s %d" % (a.lower(), free[a]) for a in AREAS))

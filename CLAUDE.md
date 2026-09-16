@@ -74,6 +74,63 @@ The board defaults to `fire-24-e`; override for your hardware: `make onerom ONER
 
 **Commodore 64C port — `make onerom-c64c`:** the cost-reduced C64C carries KERNAL+BASIC as a **single combined 16KB ROM** (`251913` = `[C64 BASIC $A000 | C64 KERNAL $E000]`) in one 28-pin socket, so a **28-pin One ROM** (default `fire-28-a`) replaces it. This is the reason the normal `make onerom-stock` (breadbin, `fire-24-e`) can't target a 28-pin board: the breadbin's KERNAL (U4) and BASIC (U3) are **two separate 24-pin 2364s**, served as a **multi-ROM set over two chip-selects**, which needs the One ROM's **X1 pin** — and the 28-pin boards' headers have no X1 (`fire-28-a` has none; `fire-28-c` has X1/X2 but its 2364 select GPIOs aren't contiguous for that chip type). A single combined chip is one CS, no X1 — so `fire-28-a` serves it (and the loadable overlay sets) fine. The C64C image/layout is **identical to the C128 U32 case**, so `tools/build_c64c.sh` **reuses the `TARGET_C128` build mode** (which is really "single combined ROM image" mode, not C128-machine-specific: command page remapped to `$A000` = image offset 0 of a `[BASIC|KERNAL]` image, stock-swap set at flash slot 4, and boot-time RBCP skipped because its handshake hangs before display-on on the combined layout). The served set 0 is Tardis `rom16k` as one `23128` with the CBM 23128 CS mask (`cs1/cs2=active_low, cs3=active_high`); sets 1–3 are the overlays (duplicated 8KB→16KB); set 4 is genuine stock C64 `[BASIC|KERNAL]` (from `stock-roms/`) that `basic`/`run` swap to. **No char ROM is served** (a 2nd chip would reintroduce the multi-CS/X1 need), so **`font` fails** ("font switch unavailable") — deliberate. Everything else works: overlays fetch over RBCP at command time; `run`/`basic` swap. Board override: `make onerom-c64c C64C_BOARD=…`; `onerom-c64c-flash` programs without a reboot (like the C128, wants a power-off cold boot) and tells you to power-cycle. Shares the `build/` tree (compiles with `TARGET_C128`), so **`make clean` before a plain breadbin build**. **NOT yet validated on real C64C silicon** — only in C128 C64-mode, the same combined-ROM path; sanity-check boot + a couple of overlay commands after flashing.
 
+### EasyFlash target -- `make ef`
+
+`build/ef/tardis.crt` is Tardis as an EasyFlash cartridge, for the C64 Ultimate,
+an Ultimate II+, Kung Fu Flash, or real EF hardware (EF is a *format* those
+devices emulate). One source tree: `cfg/ef_rom.cfg` maps the same segments onto
+**ROML `$8000`** (the always-mapped half, today's KERNAL half) and **ROMH
+`$A000`** (bank 0 = the shell, today's BASIC half; banks 1..n = the Tardis
+banks), `src/ef/platform.s` supplies everything that differs, and
+`tools/make_ef_crt.py` packs the images into a `.crt`. **It is the first fully
+VICE-testable target** -- `x64sc` emulates EF banking and the registers, so the
+bank mechanism and the handover run against the real path instead of a
+harness-seeded stand-in (`test_ef_boot.py`, `-cartcrt … +easyflashjumper`; note
+VICE's jumper sense is the inverse of what the spec's wording suggests -- the
+jumper *disabled* boots the cartridge). See PLAN.md section 7 for the phasing.
+
+Four rules this target imposes, each of which failed silently first:
+
+- **`$DE00` banks BOTH windows**, so every bank must carry a **byte-identical
+  ROML** -- `bank_call` runs from ROML and writes `$DE00` halfway through, and
+  would otherwise be switched out from under itself (boot-time
+  `identify_boot_device()` asks for a bank, so this crashed before the first
+  prompt). The Makefile packs banks 0..5 from the one ROML;
+  `test_ef_boot::test_every_crt_bank_carries_an_identical_roml` asserts it.
+- **No self-modifying code in ROML.** It is flash: the store lands in the RAM
+  underneath and the fetch still comes from ROM. `bank_call` plants its
+  `jsr <entry>` in the **256 bytes of cartridge RAM at `$DF00`** (always visible,
+  in every mode, with the ROM off) and the banner's string pointer goes through
+  zero page.
+- **A mode switch cannot run from the window it switches.** Start-up is in
+  Ultimax at `$FF00`, which becomes the stock KERNAL the instant `$DE02` selects
+  16K -- so it copies a stub to `$0200` and jumps there. `run`/`basic`/the escape
+  hatches do the same through `$DF00`.
+- **A `$0314` hook is not a reset-vector handler.** The stock `$FF48` has already
+  pushed A/X/Y and the handler must exit through **`$EA81`**, not `RTI`. `irq.s`
+  therefore splits the tick into `irq_tick` (registers already saved) with a thin
+  shim per entry shape; `irq_handler` keeps the direct-vector shape for the One
+  ROM build. Getting this wrong popped the stock handler's registers as a return
+  address and JAMmed the CPU at `$FF09`.
+
+**Screen and keyboard stay ours** on this target: `screen.s`/`irq.s` live in ROML
+and hook `$0314`/`$0326`/`$032A`. The stock `$FFD2`/`$FFE4` *are* `jmp ($0326)` /
+`jmp ($032A)`, so a bank calling `$FFD2` lands in our chrout unchanged -- which
+is what keeps the shell looking like Tardis (pet2scr, the C= graphics, the colour
+codes) instead of stock uppercase PETSCII. **No `font`** (a cartridge cannot
+serve a character ROM) and **no NV settings** (`_nv_*` return failure, so
+`settings_load` stays inert) -- both report unavailable rather than pretend.
+`tools/patch_freemem.py` takes `--ef` and patches the ROML/ROMH figures into the
+banner the same way it does BASIC/KERNAL.
+
+**Not done yet** (phase 3+): the bank images are still linked against the One ROM
+SVC address (`$FF80`, which here belongs to the stock KERNAL), so banks 1..5 are
+`$FF` filler and every bank command reports *bank unavailable (5)*; the ~500
+bytes of `STUB_*` in ROML are dead weight on this target; `run`/`basic` still go
+through the CBM80/reset path rather than a plain `$DE02` write. **Hardware
+confirmation of the ROM-off round trip on KFF/Ultimate is the gate** -- emulating
+enough to run EF game images is a lower bar than the full register behaviour.
+
 `make run` delegates to `./run.sh`, which builds the ROM (unless `SKIP_BUILD=1`) and launches `x64sc -kernal build/kernal.bin -basic build/basic.bin`. Run `./run.sh` directly to forward extra VICE arguments, e.g. `./run.sh -warp`. To try the disk commands, attach an image with `DISK=`: `make run DISK=test/data/test.d64` (or `DISK=... ./run.sh`). It mounts a fresh writable *copy* (`build/run-disk.d64`) with `-drive8truedrive`, so a session's `cp`/`rm` never mutate the tracked image. True drive emulation is required — we replaced the KERNAL, so VICE's virtual-device traps never fire. Without a disk, typing `ls` reports a read error after a short timeout rather than wedging.
 
 ## Project layout

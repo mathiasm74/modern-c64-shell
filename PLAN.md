@@ -618,12 +618,15 @@ does not change. Per target:
 * **`font`** — One ROM only; EF cannot serve a character ROM. Document, do not
   emulate.
 
-Undecided, and worth deciding before Phase 3: **screen and keyboard**. On EF the
+**Decided (phase 2): screen and keyboard stay ours.** On EF the
 stock KERNAL is present, so `readline` would work over stock `$FFD2`/`$FFE4` — but
 the shell would then look and behave like stock (PETSCII case, no `pet2scr`, none
 of the C= graphics or colour-code work). The alternative is to keep `screen.s` and
 `irq.s` in ROML and hook the RAM vectors (`$0314`, `$0326`, `$032A`), which costs
-~1.2 KB of ROML and keeps Tardis recognisably Tardis. Recommend the latter.
+~1.2 KB of ROML and keeps Tardis recognisably Tardis. That is what phase 2
+built: `screen.s` and `irq.s` are in ROML, hooked on `$0314`/`$0326`/`$032A`, and
+because the stock `$FFD2`/`$FFE4` are themselves `jmp ($0326)`/`jmp ($032A)`, a
+bank calling `$FFD2` reaches our chrout without knowing anything changed.
 
 #### What phase 1 found (the spike is built and green)
 
@@ -663,9 +666,36 @@ to run EF game images is a lower bar.
    starting until it does. Test with `x64sc -cartef`, then on Kung Fu Flash —
    **emulating enough to run EF game images is a lower bar than the full register
    behaviour, so hardware confirmation of the ROM-off round trip is the gate.**
-2. **Build split.** `TARGET_EF` alongside the existing build, the way
-   `TARGET_C128` already works: one source tree, a second linker config (ROML
-   `$8000` static, ROMH `$A000` banked), a second firmware artifact.
+2. ~~**Build split.**~~ — done (`make ef` -> `build/ef/tardis.crt`). One source
+   tree, `cfg/ef_rom.cfg` (ROML `$8000` static, ROMH `$A000` banked),
+   `src/ef/platform.s` for everything that differs, `tools/make_ef_crt.py` to
+   pack the CRT, `test_ef_boot.py` to run it. **It boots to the Tardis prompt on
+   a stock machine with the cart attached**, draws the same banner (version,
+   brand, free ROM bytes -- `tools/patch_freemem.py` learned the EF layout), and
+   runs resident commands. Sizes: ROML 3723/8192 used, ROMH0 5670/8192.
+
+   Three things had to be right, and each failed silently first:
+
+   * **Every bank carries the same ROML.** Phase 1 already found that `$DE00`
+     banks both windows; what it did not make obvious is that `bank_call` itself
+     runs from ROML and writes `$DE00` halfway through. Boot-time
+     `identify_boot_device()` asked for a bank the CRT did not have, ROML read
+     `$FF`, and the CPU executed garbage. The Makefile now packs the same ROML
+     into banks 0..5, and `test_ef_boot` asserts the invariant on the CRT itself.
+   * **A `$0314` hook is not a reset-vector handler.** `irq.s` pushed A/X/Y and
+     left through `RTI` -- correct when it owns `$FFFE`, fatal here, because the
+     stock `$FF48` has *already* pushed them and expects the handler to exit via
+     `$EA81`. The `RTI` popped the stock handler's registers as a return address
+     and landed the CPU on a JAM opcode at `$FF09`. The tick body is now a shared
+     subroutine (`irq_tick`) with a thin shim per entry shape.
+   * **No self-modifying code in ROML.** The bank-entry `JSR` and the banner's
+     string pointer both started out self-modified; in flash the store lands in
+     the RAM underneath and the fetch still comes from ROM. The `JSR` is planted
+     in the `$DF00` cartridge RAM, the string pointer goes through `$FB`.
+
+   Banks 1..5 are `$FF` filler for now, which `bank_call`'s `"bnk"` magic check
+   rejects cleanly -- `help` reports *bank unavailable (5)* and the shell
+   survives, which is itself a test.
 3. **Port the static half.** Boot/start-up, `bank_call` as a `$DE00` write with
    its trampoline in the `$DF00` RAM, the SVC table over stock-KERNAL IEC, and the
    screen/keyboard decision above.
