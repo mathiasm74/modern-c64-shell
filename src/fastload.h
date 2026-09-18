@@ -85,6 +85,10 @@ void fastload_set_device(unsigned char d);
    drives answer their ROM vector and are excluded (the fingerprint install
    would crash them); Meatloaf's emulated memory reads back $00,$00.       */
 unsigned char fastload_epyx_capable(void);
+/* A drive that runs a real 6502 (stock 1541, Pi1541) rather than fingerprinting
+   the upload: it gets src/drive1541.s, our own drive-side loader. */
+unsigned char fastload_drive_executes(void);
+unsigned char fastload_drive_install(const char *name, unsigned char namelen);
 
 /* Demote the current device to "no fast path" (e.g. after the post-install
    header handshake timed out) so listings don't keep retrying.            */

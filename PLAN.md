@@ -796,6 +796,526 @@ debug on hardware. `x64sc` emulates EasyFlash banking and the registers, so on
 that target the bank mechanism, the shell and the disk commands are all
 exercisable end to end — against the real path, not a harness-seeded stand-in.
 
+### 8. Fast loading on a REAL 1541 -- WORKS (v0.2.40), but only 2.2x of an expected 5x
+
+`src/drive1541.s` gives a drive that genuinely runs 6502 -- a stock 1541, a
+Pi1541 -- real drive-side code instead of the 75 bytes of `$EA` a Meatloaf
+merely fingerprints. Byte-perfect over 16KB / 65 sectors, repeatedly.
+
+**Measured (VICE cycle counter, PAL):**
+
+| | time | rate |
+|---|---|---|
+| standard IEC (`load`) | 49.0 s | 334 B/s |
+| Epyx fast (`fload`) | 22.3 s | 736 B/s |
+
+That is **2.2x**, against the 5-5.5x a real Epyx cartridge gets. The gap is
+understood, and measured rather than guessed. Note the baseline is OUR
+standard-IEC `load`, not the stock KERNAL's -- a stock KERNAL LOAD is a little
+quicker than ours, so against that the ratio would be lower still.
+
+Where the time goes on a 16KB load:
+
+* **install 2.1 s** (the 566-byte drive routine over 18 separate `M-W`
+  command-channel transactions) and **directory search 2.1 s**. One-off, so
+  they barely move the 16KB figure but they dominate a small load -- and they
+  are the reason a 200-byte `fload` takes ~7 s.
+* **transfer 22.3 s**, which splits:
+  * **~30% rotational latency** -- 103 ms per sector, about half a revolution.
+    We read a sector, transmit it (~236 ms), and only then ask for the next, by
+    which time the disk has turned past it. A real Epyx overlaps the two.
+  * **~70% per-byte protocol and turnaround** -- about 940 C64 cycles a byte
+    where the wire itself needs ~60. Only ~70 of those are either side's wait
+    loop (measured), so it is genuine code on both ends: ~180 cycles of host
+    path (sample, descramble, store, loop) and ~190 of drive path (hold, CLK
+    low, build the next byte's four pair values, handshake).
+
+**An attempt at Epyx speed, and where the time actually goes.** Three
+structural changes were tried and all three failed, which is what finally
+pointed at the real bottleneck.
+
+1. **Dropping the per-byte CLK handshake** (it serialises the drive's whole
+   turnaround with the host's -- the host cannot release DATA until the drive
+   says it is ready). Catastrophic: 592 s and 16320 of 16384 bytes corrupted.
+2. **Adopting the reference block structure** -- CLK high for the WHOLE block,
+   per-byte DATA handshake only, CLK dropped at the block's end, exactly as
+   `transmitEpyxBlock` does. Also catastrophic (451 s, everything corrupted).
+   It works for Meatloaf because an ESP32 preps the next byte in ~0 time; our
+   drive needs ~90 cycles after the release, so the host gets back to its own
+   release first and the drive is never in its poll in time. **The reference
+   design needs the drive to be reliably faster than the host, and ours is
+   not.**
+3. **Blanking the screen** (what the real Epyx cartridge does, removing
+   badlines entirely). No effect -- 0.3%.
+
+Masking the C64's 60 Hz keyboard IRQ likewise changes nothing (0.4%).
+
+**The bottleneck is rotational latency, not the protocol.** A PC histogram
+taken during the transfer (sampled via the monitor, so only ~25 usable points
+-- the harness's `run_for` sleeps WALL-CLOCK while VICE runs in warp, so each
+sample covers ~1.5 s of emulated time) puts roughly **70% of the transfer in
+`wait_clk_hi`** -- the host waiting for the drive to deliver the next block --
+and only ~25-30% in the receiver. The arithmetic agrees: 16KB is **65
+sectors** in **20.7 s = 319 ms per sector**, and a 1541 turns at 300 rpm, so
+that is **1.6 disk revolutions per sector**. We are losing most of a
+revolution on every one.
+
+**Why we lose it:** the DOS lays a file out with an interleave chosen so the
+next chained sector arrives under the head just after the drive has finished
+with the current one -- roughly **110 ms** later. Transmitting a block costs
+about **71 ms** (254 bytes at ~280 cycles) plus the per-block job setup and
+handshake. We come in over the interleave window, miss the sector, and pay a
+**full extra revolution (200 ms)** to get it back.
+
+**That reframes the whole problem, and it is good news**: catching the
+interleave instead of missing it would put 16KB at about **7.2 s = 6.3x
+stock**, which is the Epyx figure. It also means per-byte savings matter far
+more than their size suggests -- they do not buy a few percent, they decide
+whether each sector costs 110 ms or 310 ms. **Expect a cliff, not a gradient.**
+
+**The turnaround was then trimmed, and it changed NOTHING.** The cliff model
+above predicted that shaving per-byte cycles would tip each sector from ~310 ms
+to ~110 ms. About 50 cycles a byte came off: the drive stopped rebuilding
+`v_base` from a VIA2 read on every byte and round-tripping through `v_byte`
+(18), the block's byte index moved from `v_off` into Y (8), the ATN check went
+from per-byte to per-block (6), and on the host the display was blanked for the
+transfer so the receiver could skip its badline pacing entirely (~16, plus the
+VIC no longer stealing cycles on every eighth line). On a 254-byte block that
+is ~12.7 ms.
+
+**Per-sector cost was 296.8 ms before and 296.8 ms after** -- identical to the
+tenth of a millisecond, with the transfer still byte-perfect. Not a cliff, and
+not even the linear saving. **The per-byte protocol cost is therefore not on
+the critical path at all**, and no amount of shaving it will help: a sector
+costs ~1.48 disk revolutions whenever we ask for it. The interleave-window
+story was the right shape but the wrong premise -- we are not marginally over a
+threshold, the drive's fetch simply dominates.
+
+Kept from that experiment: the drive-side trimming (14 bytes smaller, same
+speed, still zero bad bytes). **Reverted: the screen blanking and the badline
+skip** -- a visible behaviour change during every load, bought nothing.
+
+**Two measurement lessons, both of which had been corrupting numbers here.**
+The harness's `run_for()` **sleeps WALL-CLOCK while VICE runs in warp**, so a
+completion poll overshoots by ~1.5 s and no amount of averaging fixes it; pass
+`+warp` to turn warp off and the same test times to the hundredth of a second.
+(A "20.73 s" reading earlier in this work was that noise; the true figure has
+always been ~22.7 s.) And per-sector cost is far better isolated by the
+**slope** between a 1-sector and a 17-sector file than by dividing a total,
+because it subtracts the fixed overhead instead of smearing it.
+
+**That fixed overhead is 3.3 seconds** -- the drive install (566 bytes over 18
+`M-W` transactions) plus the directory search -- and it is now the most
+actionable number here. It is invisible against 16KB but it is the ENTIRE cost
+of a small load: `fload small` (one sector) takes 3.6 s, of which 3.3 s is
+setup. Caching the installed loader across calls, or shrinking the upload,
+would matter far more to everyday use than the transfer rate does.
+
+**MEASURED, end to end.** Four independent measurements now agree, and they
+replace every estimate above them:
+
+| quantity | how | value |
+|---|---|---|
+| interleave window | read the chain out of the .d64 | 10 of 21 sectors = **95.2 ms** |
+| transmit, disk out of the loop | ship the same buffer 20 vs 40 times, take the slope | **68.8 ms** a sector |
+| disk wait | drive PC profile (sync search + our job poll) | **~175 ms** a sector |
+| total | cycle counter | ~299 ms a sector |
+
+**The transmission FITS the window** -- 68.8 ms against 95.2, with 26.4 ms to
+spare -- and we miss anyway, waiting ~175 ms where catching would cost ~95. So
+the overshoot is neither the wire nor the rotation: it is **the DOS's own
+per-job overhead**, the ~15% of drive time in `$D5A6`, `$EA0E`, `$EC14`,
+`$F53D` and friends that is neither the sync search nor our code. That is more
+than the 26.4 ms of slack we have, so every sector arrives a little too late
+and costs most of a turn.
+
+**How to measure this, because it took several wrong turns.** The drive's own
+RAM is readable from VICE's monitor with the `8:` memspace (`m 8:051e 0520`), and
+the drive CPU's registers by `device 8:` then `r` -- which is how the profile
+above was taken. **Bound the sampling to the load**: while the memspace is the
+drive you cannot read the C64's screen, so a fixed-count loop keeps sampling
+long after the transfer ends and fills the histogram with the idle DOS
+(`$EC12-$EC2D`, a channel scan). That contaminated the first profile completely
+-- 80% idle loop -- and inverted the conclusion. Switch back to `c:` every 25
+samples and test the screen.
+
+**The DOS job's overhead is now measured directly, and it is the whole
+problem.** Read track 17 at sectors 0, K, 2K ... with 1 byte shipped per sector
+(so transmission is ~free) and find the smallest K that still catches. Slopes
+over 20 extra sectors:
+
+| K | gap | measured | |
+|---|-----|----------|---|
+| 2 | 19.0 ms | 219.5 ms | miss |
+| 6 | 57.1 ms | 254.4 ms | miss |
+| 8 | 76.2 ms | **75.9 ms** | **catch** |
+| 10 | 95.2 ms | **98.8 ms** | **catch** |
+
+So the job needs **57-76 ms of headroom with nothing being transmitted at all**.
+That is the time from the sector's header passing under the head to the job
+reporting complete: the read itself is ~9.5 ms and the GCR decode a few more, so
+**40-60 ms of it is DOS bookkeeping**. Against a 95.2 ms window that leaves ~25
+ms for transmission, and we need 68.8 -- which is exactly why we miss every
+sector, and why trimming the wire never moved the total.
+
+**The budget, therefore:** get post-header work under **26.4 ms** and 254 bytes
+fit the window. ~20 ms is plausible for a lean reader (read + decode, no
+bookkeeping), leaving ~6 ms of margin -- tight, so the wire trimming that was
+worthless before becomes worth keeping afterwards.
+
+**A trap in measuring this:** `sed`-ing an operand like `adc #K` by pattern hits
+every other `adc #` in the file. The first run of this sweep did exactly that,
+corrupted three instructions, and reported that all K values "caught" with the
+reads taking no time at all. Patch through a unique marker instead.
+
+**And the job queue is NOT the fat -- the read job is already lean.**
+Disassembled from the drive ROM in VICE:
+
+```
+$F4D1  JSR $F50A     ; find the header ($F510), then wait for the data sync ($F556)
+$F4D4  read 256 GCR bytes -> ($30),Y
+$F4DF  read 70 more  -> $0100,Y
+$F4ED  JSR $F8E0     ; GCR decode
+$F4F0  checksum check
+```
+
+Five steps, nothing removable. The 57-76 ms is **read (~9.5 ms) + GCR decode +
+verify**, and the decoder at `$F7E6`/`$F8E0` is byte-at-a-time bit shuffling --
+tens of milliseconds for 256 bytes on a 1 MHz 6502. **Epyx calls this same stock
+ROM decode** (it is why a plain .d64 works for it), so it pays the same cost. So
+forcing the queue with `$B0`/`$E0` would save the dispatch and nothing that
+matters: **the drive-side rewrite is not the win, and this supersedes the
+previous section's conclusion.**
+
+**What is left is the wire, and now the budget is exact.** The job needs 57-76 ms
+of the 95.2 ms window, so transmission has to fit in the remaining **19-38 ms**.
+We take **68.8 ms**. That is the whole gap: the wire must get roughly **2-3x
+faster**, from 271 us a byte to about 100-150.
+
+Which is consistent with the one figure we have for the real cartridge: at 2500
+bytes/s overall it moves a 254-byte sector every 101.6 ms = 0.51 turns, meaning
+its transmission fits the same window ours overruns. Epyx is not doing anything
+clever with the disk -- it reads a sector, decodes it with the ROM routine and
+ships it, exactly as we do. **It just gets the bytes out fast enough.**
+
+**THE REAL CARTRIDGE, MEASURED.** Epyx FastLoad v3 was run in VICE against the
+same `bench.d64`, stock ROMs, `LOAD"BENCH",8,1`:
+
+| | time | rate | vs stock | ms/sector | turns |
+|---|------|------|----------|-----------|-------|
+| **Epyx v3** | **9.50 s** | 1725 B/s | **4.77x** | 146.1 | 0.73 |
+| ours | 22.68 s | 722 B/s | 2.00x | 348.9 | 1.74 |
+
+Profiling the DRIVE during Epyx's own load splits that 146 ms:
+
+| where | Epyx | ours |
+|-------|------|------|
+| DOS sync search | 35.1 ms | } |
+| DOS GCR decode | 21.4 ms | } ~70 ms -- the same ROM doing the same work |
+| DOS header search | 7.8 ms | } |
+| **its own drive code (the wire)** | **31.2 ms** | **68.8 ms** |
+
+**The disk side is identical and the wire is 2.2x slower.** That settles every
+open question in this section: the fetch is not the problem, the job queue is
+not the problem, GCR is not the problem. **254 bytes have to leave the drive in
+~31 ms instead of 68.8** -- about **123 us a byte against our 271**.
+
+**Where our 271 us goes:** the four pairs are only ~67 cycles of it. The rest is
+per-byte handshake turnaround -- announce ready, wait for the host's release,
+hold, release, wait for "got it" -- plus `prep_byte` building the next byte's
+four pairs inside that path. Epyx's wire is the same 2-bit protocol at the same
+spacing, so the difference is not the encoding: it is what each side does
+BETWEEN bytes.
+
+**Step 1 done: nibble tables for the pair build.** Pairs are a pure function of
+a nibble, so two 16-entry tables (`t1[n] = (n & $0A) | base`, `t2[n] =
+((n<<1) & $0A) | base`, built once a block) replace the whole shift/mask/ora
+chain in `prep_byte`. Measured on the no-disk slope: **68.8 -> 65.5 ms a
+block**, 271 -> 258 us a byte. Correct, but only ~5% of the ~55% needed.
+
+**And the remaining 2x needs a different per-byte STRUCTURE, not more trimming.**
+At 31 ms a sector the budget is 122 cycles a byte; the four pairs alone are 67,
+leaving ~55 for BOTH turnarounds. The drive would have to go from releasing the
+wire to being ready with the next byte's pairs in ~25 cycles, and per-byte pair
+computation cannot do that however it is written.
+
+**The specific obstacle, worth writing down because every variant hits it:**
+pair 1 must reach `$1800` at read+8, so it has to be in a REGISTER when the poll
+fires -- `lda t1,x` there lands it at read+12. That forces a store-to-variable in
+prep. Fetching the later pairs from the tables inside the 13-cycle gaps then
+needs `ldx v_lo` + `lda t,x` + `sta` = 12 cycles where 13 are available but the
+load must END the gap, leaving 9 for a 4-cycle `ldx` plus a 4-cycle `lda` -- one
+cycle short, every time. Zero-page copies of the pair variables would close it
+(3-cycle loads), but the drive's ZP belongs to the DOS and `$50-$5F` is not free.
+
+**Step 2 done: the send loop is the cartridge's shape now.** Profiling the real
+Epyx drive code (sample the drive PC during ITS load, then disassemble the hot
+RAM addresses) showed a per-byte loop of ~62 cycles against our ~125, and four
+reasons for it, each of which was a deliberate cost of ours:
+
+* **ONE wait a byte** -- `bit $1800 / bne` = 7 cycles -- where we had a CLK
+  announce, a `@holding` re-check and a separate `@got`.
+* **Ten-cycle pair spacing, not thirteen.** Our 13 existed to give a 9-cycle poll
+  three cycles of margin; a 7-cycle poll gets the same margin at 10.
+* **No `ora v_base`.** We spent four cycles a pair preserving ATNA and the
+  device-address bits; bits 5-6 are inputs and ATNA is not wanted mid-transfer,
+  so the cartridge just writes the bare nibble.
+* **`and #$0F`, not `#$0A`** -- bits 2 and 0 are the INPUT lines, so writing them
+  is harmless, and `$0F` is what the shifts already leave behind.
+
+Adopted wholesale: `prep_byte`, `xmit_pairs`, `wait_got`, `build_tables` and the
+`t1`/`t2`/`v_p1..4` state are all gone, the blob is **580 -> 455 bytes**, and the
+transfer is still byte-perfect. **Ten-cycle spacing IS the Meatloaf timing**, so
+`RECV_PAD` is 0 on both paths and the host needs no special case at all.
+
+**But the wire only went 65.5 -> 63.0 ms a block, because the limiter moved.**
+Of 248 us a byte, the four pairs and the drive's whole loop are ~62 cycles;
+**~204 are the host**. That is now the entire remaining gap, and the drive side
+is done -- it matches the cartridge.
+
+**Step 3: the host receiver, and a correction about the cartridge.** From
+notes on the actual `.crt` (`~/Downloads/epyx-fastload-cart-notes.md`): **the
+cartridge never writes `$D011` -- the display stays on.** An exhaustive scan of
+its stores into `$D000-$D3FF` finds only `$D015` (sprites) and `$D01A` (VIC IRQ
+mask), saved, cleared and restored. It gates badlines with a **256-byte table at
+`$8300` indexed by `$D012`**, biased by `7 EOR YSCROLL`, and the live entry
+doubles as the AND mask that releases the lines. "Cost of keeping the screen on:
+nothing." An earlier draft of this section said it blanked, and a blanking
+change was briefly made here on that basis; both were wrong.
+
+What landed instead:
+
+* **The badline gate is a table lookup** (`badtab`, bank build only), ~10 cycles
+  against the raster arithmetic's ~18, with the entry used as the DATA mask so
+  the release costs an `and` rather than an `and #imm`. Screen stays on.
+  We block offsets 1..3 where the cartridge blocks two, and that is not
+  over-caution: its byte is ~63 cycles, about one raster line, so it needs only
+  the line it starts on; ours spans two to three.
+* **The dead per-byte CLK wait is gone** -- the drive answers in ~29 cycles now,
+  so it is always waiting on us.
+* **`next_byte` is bypassed on the common path** (~11 cycles); the framing only
+  matters at a block boundary. Guarded to the bank build, since KLOAD has no
+  room -- it must fit the 684-byte tape region and overflowed when this was
+  unconditional.
+* **Sprites are saved, cleared and restored** across a transfer. They steal VIC
+  cycles exactly as badlines do; the shell never enables one, but a program
+  loaded before a second `fload` can leave `$D015` set.
+
+**22.68 -> 20.93 s, 2.00x -> 2.17x**, still byte-perfect, screen still on.
+
+**The cartridge's own per-byte budget, from the notes' section 7** (and it
+corrects the "one byte per raster line" figure -- a byte is ~1.7 lines):
+
+| stage | cycles |
+|-------|--------|
+| `JSR $8425` + raster gate (`LDY $D012` / `LDA ($94),Y` / `BEQ`) | 17 |
+| release lines, `ORA #$20 / TAY`, 4x `NOP` | 20 |
+| 4 samples, `LDA $DD00` + 3x (`LSR/LSR/NOP/EOR $DD00`) | 34 |
+| re-assert, `EOR $A3 / TAY / LDA $8458,Y`, `RTS` | 19 |
+| caller: `STA ($AE),Y`, `INC $AE` (+`INC $AF`), `DEX`, `BNE` | ~19 |
+| **total** | **~109** |
+
+So the target is **109 cycles a byte, not 63**, and we were at 161 -- a 1.5x gap,
+not the 2.5x assumed above. It also answers the three questions worth asking of
+any such comparison: it **does** re-assert DATA every byte, its descramble
+lookup is **after** the sample window, and it **does** pay a per-byte
+`JSR`/`RTS`. Its structure is ours. The difference was almost entirely in the
+CALLER: theirs is four instructions and a `DEX`, ours carried `BLK` in memory
+AND a 16-bit `TOTL`/`TOTH` running total beside `DST`.
+
+**Dropped the running total (bank build only): ~10 cycles a byte.** `DST`
+advances with every stored byte, so the total is `DST - LADR`, and both readers
+of it -- the <3-byte check at EOF and the progress dots -- are per BLOCK and can
+subtract there. KLOAD keeps the counter: deriving it costs three bytes it does
+not have in the 684-byte tape region.
+
+**Also taken: the cartridge's re-assert trick.** Its stage 2 computes the
+ASSERTED line value once (`ORA #$20 / TAY`) inside padding it is burning anyway,
+so stage 4's re-assert is a single `STY $DD00`. Ours was a read-modify-write
+every byte (`lda`/`ora`/`sta`), and it also forced the folded value to be
+stashed in X and pulled back with `txa` afterwards, since the `lda` clobbered A.
+Both are gone: the padding does `ora #B_DATA / tay`, the re-assert is `sty`, and
+the fold stays in A. **~10 cycles a byte, and the sample offsets are untouched**
+-- the padding is ten cycles either way. KLOAD keeps the old sequence.
+
+**Where the wire stands: 68.8 -> 42.0 ms a block**, measured on the no-disk
+slope, with the screen ON throughout. (A blanked build measured 41.0, so the
+badline table gives back nearly everything blanking did, legitimately.) The
+cartridge's transmit is ~33 ms, so we are ~27% off rather than the 2x we
+started from.
+
+**20.93 -> 20.05 s, 2.26x stock, byte-perfect.**
+
+**SIDE BY SIDE WITH THE REAL CARTRIDGE**, both profiled the same way (sample
+the drive's PC during its own load):
+
+| per sector | Epyx (146.1 ms) | ours (274 ms) |
+|---|---|---|
+| job-wait spin, own code | *(within its 31.2)* | **80.3** |
+| DOS sync search | 35.1 | **76.7** |
+| DOS GCR decode | 21.4 | 16.4 |
+| DOS read GCR bytes | 3.9 | 5.5 |
+| transmit + host-wait | ~31 | ~42 |
+| **disk phase** | **~95 ms = 0.48 turns** | **~179 ms = 0.90 turns** |
+
+Our code is not slower -- the decode even comes in under theirs. The disk phase
+is nearly a whole extra revolution, which is the miss itself, not slow work.
+
+**And the accounting says we should NOT be missing.** From sector N's header to
+issuing the job for N+1: read 5.5 + decode 16.4 + transmit 42 = **63.9 ms**
+against a 95.2 ms gap, i.e. 31 ms of slack. So one of those inputs had to be
+wrong, and the way to find out is to measure that span directly rather than
+assemble it: read track 17 at sectors K apart **with the real 254-byte payload**
+and find the smallest K that still catches.
+
+| K | gap | measured | |
+|---|-----|----------|---|
+| 8 | 76.2 ms | 277.4 ms | miss |
+| 12 | 114.2 ms | 170.6 ms | miss |
+| **16** | **152.3 ms** | **151.7 ms** | **catch** |
+| 20 | 190.4 ms | 197.6 ms | catch |
+
+**The true span is 114-152 ms, not 63.9.** More than double the sum of its
+parts, against a 95.2 ms window -- which is the whole reason we miss every
+sector, and why per-byte trimming kept not moving the total. Roughly 50-90 ms
+is unaccounted for by read + decode + transmit.
+
+**MEASURE ON THE LINEAR METRIC, NOT END TO END.** This deserves to be a rule,
+because getting it wrong wasted several changes here. Everything below the
+interleave threshold is invisible in the total: a change worth 4 ms a block
+moves a 20 s load by nothing at all, because the sectors that missed still miss.
+So a "revert anything that does not show" policy **guarantees you never cross
+the threshold**, since crossing it requires accumulating exactly those
+individually-invisible gains. Judge each change on the **no-disk slope** (ship
+the same buffer 20 vs 40 times, take the difference) which has no cliff in it,
+and keep anything correct that improves it.
+
+Two changes were nearly discarded that way and are kept:
+
+* **The badline gate blocks TWO offsets, not three.** What has to be clear is the
+  TIMED window -- gate to last sample, ~62 cycles -- not the whole ~127-cycle
+  byte, whose untimed ends can take DMA without harm. So the start line must be
+  neither the badline nor the one before it: `YSCROLL-1` and `YSCROLL`. That is
+  what the cartridge blocks, for the same reason.
+* **CIA1's timer IRQ is masked for the transfer** (`$7F -> $DC0D`, restored to
+  `$81`), as the cartridge does. Our receiver masks interrupts per BYTE with
+  `php`/`sei`/`plp`, so between bytes they are back on and the 60 Hz keyboard
+  IRQ lands inside a block.
+
+Together: **42.0 -> 40.9 ms a block**, and 16KB byte-perfect over three runs.
+Cumulative for the session: **68.8 -> 40.9**, against the cartridge's ~31.
+
+**The SEI hypothesis is DEAD.** The idea was that holding interrupts off for a
+whole block (~43 ms) made the drive's controller lose its place, so the penalty
+would scale with transmit time. Tested by splitting each sector into TWO blocks
+of 127 with a `cli` window between them -- the host needs no change, since it
+reads a length byte per block already, so two blocks of 127 look exactly like
+one of 254. Result: **20.25 s against 20.05**, i.e. slightly worse for the extra
+handshake, and byte-perfect. Giving the controller a mid-sector window buys
+nothing.
+
+**What the numbers point at instead: RASTER RESONANCE in the badline gate.**
+
+| | code | measured | gate stall |
+|---|------|----------|-----------|
+| cartridge | 111 cyc/byte | 31 ms/block = 122 cyc | **11** |
+| ours | 127 cyc/byte | 43 ms/block = 169 cyc | **42** |
+
+We stall at the gate nearly four times as much, and the reason is the ratio of
+byte length to raster line (63 cycles PAL):
+
+* the cartridge's byte is **111/63 = 1.76 lines**, so the raster offset drifts
+  quickly and its stalls are spread thin;
+* ours is **127/63 = 2.02 lines**, so the offset advances by almost exactly 2
+  every byte. Against an 8-line badline period that walks 0, 2, 4, 6, 0 ... --
+  hitting a blocked offset every fourth byte -- and because the drift is only
+  0.016 lines a byte it takes ~60 bytes to escape a bad phase. The resonance is
+  what makes the stall long, not just frequent.
+
+**31 cycles a byte of stall is ~8 ms a block, which is the ~11 ms the threshold
+needs.** And the fix falls out of the same arithmetic: **cutting ~16 cycles both
+shortens the byte and moves the ratio to ~1.76**, the cartridge's own figure. The
+16 cycles are known and enumerated above -- `php`/`plp` around every byte (7,
+which the cartridge does not pay at all: it masks CIA1 once per load) and the
+caller's block counter in memory rather than in X (10). The descramble already
+indexes through Y, so X is free the moment the badline gate stops using it.
+
+**The restructure is DONE.** Four pieces, bank build only:
+
+* the badline gate indexes through **Y**, freeing X;
+* `_epyx_recv_byte` no longer does `php`/`sei`/`plp` -- `_epyx_recv_prg` holds
+  SEI for the whole transfer, as the cartridge masks CIA1 once per load;
+* the block's byte count lives in **X** across the call, so the inner loop ends
+  `dex / bne` (5 cycles) where testing and decrementing a memory `BLK` took 12;
+* `block_hdr` is split out of `next_byte` so the boundary work is reached only
+  at a boundary. KLOAD keeps the monolithic version -- the split costs a
+  `jsr`/`rts` pair and it has **zero** bytes spare in the 684-byte tape region,
+  which the build reports as a one-byte overflow.
+
+**The trap, and it is a good one:** `_epyx_recv_byte` ended with `ldx #$00`,
+cc65's char-return convention. That wiped the new counter on every byte and the
+loop ran for ever. Both C callers (`dir.c`) assign to an `unsigned char`, which
+needs only A, so it is guarded out on this build -- and **X being preserved is
+now part of the routine's contract**. The failure mode is a hang rather than
+corruption, so it surfaces on the first run.
+
+**Wire: 40.9 -> 36.9 ms a block**, 161 -> 145 us a byte, exactly the ~16 cycles
+predicted. Byte-perfect, and the code is now ~111 cycles a byte -- the
+cartridge's own figure.
+
+**The resonance theory only half held.** At ~111 cycles the byte is 1.76 raster
+lines, the same ratio the cartridge has, yet our gate stall only fell from 42 to
+34 cycles where the cartridge pays 11. So the ratio is not the whole story and
+something else about our gate stalls longer. That is the next thread, and it is
+worth ~9 ms a block if it comes out.
+
+**Two of its tricks we have not taken:**
+
+* **The count byte rides in the block's own link field.** `$0591 DEX / STX
+  $0401` overwrites the chain link with the byte count, so it goes out as the
+  first byte of the block's burst: no separate length transaction and no extra
+  handshake. We still send the length as its own byte.
+* **The drive reuses the ROM's parser wholesale** -- it fills `$0200` with the
+  filename and calls `$C146` (PARSXQ), then copies the buffer the ROM left. That
+  is how its resident loader fits in 256 bytes and why the first block costs it
+  nothing. Our `find_file` walks the directory itself.
+
+**The host's per-byte fat, in likely order:** the badline pacing (~20 cycles, and
+the real cartridge simply BLANKS THE SCREEN so it has none), `php`/`plp` and
+`jsr`/`rts` around every byte (~20), `next_byte`'s block accounting, and the
+store loop. The sample window itself is 44 cycles (+14/+24/+34/+44) and is not
+negotiable. Budget: the host must reach ~80 cycles a byte for 31 ms a block.
+
+**The attack, in order:**
+1. **Batch the pair precomputation.** Build a chunk of bytes' pairs up front so
+   `prep_byte` leaves the inter-byte path entirely; the drive then holds CLK low
+   only once per chunk instead of once per byte.
+2. With the drive always ready inside a chunk, **the per-byte CLK handshake can
+   go** -- which is what failed before (see above) purely because our drive could
+   not prep in time. Batching is the precondition that experiment lacked.
+3. Keep the earlier per-byte trimming, which was worthless while we were deep in
+   the miss region but is margin once we are near the threshold.
+
+Target 31 ms a sector. At that point the cycle fits where Epyx's fits, and 16KB
+should land near 9-10 s.
+
+**Method note:** the drive's `@ready` poll cannot be instrumented in place.
+Adding a counter takes the loop from 9 cycles to 15 and the transfer degrades
+25-fold -- the loop's length is part of the protocol.
+
+**Also still open:** confirming on real hardware. VICE models the drive CPU and
+ROM faithfully but not the analogue end (motor spin-up, head settling); the
+loader waits on the job queue for those, so the risk is low but untested.
+
+### 9. `load --slow` -- fold `fload` into `load` (decided, not started)
+
+Fast by default, `--slow` to force the bit-perfect standard-IEC path: the fast
+one is the more helpful default. Needs a small shared option parser (there is
+none -- `parse_line` just splits on whitespace, so `--slow` arrives as an
+ordinary argv entry); it can live in the disk bank, so ~0 resident cost. Worth
+doing AFTER the 1541 drive code works, since "fast by default" is a promise we
+can only keep for drives we can actually go fast on.
+
 ### 6. Type-in support (magazine listings)
 
 Entering a type-in program from a magazine, with the checking those listings were

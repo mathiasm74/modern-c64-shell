@@ -143,28 +143,69 @@ def test_ef_editor_banks_open_a_file(v):
         _run(sv, "edit readme", "C64 SHELL TEST DISK")
 
 
-def test_fload_declines_a_real_drive_without_killing_it(v):
-    """Installing the Epyx loader ends in an M-E: the drive RUNS what we sent.
+def _make_multisector(path):
+    """A 700-byte PRG: three sectors, so block boundaries are exercised."""
+    import shutil, subprocess
+    if not shutil.which("c1541"):
+        return False
+    shutil.copyfile(_DISK, path)
+    prg = os.path.join(os.path.dirname(path), "_bigprog.prg")
+    open(prg, "wb").write(bytes([0x00, 0x30]) +
+                          bytes((i * 7 + 3) & 0xFF for i in range(700)))
+    r = subprocess.run(["c1541", "-attach", path, "-write", prg, "bigprog"],
+                       capture_output=True)
+    return r.returncode == 0
 
-    What we send is 75 bytes of $EA fingerprint filler that Meatloaf matches by
-    checksum and never executes -- so a drive that genuinely executes it (a real
-    1541, Pi1541, SD2IEC) sleds off the end and hangs until it is reset.
-    fastload_epyx_capable() exists to stop exactly that, and dir.c has always
-    called it, but disk_fload did not -- which is also the path `run <name>`
-    takes. VICE's true drive emulation runs a real 6502 with real 1541 ROM, so
-    it reproduces this faithfully: before the fix, `ls` worked, `fload`
-    reported "not supported", and the drive was then gone.
+
+def test_fload_is_fast_on_a_real_1541(v):
+    """The drive-side loader (src/drive1541.s), end to end.
+
+    VICE's true drive emulation runs a real 6502 with real 1541 ROM, so the
+    code we M-W and M-E genuinely executes -- the only reason this is testable.
+    Before it existed a real drive had nothing to run and fell back to stock
+    speed (and, briefly, hung on the M-E).
+
+    MULTI-SECTOR is the case that matters. Both of the last two bugs lived at
+    the block boundary and neither shows on a single sector: the drive briefly
+    read CLK as "ready" with nothing behind it, and -- the subtle one -- the
+    host chose a badline-safe raster and THEN waited ~150 cycles for the drive,
+    so the safe offset was stale by sampling time and a badline could steal 40
+    cycles mid-byte. Both presented as exactly one bad byte at a sector's first
+    offset, about one boundary in twenty.
     """
     (void) = v
     if not _HAVE:
         print("      (skipped: no tardis.crt, stock ROMs or disk)")
         return
-    with _vice() as sv:
+    big = os.path.join(_HERE, "data", "_scratch_big.d64")
+    if not _make_multisector(big):
+        print("      (skipped: c1541 not available)")
+        return
+    want = open(os.path.join(_HERE, "data", "_bigprog.prg"), "rb").read()[2:]
+    sys.path.insert(0, os.path.join(_HERE, "lib"))
+    from vice import Vice
+    with Vice(kernal=_STOCK_K, basic=_STOCK_B, disk=big,
+              extra_args=["-cartcrt", _CRT, "+easyflashjumper"]) as sv:
         _boot(sv)
-        _run(sv, "ls", "README")                    # the drive starts healthy
         _type(sv, "clear\r")
-        _type(sv, "fload prog\r")
-        assert "not supported" in sv.screen_text(), \
-            "expected fload to decline VICE's 1541:\n%s" % sv.screen_text()
-        # The point of the test: it must still be there afterwards.
-        _run(sv, "ls", "README", tries=10)
+        _type(sv, "fload bigprog\r")
+        for _ in range(12):
+            if "oaded $3000" in sv.screen_text() or "fail" in sv.screen_text():
+                break
+            sv.run_for(1.0)
+        got = bytes(sv.read_memory(0x3000, len(want)))
+        bad = [i for i, (a, b) in enumerate(zip(got, want)) if a != b]
+        assert not bad, (
+            "fast load corrupted %d of %d bytes, first at offset %d%s"
+            % (len(bad), len(want), bad[0],
+               " -- that is a sector's first byte, i.e. the block boundary"
+               if bad[0] >= 252 and (bad[0] - 252) % 254 == 0 else ""))
+        # ...and the drive is still on the bus afterwards.
+        _type(sv, "clear\r")
+        _type(sv, "ls\r")
+        for _ in range(8):
+            if "BIGPROG" in sv.screen_text().upper():
+                break
+            sv.run_for(1.0)
+        assert "BIGPROG" in sv.screen_text().upper(), \
+            "the drive did not survive the fast load:\n%s" % sv.screen_text()

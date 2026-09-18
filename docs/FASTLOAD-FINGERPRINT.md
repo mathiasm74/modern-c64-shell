@@ -113,3 +113,16 @@ targeting V2/V3 covers both firmwares with one code path.
 - Cart byte reference (real-1541 path, if ever needed):
   `svenpetersen1965/Epyx-FastLoad` is a *hardware* rebuild (no drive-code source
   — needs an original EPROM dump).
+- **For the ROTATIONAL problem specifically** (PLAN.md section 8 -- the drive's
+  sector fetch, not the wire, is what costs us): sd2iec and Meatloaf are both
+  solid-state and have nothing to say about it. The real-1541 loaders do --
+  Krill's loader, Bitfire, Spindle, Transwarp, and Linus Akesson's "GCR decoding
+  on the fly" (linusakesson.net/programming/gcr-decoding). The technique is to
+  bypass the DOS job queue, decode GCR inline, read whatever sector passes under
+  the head rather than a chosen one, and reassemble by sector number on the
+  host. **Akesson's article is his OWN technique (it became Spindle), not an
+  analysis of Epyx** -- nobody here has ever measured the real cartridge's drive
+  side. His "three revolutions for tracks 18-35, four for tracks 1-17" EXCLUDES
+  serial transfer, so compare it against our read-only 0.50 revolutions a sector
+  (~9.5 per 19-sector track), which makes the fetch gap ~3x -- not the 7-9x you
+  get by comparing his read-only figure with our 1.48-with-transfer one.

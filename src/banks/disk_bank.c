@@ -61,6 +61,10 @@ static void puts_bank(const char *s)
  *   $0370       name length        $0399  status (see DM_* below)
  *   $0371-$0398 name (<=40)        $039A  load_start     $039C  load_end
  */
+/* fastload_recv.s: 0 = Meatloaf sample timing, nonzero = real-1541 timing */
+#define RECV_PAD (*(unsigned char *)0x03A6)
+#define VIC_SPREN (*(unsigned char *)0xD015)
+#define CIA1_ICR  (*(unsigned char *)0xDC0D)
 #define DM_NLEN  (*(unsigned char *)0x0370)
 #define DM_NAME  ((unsigned char *)0x0371)
 #define DM_STAT  (*(unsigned char *)0x0399)
@@ -162,6 +166,13 @@ void iec_clrchn(void);
 unsigned char iec_status(void);
 void __fastcall__ fastload_set_device(unsigned char d);
 unsigned char fastload_epyx_capable(void);
+unsigned char fastload_drive_executes(void);
+/* src/drive1541.s -- our own drive-side loader, for a drive that runs a real
+   6502: a stock 1541, a Pi1541. It finds the file, walks its sector chain and
+   ships it with the wire protocol fastload_recv.s already speaks. Verified in
+   VICE against true drive emulation -- a real 6502 running real 1541 ROM --
+   byte-perfect over 16KB and 65 sectors, repeatedly. */
+unsigned char fastload_drive_install(const char *name, unsigned char namelen);
 void fastload_epyx_install(void);
 void fastload_epyx_mark_unsupported(void);
 unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen);
@@ -169,6 +180,7 @@ unsigned int __fastcall__ epyx_recv_prg(void);
 
 void disk_fload(void)
 {
+    unsigned char sprites;
     unsigned int end;
     char **argv = BD_ARGV;
 
@@ -180,30 +192,63 @@ void disk_fload(void)
     DM_NLEN = fold_name(DM_NAME, argv[1]);
 
     fastload_set_device(MB_DEV);
-    /* PROBE BEFORE INSTALLING. Installing ends in an M-E, i.e. the drive
+    /* Two kinds of drive, two payloads, chosen by the probe.
+       A Meatloaf-class drive CHECKSUMS what we upload and answers with its own
+       implementation, so it gets the 75-byte fingerprint. A drive that runs a
+       real 6502 gets real code (src/drive1541.s), which is what makes a stock
+       1541 fast -- before it existed there was nothing to give one.
+       PROBE BEFORE INSTALLING. Installing ends in an M-E, i.e. the drive
        EXECUTES what we uploaded -- and what we upload is 75 bytes of $EA
        fingerprint filler for Meatloaf, not real 6502. A drive that genuinely
        runs it (a real 1541, Pi1541, SD2IEC) sleds off the end and hangs until
        it is reset: `ls` worked, `fload` reported "not supported", and the
        drive was then dead. dir.c has always probed; this path did not, and it
        is the one `run <name>` uses too. */
-    if (!fastload_epyx_capable()) {
+    RECV_PAD = 0;                   /* Meatloaf sample timing by default */
+    if (fastload_epyx_capable()) {
+        fastload_epyx_install();
+        if (iec_status() & ST_NODEV) {
+            report_no_device();
+            return;
+        }
+        if (fastload_epyx_send_header((const char *)DM_NAME, DM_NLEN) != 0) {
+            fastload_epyx_mark_unsupported();
+            puts_bank("fast load not supported");
+            k_chrout(CR);
+            return;
+        }
+    } else if (fastload_drive_executes()) {
+        /* The name goes up with the code, so there is no header to send: the
+           drive never has to receive, only transmit. */
+        if (fastload_drive_install((const char *)DM_NAME, DM_NLEN) != 0) {
+            report_no_device();
+            return;
+        }
+        /* The drive path now speaks the SAME ten-cycle wire as Meatloaf --
+           see src/drive1541.s -- so it uses the same sample offsets and
+           needs no per-byte CLK wait. RECV_PAD stays 0. */
+    } else {
         puts_bank("fast load not supported");
         k_chrout(CR);
         return;
     }
-    fastload_epyx_install();
-    if (iec_status() & ST_NODEV) {
-        report_no_device();
-        return;
-    }
-    if (fastload_epyx_send_header((const char *)DM_NAME, DM_NLEN) != 0) {
-        fastload_epyx_mark_unsupported();
-        puts_bank("fast load not supported");
-        k_chrout(CR);
-        return;
-    }
+    /* Sprites steal VIC cycles exactly as badlines do, and the byte is
+       cycle-locked, so any sprite enabled across a transfer would corrupt it.
+       The shell itself never enables one, but a program loaded before a second
+       fload can leave $D015 set -- so save, clear and restore it, the way the
+       real cartridge does. Once per transfer; nothing per byte. */
+    sprites = VIC_SPREN;
+    VIC_SPREN = 0;
+    /* Mask CIA1's timer IRQ for the transfer, as the real cartridge does
+       ($7F -> $DC0D once per load). The receiver masks interrupts per BYTE with
+       php/sei/plp, so BETWEEN bytes they are back on and the 60 Hz keyboard IRQ
+       can land inside a block and stretch it. Killing it at the source costs
+       nothing per byte. Restored to the KERNAL's $81 after. */
+    CIA1_ICR = 0x7F;
+    (void)CIA1_ICR;
     end = epyx_recv_prg();
+    CIA1_ICR = 0x81;
+    VIC_SPREN = sprites;
     if (end == 0) {                     /* fewer than 3 bytes -> failure */
         /* $03A4: the receiver stopped because the program reached this bank's
            own RAM. Say so -- "fast load failed" would send the user hunting a

@@ -194,6 +194,7 @@ $(BUILD)/banks/disk_bank_c.o: $(BUILD)/banks/disk_bank.s
 # receiver's badline pacing exists to remove.
 BANK_SHARED_OBJ := $(BUILD)/banks/bk_iec_clkwait.o \
                    $(BUILD)/banks/bk_fastload_recv.o $(BUILD)/banks/bk_fastload_send.o \
+                    $(BUILD)/banks/bk_drive1541_blob.o \
                    $(BUILD)/banks/bk_fastload.o $(BUILD)/banks/bk_dir.o \
                    $(BUILD)/banks/bank_svc_alias.o
 
@@ -394,6 +395,20 @@ $(BUILD)/kload.bin $(BUILD)/kload2.bin $(BUILD)/kload3.bin: $(KLOAD_OBJ) cfg/klo
 
 # The blob is .incbin'd, so the ROM must wait for it.
 $(BUILD)/kload_blob.o: $(BUILD)/kload.bin $(BUILD)/kload2.bin $(BUILD)/kload3.bin
+
+# --- the DRIVE-side fast loader ----------------------------------------------
+# 6502 for the DRIVE's CPU, linked to run at $0500 in its RAM and carried in the
+# disk bank as data (src/drive1541_blob.s .incbin's it). The host M-W's it up
+# and M-E's it; see src/drive1541.s for the wire protocol and the line polarity.
+$(BUILD)/drive1541.o: src/drive1541.s | $(BUILD)
+	$(AS) $(ASFLAGS) -o $@ $<
+
+$(BUILD)/drive1541.bin: $(BUILD)/drive1541.o cfg/drive1541.cfg
+	$(LD) -C cfg/drive1541.cfg -o $@ $< -Ln $(BUILD)/drive1541.labels
+	@echo "  drive1541.bin : $$(wc -c < $@) bytes, runs at \$$0500 in the drive"
+
+# .incbin, so the blob must exist before the bank assembles it.
+$(BUILD)/banks/bk_drive1541_blob.o: $(BUILD)/drive1541.bin
 
 # The UTIL BANK: tab completion (src/complete.s), assembled into its own image.
 # Separate from the disk bank because it needs no cc65 runtime at all, so it

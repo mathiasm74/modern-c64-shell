@@ -2,16 +2,13 @@
 
 `run <name>` loads the named PRG over the Epyx fast path (exactly like
 `fload`) and then hands it to a real stock environment to RUN -- bare `run`
-still re-runs whatever was loaded last. Both the Epyx transfer and the stock
-swap are hardware-only (VICE's 1541 can't model Epyx mode, and there's no One
-ROM to swap into), so the load-and-run itself is hardware-tested -- the same
-boundary as `fload`/`run`.
+still re-runs whatever was loaded last.
 
-What IS observable here is the resident routing: a bare `run` with nothing
-loaded reports it, and `run <name>` enters the fast-load path (the emulated
-1541 isn't Epyx-aware, so the ready-for-header handshake times out and the
-load is reported failed) and leaves the shell alive -- proving the filename
-argument is wired to the loader rather than the "nothing loaded" path.
+Only the NO-ARGUMENT case lives here, and that is deliberate. `run <name>`
+now genuinely fast-loads under VICE (src/drive1541.s), so it goes on to the
+stock swap -- which is inert without a One ROM and leaves the machine in the
+documented CBM80 reboot loop. That would poison anything sharing this VICE,
+so it has a module of its own: test_run_fastload.py.
 
 The fast-load path is in the DISK BANK now (docs/ROM-EXPANSION.md), so the
 tests seed it first -- see seed_disk_bank. Without it `run <name>` correctly
@@ -43,26 +40,19 @@ def _wait_any(v, needles, tries=12, chunk=0.5):
     return False
 
 
+def _at_prompt(v, tries=20):
+    """Wait for a live prompt. `run <name>` reboots the machine in VICE (the
+    stock swap falls through to the reset vector), so a test that follows one
+    cannot assume the shell it was given is still the shell it has."""
+    for _ in range(tries):
+        v.run_for(0.3)
+        if "8>" in v.screen_text():
+            return True
+    return False
+
+
 def test_run_no_arg_reports_nothing_loaded(v):
-    v.run_for(0.3)
+    assert _at_prompt(v), "no prompt to type at\n%s" % v.screen_text()
     _type(v, "run")
     assert _wait_any(v, ["nothing loaded"]), \
         "bare run with nothing loaded should say so\n%s" % v.screen_text()
-
-
-def test_run_name_enters_fastload_and_survives(v):
-    # The emulated 1541 isn't Epyx-aware, so the fast-load handshake times out
-    # and the load is reported failed. The point is the name routed into the
-    # fast-load path (NOT "nothing loaded") and the shell came back.
-    v.run_for(0.3)
-    seed_disk_bank(v)
-    _type(v, "run prog")
-    assert _wait_any(v, ["fast load not supported", "fast load failed",
-                         "not present", "read error"]), \
-        "run <name> did not enter the fast-load path\n%s" % v.screen_text()
-    assert "nothing loaded" not in v.screen_text(), \
-        "run <name> wrongly took the no-program path\n%s" % v.screen_text()
-    # shell still alive after the failed fast load
-    _type(v, "ver")
-    assert _wait_any(v, ["Tardis DOS v"]), \
-        "shell unresponsive after run <name>\n%s" % v.screen_text()

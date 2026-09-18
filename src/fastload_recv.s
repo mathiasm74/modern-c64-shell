@@ -114,8 +114,16 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
 ; byte in A (X=0). Masks IRQs across the timed window.
 ; ----------------------------------------------------------------------------
 .proc _epyx_recv_byte
+.ifndef BANK_BUILD
         php
         sei
+.else
+        ; No php/sei/plp here: _epyx_recv_prg holds SEI for the whole transfer,
+        ; exactly as the cartridge masks CIA1 once per load rather than touching
+        ; the I flag per byte. Worth 7 cycles of a ~127-cycle byte. NOTE: any
+        ; OTHER caller of this routine must provide its own SEI -- today that is
+        ; block_hdr (inside recv_prg's) and dir.c's fast path, which is dormant.
+.endif
         ; --- pause for VIC-II badlines instead of blanking the screen ---------
         ; The 4-pair sample below runs ~52 cycles on fixed timing; a badline
         ; (raster line where (RASTER & 7) == YSCROLL) stalls the CPU ~40 cycles
@@ -135,6 +143,29 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ; This is the Epyx cart's trick (it uses a 256-byte raster table; the two
         ; compares bracket the same band for our single contiguous window) and it
         ; drops the needless border waits the old `and #7` check imposed.
+        ; Wait for the drive BEFORE choosing a badline-safe raster, not after.
+        ; This wait can be ~150 cycles (the drive is building the next byte's
+        ; pairs) which is two or three raster lines -- so a safe offset picked
+        ; first is stale by the time we sample, and a badline can steal ~40
+        ; cycles in the middle of the byte. That is what was corrupting about
+        ; one sector boundary in twenty.
+.ifdef BANK_BUILD
+        ; The per-byte CLK wait is gone: the drive answers in ~29 cycles now
+        ; (src/drive1541.s), so it is always waiting on us, never the reverse.
+        ;
+        ; The badline gate is a TABLE LOOKUP, which is what the real cartridge
+        ; does -- its table lives at $8300 and is indexed by $D012. THE SCREEN
+        ; STAYS ON: the cartridge never writes $D011, and blanking buys nothing.
+        ; The win is that the lookup costs ~10 cycles against the arithmetic's
+        ; ~18, and the entry doubles as the AND mask that releases DATA, so the
+        ; release is `and CIA2_PRA`, not a separate `and #imm`.
+@badline:
+        ldy VIC_RASTER                  ; 4   through Y, NOT X: the caller's
+        lda badtab,y                    ; 4   block counter lives in X now
+        beq @badline                    ; 2   wait it out; the raster free-runs
+        and CIA2_PRA                    ; 4
+        sta CIA2_PRA                    ; 4   T = 0 (DATA high)
+.else
 @badline:
         lda VIC_RASTER
         cmp #$30
@@ -146,10 +177,10 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         cmp #(YSCROLL + 1)              ; offsets 1..3 -> still in the danger band
         bcc @badline                    ; wait it out (raster advances)
 @clear:
-        ; "ready to send": release DATA high. The drive starts its timed send.
         lda CIA2_PRA
         and #<~B_DATA
         sta CIA2_PRA                    ; T = 0 (DATA high)
+.endif
 
         ; Sample the four bit-pairs at +14/24/34/44 (PAD 10, then 10-cyc gaps).
         ; This is the calibrated sweet spot for this hardware: the sampling
@@ -169,11 +200,40 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ; one 256-byte table descrambles -- ~13 cyc in the drive-blocking gap vs
         ; the ~68 the separate de-interleave used to cost. Timing is unchanged:
         ; every $DD00 read is at the same offset as before.
+        ; --- sample the four pairs -----------------------------------------
+        ; TWO timings, because the two kinds of drive answer the DATA release
+        ; very differently.
+        ;
+        ; A Meatloaf answers in ~0 cycles, so its pairs are effectively exact
+        ; and ten cycles apart: sample at +14/24/34/44, as it always has.
+        ;
+        ; A real 1541 cannot. It finds the release with a 9-cycle poll loop and
+        ; needs 8 more cycles to store the first pair, so pair 1 lands anywhere
+        ; in +8..+17 -- a 10-cycle smear. Against 10-cycle spacing that leaves
+        ; ONE cycle of margin, and it showed: 6 loads in 8, the others with a
+        ; byte or two flipped where a sample caught the neighbouring pair.
+        ; Spacing both sides THIRTEEN cycles apart turns that 1 into 3: pair k
+        ; occupies [8+13(k-1), 17+13(k-1)] and the sample sits at 20+13(k-1),
+        ; three clear of the pair's end and three before the next begins.
+.ifdef BANK_BUILD
+        ; Park the ASSERTED line value in Y while we are burning padding
+        ; anyway. The re-assert after the samples is then a single `sty`
+        ; rather than a read-modify-write -- which is what the real cartridge
+        ; does (`ORA #$20 / TAY` in its stage 2, `STY $DD00` in its stage 4).
+        ; Ten cycles either way, so every sample offset is unchanged.
+        ora #B_DATA                     ; 2   A still holds the RELEASED value
+        tay                             ; 2   Y = asserted
+        nop                             ; 2
+        nop                             ; 2
+        nop                             ; 2   -> the same ten cycles
+                                        ;     the five nops below were
+.else
         nop
         nop
         nop
         nop
         nop
+.endif
         lda CIA2_PRA                    ; sample 1 (+14): ~d7/~d5
         lsr a
         lsr a
@@ -187,6 +247,12 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         lsr a
         nop
         eor CIA2_PRA                    ; sample 4 (+44): ~d2/~d0
+.ifdef BANK_BUILD
+        ; One store, and the fold stays in A. The old sequence stashed it in X
+        ; only because the read-modify-write re-assert clobbered A; with the
+        ; asserted value already in Y there is nothing to stash. 10 cycles.
+        sty CIA2_PRA                    ; "got it": pull DATA low
+.else
         tax                             ; stash the fold (got-it clobbers A)
 
         ; "got it": pull DATA low (drive's transmitEpyxByte waits for this).
@@ -194,12 +260,15 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         ora #B_DATA
         sta CIA2_PRA
         plp
+.endif
 
         ; --- descramble (not time-critical: DATA is low, the drive is waiting).
         ;     Cancel the constant smear, then one table load turns the folded
         ;     value into the byte (the table bakes in the wire inversion + the
         ;     bit permutation; see _epyx_gen_descramble).  ---
-        txa
+.ifndef BANK_BUILD
+        txa                             ; bank build: the fold never left A
+.endif
         eor A3LOC
 .ifdef KLOAD_BUILD
         ; TWO 16-BYTE TABLES instead of one 256-byte one. The permutation is
@@ -231,7 +300,16 @@ RES = $FB               ; assembled byte scratch (reset's boot pointer; free now
         tay
         lda descramble,y
 .endif
+.ifndef BANK_BUILD
         ldx #$00
+.else
+        ; X IS PRESERVED on this build, and that is now part of the contract:
+        ; _epyx_recv_prg keeps the block's byte count there across the call. The
+        ; old `ldx #$00` was cc65's char-return convention, and both C callers
+        ; (dir.c) assign to an unsigned char, which needs only A. Restoring it
+        ; here wiped the counter every byte and the loop ran for ever -- the
+        ; failure mode is a hang, not corruption, so it shows up immediately.
+.endif
         rts
 .endproc
 
@@ -305,6 +383,10 @@ DOTS  = $02AE           ; progress dots printed so far (one per 1024 bytes)
 LADRL = $02AF           ; PRG load address, read back by the C wrapper
 LADRH = $02B0
 BIGFL = $03A4           ; set when the stream ran into the bank's own RAM
+RECV_PAD = $03A6        ; 0 = Meatloaf sample timing, nonzero = real-1541 timing
+                        ; (the pad in _epyx_recv_byte). disk_fload sets it per
+                        ; path; the KLOAD build has no drive path and the stock
+                        ; KERNAL leaves page 3 alone, so it is 0 there.
 ; The destination ceiling, tested on each page crossing. In the bank it is the
 ; bank's own RAM window -- the loader would otherwise overwrite the C stack it is
 ; running on. In the stock-KERNAL patch there is no bank to protect, so the only
@@ -318,6 +400,11 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
 .endif
 
 .proc _epyx_recv_prg
+.ifdef BANK_BUILD
+        php
+        sei                             ; held for the whole transfer, so
+                                        ; _epyx_recv_byte pays nothing per byte
+.endif
         lda #0
         sta BLK
         sta DOTS
@@ -351,10 +438,26 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
 .endif
         lda #2
         sta TOTL                        ; the two address bytes are counted
+.ifdef BANK_BUILD
+        ldx BLK                         ; the inner loop owns the count from here
+        beq @newblk                     ; a block of exactly two bytes
+.endif
         ; --- stream the rest into (DST), crossing block boundaries -----------
 @loop:
-        jsr next_byte
-        bcs @eof
+        ; Common case inline: next_byte's framing only matters at a block
+        ; boundary, and paying its jsr/rts plus the BLK test and a clc through
+        ; the CALL every byte cost ~11 cycles of the per-byte budget that is
+        ; now the whole remaining gap to the cartridge (PLAN.md section 8).
+        ; NOTE the test is `lda BLK / beq`, NOT `dec BLK / bmi`: a block length
+        ; runs to 254, so the decremented count is "negative" for most of a
+        ; block and bmi would take the slow path on nearly every byte.
+.ifdef BANK_BUILD
+        jsr _epyx_recv_byte
+.else
+        jsr next_byte                   ; KLOAD has no room for the fast path:
+        bcs @eof                        ; it must fit the 684-byte tape region
+.endif
+@store:
         ldy #$00
         sta (DST),y
         inc DST
@@ -368,15 +471,37 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
         lda DST+1
         cmp #BANKPG
         bcs @toobig
-@count: inc TOTL
+@count:
+.ifdef BANK_BUILD
+        ; `dex / bne`, the shape the cartridge uses. Five cycles where testing
+        ; and decrementing a memory BLK took twelve.
+        dex
         bne @loop
-        inc TOTH
+@newblk:
+        jsr block_hdr                   ; C set = EOF or timeout
+        bcs @eof
+        ldx BLK
         jmp @loop
+.else
+        inc TOTL                        ; KLOAD keeps the counter: deriving it
+        bne @loop                       ; costs 3 bytes it does not have in the
+        inc TOTH                        ; 684-byte tape region
+        jmp @loop
+.endif
 @toobig:
         lda #1
         sta BIGFL               ; the caller reports it; this is just failure
         jmp @fail
 @eof:
+.ifdef BANK_BUILD
+        lda DST                         ; total = DST - LADR, computed once
+        sec
+        sbc LADRL
+        sta TOTL
+        lda DST+1
+        sbc LADRH
+        sta TOTH
+.endif
         lda TMOFL
         bne @fail                       ; timeout EOF = truncated -> failure
         lda TOTH
@@ -391,10 +516,16 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
 .endif
         lda DST                         ; return end address (VARTAB)
         ldx DST+1
+.ifdef BANK_BUILD
+        plp
+.endif
         rts
 @fail:
         lda #0
         tax
+.ifdef BANK_BUILD
+        plp
+.endif
         rts
 .endproc
 
@@ -404,21 +535,71 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
 ; tell a truncated transfer from a clean one). Emits a progress dot at every
 ; 4th block boundary (in the inter-block gap, where the drive is busy fetching
 ; the next block anyway). Clobbers A/X/Y.
+.ifdef BANK_BUILD
 .proc next_byte
         lda BLK
         bne @have
-.ifdef KLOAD_BUILD
-        ; No progress dots in the stock-KERNAL patch. Two reasons, either enough:
-        ; this loader serves a RUNNING PROGRAM's LOAD, and scribbling dots across
-        ; whatever it has on screen is not ours to do (the stock loader honours
-        ; MSGFLG $9D for exactly this reason); and the space is needed -- the
-        ; tape region is 684 bytes and the descramble table alone is 256.
-.else
-        ; --- block boundary: one progress dot per 1024 bytes -----------------
-        ; want = bytes>>10 = TOTH>>2 = kilobytes so far; catch DOTS up to it.
-        ; (Emitted here, in the inter-block gap where the drive is fetching, so
-        ; the CHROUT doesn't stall the per-byte transfer.)
+        jsr block_hdr                   ; boundary: sets BLK, C set on EOF
+        bcs @out
+@have:
+        dec BLK
+        jsr _epyx_recv_byte             ; the data byte
+        clc
+@out:
+        rts
+.endproc
+
+; ---------------------------------------------------------------------------
+; block_hdr - the block BOUNDARY half of next_byte: catch the dots up, wait for
+; the drive's "ready", take the length byte. Carry clear = BLK holds a nonzero
+; count; carry set = EOF (zero length) or a timeout (TMOFL set).
+;
+; Split out so _epyx_recv_prg's inner loop can own the count in X and reach this
+; only at a boundary, instead of testing a memory BLK on every byte. KLOAD keeps
+; the monolithic version below: the split costs a jsr/rts pair and it has
+; exactly zero bytes to spare in the 684-byte tape region (the build says so).
+; ---------------------------------------------------------------------------
+.proc block_hdr
 @dotchk:
+        lda DST+1                       ; TOTH equivalent, derived per block
+        sec
+        sbc LADRH
+        sta TOTH
+        lda TOTH
+        lsr a
+        lsr a
+        cmp DOTS
+        bcc @nodot                      ; want < printed (defensive) -> done
+        beq @nodot                      ; caught up
+        lda #$2E                        ; '.'
+        jsr CHROUT
+        inc DOTS
+        jmp @dotchk
+@nodot:
+        jsr _epyx_wait_ready            ; A=0 ready, A=1 timeout
+        bne @tmo
+        jsr _epyx_recv_byte             ; block length
+        sta BLK
+        cmp #$00                        ; 0 length -> EOF
+        beq @eof
+        clc
+        rts
+@tmo:
+        sta TMOFL                       ; A=1 here: mark EOF-by-timeout
+@eof:
+        sec
+        rts
+.endproc
+.else
+.proc next_byte
+        lda BLK
+        bne @have
+.ifndef KLOAD_BUILD
+@dotchk:
+        lda DST+1                       ; TOTH equivalent, derived per block
+        sec
+        sbc LADRH
+        sta TOTH
         lda TOTH
         lsr a
         lsr a
@@ -435,8 +616,8 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
         bne @tmo
         jsr _epyx_recv_byte             ; block length
         sta BLK
-        cmp #$00                        ; re-test: recv_byte's `ldx #0` left Z=1,
-        beq @eof                        ; so test the byte itself. 0 length -> EOF
+        cmp #$00
+        beq @eof                        ; 0 length -> EOF
 @have:
         dec BLK
         jsr _epyx_recv_byte             ; the data byte
@@ -448,3 +629,27 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
         sec
         rts
 .endproc
+.endif
+
+.ifdef BANK_BUILD
+; ---------------------------------------------------------------------------
+; badtab - one entry per raster line: $00 = do not START a byte here, anything
+; else is the AND mask that releases DATA. The real cartridge's equivalent is
+; its $8300 table, and the shared trick is that the live entry IS the mask.
+;
+; A badline is (RASTER & 7) == YSCROLL within $30..$F7. We block offsets 1..3
+; where the cartridge blocks two, and that is not over-caution: its byte is ~63
+; cycles, about one raster line, so it only needs the line it starts on. Ours is
+; longer and spans two to three lines, so a byte begun at offset 1 would still
+; be running when the badline at 3 lands. Offsets 4..7 and 0 give the clear run
+; we need. Shorten the byte and this table should be narrowed to match.
+.align 256
+badtab:
+.repeat 256, i
+    .if (i >= $30) && (i <= $F7) && ((i & 7) >= 1) && ((i & 7) <= YSCROLL)
+        .byte $00
+    .else
+        .byte <~B_DATA
+    .endif
+.endrepeat
+.endif

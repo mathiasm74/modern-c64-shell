@@ -72,3 +72,17 @@ wait_clk_lo:
         rts
 @ok:    clc
         rts
+
+; unsigned char fastload_wait_drive(void) -- C wrapper over wait_clk_lo for the
+; drive1541 path: after the M-E, wait for OUR drive code to pull CLK low
+; ("not ready"). Without this the receiver's level-triggered ready-wait sees
+; the CLK the DOS left released and reads garbage before the drive has even
+; started; and that wait is level-triggered on purpose (a Meatloaf constraint),
+; so the edge has to be found here, on this path only. 1 = timed out.
+.export _fastload_wait_drive
+_fastload_wait_drive:
+        jsr wait_clk_lo
+        lda #0
+        rol a                   ; carry -> A
+        ldx #0
+        rts

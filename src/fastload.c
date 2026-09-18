@@ -135,9 +135,17 @@ void fastload_set_device(unsigned char d)
         fl_dev = d;
 }
 
-/* Per-device Epyx capability cache: 0 = not probed, 1 = no, 2 = yes.
+/* Per-device capability cache, three-way since v0.2.40:
+     0 = not probed
+     1 = no fast path
+     2 = FINGERPRINT drive (Meatloaf): checksums the upload, never runs it
+     3 = EXECUTING drive (real 1541, Pi1541): runs what we M-W + M-E
    BSS, so a reboot re-probes.                                            */
 static unsigned char epyx_cap[8];
+
+#define CAP_NONE  1
+#define CAP_PRINT 2
+#define CAP_EXEC  3
 
 unsigned char fastload_epyx_capable(void)
 {
@@ -156,11 +164,94 @@ unsigned char fastload_epyx_capable(void)
         buf[1] = 0xEE;
         fastload_mr(0xFFFC, buf, 2);
         if (iec_status() & (ST_NODEV | ST_TIMEOUT))
-            epyx_cap[i] = 1;
+            epyx_cap[i] = CAP_NONE;
+        else if (buf[0] == 0 && buf[1] == 0)
+            epyx_cap[i] = CAP_PRINT;    /* emulated RAM -> Meatloaf-class */
         else
-            epyx_cap[i] = (buf[0] == 0 && buf[1] == 0) ? 2 : 1;
+            epyx_cap[i] = CAP_EXEC;     /* a real ROM vector -> real 6502 */
     }
-    return epyx_cap[i] == 2;
+    return epyx_cap[i] == CAP_PRINT;
+}
+
+/* A drive that answers M-R with its real ROM vector runs a real 6502, so it can
+   be given real code -- which is what src/drive1541.s is. Before that existed
+   this answer was folded into "not capable", and every genuine 1541 fell back
+   to stock speed. */
+unsigned char fastload_drive_executes(void)
+{
+    fastload_epyx_capable();            /* probe if we have not yet */
+    return epyx_cap[fl_dev - 8] == CAP_EXEC;
+}
+
+/* Upload src/drive1541.s and start it. The M-W command buffer is small, so the
+   blob goes up in chunks; the filename follows, into the fixed header at
+   $0503/$0504, and the M-E lands on the jump at $0500. */
+#define FL_DRV_BASE 0x0500
+#define FL_DRV_NLEN 0x0503
+#define FL_DRV_NAME 0x0504
+#define FL_DRV_CHUNK 32
+
+unsigned char fastload_wait_drive(void);
+extern unsigned char drive1541_code[];
+extern unsigned int drive1541_size;
+
+/* Ask the DOS to INITIALISE before we take the machine.
+   The controller's READ job compares each sector header's ID against the one
+   the drive believes is mounted, and nothing has told it since the disk was
+   inserted -- so our first job came back error $0B and find_file gave up
+   before it had read anything. Letting the DOS do it means its own tested code
+   reads the BAM and sets the ID, and our drive code needs no ID handling at
+   all. It costs one command-channel round trip per load. */
+static void fastload_initialize(void)
+{
+    buf[0] = 'I';
+    buf[1] = '0';
+    iec_set_fa(fl_dev);
+    iec_set_fnadr(buf);
+    iec_set_fnlen(2);
+    iec_command_raw();
+}
+
+unsigned char fastload_drive_install(const char *name, unsigned char namelen)
+{
+    unsigned int off = 0;
+    unsigned char n;
+
+    fastload_initialize();
+    if (iec_status() & (ST_NODEV | ST_TIMEOUT))
+        return 1;
+
+    while (off < drive1541_size) {
+        n = FL_DRV_CHUNK;
+        if (drive1541_size - off < FL_DRV_CHUNK)
+            n = (unsigned char)(drive1541_size - off);
+        fastload_mw((unsigned int)(FL_DRV_BASE + off), drive1541_code + off, n);
+        if (iec_status() & (ST_NODEV | ST_TIMEOUT))
+            return 1;
+        off += n;
+    }
+    if (namelen > 16)
+        namelen = 16;
+    fastload_mw(FL_DRV_NLEN, &namelen, 1);
+    fastload_mw(FL_DRV_NAME, (const unsigned char *)name, namelen);
+    if (iec_status() & (ST_NODEV | ST_TIMEOUT))
+        return 1;
+    fastload_me(FL_DRV_BASE);
+
+    /* Now wait for OUR code to take the bus: it pulls CLK low ("not ready")
+       as its first act, but the M-E returns with CLK still released by the
+       DOS, and the receiver's ready-wait is level-triggered -- so without this
+       it read three garbage "bytes" before the drive had done anything. */
+    if (fastload_wait_drive())
+        return 1;
+
+    /* Pull DATA low so the drive's first byte has an edge to wait for.
+       Every later byte gets one for free -- the receiver's "got it" leaves
+       DATA low between bytes -- but the M-E leaves the bus idle with DATA
+       high, and a drive waiting for "high" would match instantly and transmit
+       before the host was looking. */
+    *(unsigned char *)0xDD00 |= 0x20;
+    return 0;
 }
 
 void fastload_epyx_mark_unsupported(void)
