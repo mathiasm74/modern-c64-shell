@@ -12,6 +12,7 @@ seen at $E000 in Ultimax, which is where the machine starts.
 Header EXROM/GAME are LINE states (0 = pulled low = active). EasyFlash boots in
 Ultimax, which is /GAME low and /EXROM high, so GAME=0 and EXROM=1.
 """
+import os
 import struct, sys
 
 CRT_MAGIC = b"C64 CARTRIDGE   "
@@ -47,8 +48,16 @@ def main(argv):
         addr = 0x8000 if chip.lower() == "l" else 0xA000
         packets.append(chip_packet(int(bank), addr, open(path, "rb").read()))
 
-    with open(out, "wb") as f:
+    # Write via a temp file and rename. A generator that opens its output and
+    # then fails leaves an EMPTY file with a fresh mtime, which make happily
+    # treats as up to date -- and every test afterwards runs a zero-byte
+    # cartridge while the build says "nothing to be done". That cost real
+    # debugging time; os.replace is atomic, so the output either appears whole
+    # or not at all.
+    tmp = out + ".tmp"
+    with open(tmp, "wb") as f:
         f.write(header + b"".join(packets))
+    os.replace(tmp, out)
     print("  %s : %d bytes, %d chip packet(s)" %
           (out, 0x40 + sum(len(p) for p in packets), len(packets)))
 

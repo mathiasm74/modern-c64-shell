@@ -124,6 +124,14 @@ BASIC  := $(BUILD)/basic.bin
 KERNAL := $(BUILD)/kernal.bin
 ROM16K := $(BUILD)/rom16k.bin
 
+# Files produced by a CHAIN of implicit rules (src/*.c -> build/banks/fb_*.s ->
+# .o) are "intermediate" to make, which deletes them once the thing that needed
+# them is built. That breaks the EF bank links, which reuse those same objects:
+# `make clean && make && make ef` died on "Input file build/banks/fb_files_entry.o
+# not found" -- and since a failed link leaves the previous .crt in place, every
+# test afterwards silently measured a STALE cartridge. .SECONDARY keeps them.
+.SECONDARY:
+
 .PHONY: all banks clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash onerom-c128 onerom-c128-flash onerom-c64c onerom-c64c-flash memtest memtest-flash sizes
 
 all: $(ROM16K)
@@ -325,7 +333,15 @@ $(BUILD)/ef/tardis.crt: $(EF_ROML) $(EF_ROMH0) $(BUILD)/ef/romh-filler.bin \
 	python3 tools/make_ef_crt.py $@ 0:l=$(EF_ROML) 0:h=$(EF_ROMH0) \
 	  $(foreach b,1 2 3 4 5,$(b):l=$(EF_ROML) $(b):h=$(EF_BANK_$(b)))
 
-ef: $(BUILD)/ef/tardis.crt
+# The EF bank images REUSE the One ROM banks' objects (only crt0 is rebuilt), so
+# those have to exist first. Without this, `make ef` from a clean tree fails at
+# the link with "input file not found" -- and because the .crt is then simply
+# left at its previous contents, the failure is easy to miss and every test
+# afterwards silently measures a stale cartridge.
+# `banks`, not $(BANK_BINS): that variable is defined further down the file and
+# prerequisites expand as the rule is read, so it would be empty here -- the
+# same trap the `all` target already documents.
+ef: banks $(BUILD)/ef/tardis.crt
 
 # Launch the cartridge on a STOCK machine (./ef-run.sh forwards extra args).
 # Rebuilds and REPLACES a running instance -- a hard reset inside VICE re-runs
