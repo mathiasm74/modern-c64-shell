@@ -371,6 +371,16 @@ extern unsigned char run_stub_end[];
    build / VICE the swap is inert and the JMP through (FFFC) re-enters our
    reset, which re-detects the planted CBM80 -- so this is only meaningful on
    the onerom-stock firmware. Never returns. */
+/* Before any swap to stock: have the disk bank probe the current device, so
+   the swap arms KLOAD's fast path only for a drive that has just answered as
+   Meatloaf-class (launch.s pokes $03A5 into KLOAD's kl_dev). A real 1541 would
+   execute the fingerprint filler that path M-E's, and hang every LOAD after
+   the swap. Silent: with no disk bank there is nothing to arm, and 0 stands. */
+static void probe_for_kload(void)
+{
+    bank_try(5, 0, (char **)0);
+}
+
 static void launch_stock_program(unsigned char mode)
 {
     /* The stub and its mailbox both live in the $CE00-$CFFF completion cache
@@ -379,6 +389,7 @@ static void launch_stock_program(unsigned char mode)
     unsigned char *p = (unsigned char *)0xCE60;     /* run-stub home (RAMTAS-safe) */
     unsigned int i, n;
 
+    probe_for_kload();
     TAB_CACHE_OK = 0;               /* the stub and its line land on the cache */
     *(unsigned char *)0xCE52 = (unsigned char)(load_start & 0xff);
     *(unsigned char *)0xCE53 = (unsigned char)(load_start >> 8);
@@ -401,15 +412,18 @@ static void launch_stock_program(unsigned char mode)
 
 void cmd_run(int argc, char *argv[])
 {
-    /* `run <name>` fast-loads the named PRG (the Epyx path, like `fload`) and
-       then runs it. Bare `run` re-runs whatever was loaded last. On the C128
-       the stock swap targets flash set 4 (the stock C64 set the firmware
-       carries), so this works the same as on the C64. */
+    /* `run <name>` loads the named PRG and then runs it. Bare `run` re-runs
+       whatever was loaded last. On the C128 the stock swap targets flash set 4
+       (the stock C64 set the firmware carries), so this works the same as on
+       the C64. */
     if (argc > 1) {
-        /* The fast load is bank entry 3 -- the same code `fload` runs, which is
-           why `run <name>` == `fload <name>` then `run`. The bank reports its
-           own failures, so we only have to notice and stop. */
-        bank_dispatch(3, argc, argv);
+        /* The load is bank entry 4 -- `load` itself, so `run <name>` ==
+           `load <name>` then `run`: fast where the drive can, the standard path
+           where it cannot, and `run --slow <name>` passes straight through.
+           (It was `fload`, entry 3, which simply failed on a drive with no
+           fast path.) The bank reports its own failures, so we only have to
+           notice and stop. */
+        bank_dispatch(4, argc, argv);
         if (DM_STAT != DM_OK)
             return;                     /* already reported: the bank sets
                                            load_start/load_end itself */
@@ -502,6 +516,7 @@ void cmd_basic(int argc, char *argv[])
        stock BASIC (or the stock reset autostarts a cartridge). */
     if (load_start != 0)
         launch_stock_program(1);        /* -> stock BASIC READY., program intact */
+    probe_for_kload();
     rbcp_launch_stock();                /* never returns */
 }
 

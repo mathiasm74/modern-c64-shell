@@ -128,6 +128,42 @@ OPSUM = $FE            ; the checksum byte to send last
 ; receiver can sync to that held CLK-high and only then release DATA (per byte)
 ; to start each timed transfer. Re-enables IRQs. void.
 ; ---------------------------------------------------------------------------
+.ifdef BANK_BUILD
+; ---------------------------------------------------------------------------
+; _epyx_send_mem - send n bytes from p: the bulk of src/drive1541.s going up to
+; the bootstrap (src/drive1541_boot.s). The same bytes through a C loop cost
+; ~400 cycles each on top of the ~290 the bits themselves take -- 0.36 s for the
+; loader. Bank build only: nothing resident sends a block.
+; void __fastcall__ epyx_send_mem(const unsigned char *p, unsigned int n).
+; ---------------------------------------------------------------------------
+.importzp ptr1, ptr2
+.import popax
+.export _epyx_send_mem
+
+.proc _epyx_send_mem
+        sta ptr2
+        stx ptr2+1                      ; n
+        jsr popax
+        sta ptr1
+        stx ptr1+1                      ; p
+@loop:  lda ptr2
+        ora ptr2+1
+        beq @done
+        ldy #$00
+        lda (ptr1),y
+        jsr _epyx_send_byte             ; X and TMP only; Y and ptr1/2 survive
+        inc ptr1
+        bne :+
+        inc ptr1+1
+:       lda ptr2
+        bne :+
+        dec ptr2+1
+:       dec ptr2
+        jmp @loop
+@done:  rts
+.endproc
+.endif
+
 .proc _epyx_send_end
         lda DD00
         and #<~B_CLK                    ; release CLK

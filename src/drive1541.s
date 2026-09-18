@@ -62,6 +62,13 @@ JOBSEC   = $07
 BUF      = $0300
 READJOB  = $80
 
+ERR_ID   = $0B                  ; job result: header ID != the mounted ID
+DISKID   = $12                  ; the ID the controller expects ($12/$13)
+HDRID    = $16                  ; the ID in the header it last read ($16/$17)
+
+VIA2T1CH = $1C05                ; the controller tick: T1 counter high
+VIA2T1LH = $1C07                ; ... and latch high
+
 DIR_TRK  = 18
 DIR_SEC  = 1
 
@@ -92,26 +99,18 @@ fname_len:
 fname:
         .res 16, 0
 
-; Our state. It must come AFTER the header: the host M-E's $0500 and writes the
-; name at $0503, so those three addresses are a contract. Putting these first
-; silently moved the jump and the drive executed its own variables.
-
+; Our state lives in BSS, after the code: none of it needs an initial value,
+; so none of it needs uploading -- the bootstrap stops at the end of the code.
+.segment "DRIVEBSS"
 v_trk:   .byte 0                ; the sector we are reading
 v_sec:   .byte 0
-v_cnt:   .byte 0                ; data bytes left to prep in this block
-v_byte:  .byte 0                ; the byte being shipped
-v_p1:    .byte 0                ; the four precomputed $1800 values
-v_p2:    .byte 0
-v_p3:    .byte 0
-v_p4:    .byte 0
+v_cnt:   .byte 0                ; data bytes in this block
 v_base:  .byte 0                ; $1800 with both line bits cleared
-v_tmp:   .byte 0                ; prep_byte's working copy -- ITS OWN
-v_off:   .byte 0
 v_last:  .byte 0                ; last Y of the block's data
-t1:      .res 16                ; t1[n] = (n & $0A) | v_base   -- CLK/DATA pair
-t2:      .res 16                ; t2[n] = ((n<<1) & $0A) | v_base                ; send_block's buffer offset
 v_ent:   .byte 0                ; directory entry offset while searching
+v_try:   .byte 0                ; read_sector's attempts left
 
+.segment "DRIVECODE"
 
 ; ---------------------------------------------------------------------------
 entry:
@@ -137,10 +136,7 @@ entry:
         ; Not found, or a read error: hand the host an immediate end of file.
         ; It reports "fast load failed" and falls back, which is the right
         ; answer -- better than leaving it waiting on a drive that has nothing.
-        jsr block_ready
-        lda #$00
-        jsr send_byte
-        jmp done
+        jmp @stop
 @found:
         ; v_trk/v_sec now hold the file's first sector.
 @chain:
@@ -148,6 +144,7 @@ entry:
         bcs @stop
         ; Link bytes: track 0 means this is the last sector and the SECTOR byte
         ; is the index of its last used byte.
+        ; Take them BEFORE sending: send_block writes the count over BUF+1.
         lda BUF+0
         bne @full
         ldx BUF+1               ; index of the last used byte -> one less to send
@@ -156,20 +153,19 @@ entry:
         jsr send_block
         jmp @stop
 @full:
-        lda #254                ; a full sector: offsets 2..255
-        sta v_cnt
-        jsr send_block
-        bcs done                ; the host took the bus back
-        lda BUF+0
         sta v_trk
         lda BUF+1
         sta v_sec
-        jmp @chain
+        lda #254                ; a full sector: offsets 2..255
+        sta v_cnt
+        jsr send_block
+        bcc @chain              ; carry set: the host took the bus back
+        bcs done
 @stop:
         ; A zero-length block is the end marker.
-        jsr block_ready
         lda #$00
-        jsr send_byte
+        sta v_cnt
+        jsr send_block
 done:
         lda VIA2
         and #<~D_LINES
@@ -196,8 +192,11 @@ find_file:
         sta v_ent               ; run 2, 34, 66 ... 226
 @entry:
         ldx v_ent
-        lda BUF,x               ; file type: 0 = an empty/scratched slot
-        beq @next
+        lda BUF,x               ; file type. Only a CLOSED PRG will do -- what
+        and #$87                ; stock LOAD takes: bit 7 closed, bits 0-2 the
+        cmp #$82                ; type (2 = PRG), bit 6 (locked) ignored. An
+        bne @next               ; empty slot, a splat, a SEQ: not ours. The host
+                                ; then falls back to the drive's own lookup.
         jsr name_matches
         bcs @next
         ldx v_ent
@@ -226,6 +225,8 @@ find_file:
 
 ; name_matches - compare fname against the 16-byte name at BUF + v_ent + 3.
 ; Carry clear = match. A short name is padded with $A0, as the directory is.
+; CBM wildcards: `*` matches the rest of the name, `?` any one character (but
+; not the padding past the end). `load *` and `load pro*` stay on the fast path.
 name_matches:
         lda v_ent
         clc
@@ -237,13 +238,23 @@ name_matches:
         cpy fname_len
         bcs @pad
         lda fname,y
+        cmp #'*'
+        beq @yes                ; the rest matches whatever it is
+        cmp #'?'
+        bne @pad
+        lda BUF,x
+        cmp #$A0                ; any one character -- but one must be there
+        beq @no
+        bne @step
 @pad:
         cmp BUF,x
         bne @no
+@step:
         inx
         iny
         cpy #16
         bne @cmp
+@yes:
         clc
         rts
 @no:
@@ -256,6 +267,18 @@ name_matches:
 ; here waits for a job that can never start.
 ; ---------------------------------------------------------------------------
 read_sector:
+        lda #2
+        sta v_try
+@again:
+        ; Kick the controller's tick. The job loop runs from VIA2 timer 1's IRQ,
+        ; every $3A00 cycles (14.8 ms), so a job posted between ticks waits up
+        ; to a whole period before the controller even looks at it. Writing 1
+        ; to T1C-H reloads the counter as $0100 -- an IRQ in 256 us -- and also
+        ; sets the latch's high byte, so the real one is put straight back.
+        lda VIA2T1LH
+        ldy #$01
+        sty VIA2T1CH
+        sta VIA2T1LH
         cli
         lda v_trk
         sta JOBTRK
@@ -267,10 +290,35 @@ read_sector:
         lda JOBCODE
         bmi @wait               ; still queued/running while bit 7 is set
         cmp #$02                ; 1 = OK; anything higher is an error code
+        bcc @out
+        ; A failed read gets ONE retry. If it failed on the disk ID, adopt the
+        ; ID the header actually carried first -- which is how this code gets
+        ; by without an `I0`. The controller compares every header against the
+        ; ID it believes is mounted ($12/$13), nothing has set that since the
+        ; disk went in, and the header it just rejected left its real ID at
+        ; $16/$17. Initialising from the host did the same job for 1.36 s a load;
+        ; the cartridge does it this way.
+        cmp #ERR_ID
+        bne @retry
+        lda HDRID
+        sta DISKID
+        lda HDRID+1
+        sta DISKID+1
+@retry:
+        dec v_try
+        bne @again
+        sec
+@out:
         rts
 
 ; ---------------------------------------------------------------------------
 ; send_block - CLK high, length byte, the sector's data bytes, CLK low.
+;
+; The length goes out as the first byte of the same loop: it is written over
+; BUF+1 -- the link's sector byte, already taken by the caller -- and the loop
+; starts there. That is the cartridge's trick (its `STX $0401`), and it retired
+; a separate send_byte routine for the one byte in 255 that was not data. A
+; zero count sends just that byte: the end-of-file block.
 ; ---------------------------------------------------------------------------
 ; Carry set on return = the host has taken the bus back (ATN asserted) and we
 ; should stop. The check lives BETWEEN bytes on purpose: inside send_byte's
@@ -282,14 +330,18 @@ send_block:
         sta v_base              ; kept for the block framing and @abort
         lda VIA2
         bmi @abort              ; ATN asserted: the host wants the bus back
-        jsr block_ready         ; CLK low, then high
-        lda v_cnt
-        jsr send_byte           ; the length byte IS the data count
-        lda v_cnt
-        clc
-        adc #1
-        sta v_last              ; data lives at BUF+2 .. BUF+1+cnt
-        ldy #1
+        ; CLK low then high: the edge the host's _epyx_wait_ready waits for.
+        ; It does not need to catch the low, so a brief one is fine; CLK is
+        ; then held high while the loop waits for the host.
+        ora #D_COUT
+        sta VIA2                ; CLK low  = "not ready"
+        lda v_base
+        sta VIA2                ; CLK high = "ready"
+        ldx v_cnt
+        stx BUF+1               ; the count, sent first
+        inx
+        stx v_last              ; data lives at BUF+2 .. BUF+1+cnt
+        ldy #0
 @next:
         iny                     ; 2
         lda BUF,y               ; 4   BUF is page-aligned: never a page cross
@@ -332,57 +384,3 @@ send_block:
         sec
         rts
 
-; block_ready - CLK low then high, the edge the host's _epyx_wait_ready waits
-; for. It deliberately does not require catching the low, so a brief one is
-; fine; we hold high while send_byte waits for the host.
-block_ready:
-        lda VIA2
-        ora #D_COUT
-        sta VIA2                ; CLK low  = "not ready"
-        lda VIA2
-        and #<~D_COUT
-        sta VIA2                ; CLK high = "ready"
-        rts
-
-; ---------------------------------------------------------------------------
-; send_byte - one byte, four timed pairs. A = the byte.
-;
-; The four $1800 values are built BEFORE the timed section, so the part that
-; has to hit its cycles is four stores and some padding. Interrupts are off
-; for the whole byte: the controller's IRQ would stretch any gap it landed in.
-; ---------------------------------------------------------------------------
-; send_byte = prep_byte + xmit_byte. They are SEPARATE because the ~200 cycles
-; of pair-building must not sit between "I am ready" and the wait loop: the
-; host sees CLK high, releases DATA, samples and pulls it low again well inside
-; that gap, and the drive arrives at the wait to find the edge already gone.
-; Measured: the drive reached the wait (stage 2) only after the host had taken
-; its one and only sample, which folded $FF -- nobody driving the wire.
-send_byte:
-        ; One byte as four timed pairs, the shape the genuine cartridge uses in
-        ; the drive: ONE seven-cycle wait, then four stores ten cycles apart with
-        ; the pair values shifted out in the gaps rather than built up front.
-        ; That replaced prep_byte + xmit_pairs + wait_got, ~125 cycles a byte
-        ; down to ~62. See send_block for why each piece is cheap.
-        sta v_tmp
-        lsr a
-        lsr a
-        lsr a
-        lsr a
-        tax                     ; X = high nibble = pair 1
-        lda #D_DIN              ; $01: release both lines, and BIT's mask
-        sta VIA2
-@w:     bit VIA2                ; 4
-        bne @w                  ; 3
-        stx VIA2                ; 4   pair 1
-        txa                     ; 2
-        asl a                   ; 2
-        and #$0F                ; 2
-        sta VIA2                ; 4   pair 2   (+10)
-        lda v_tmp               ; 4
-        and #$0F                ; 2
-        sta VIA2                ; 4   pair 3   (+10)
-        asl a                   ; 2
-        and #$0F                ; 2
-        nop                     ; 2
-        sta VIA2                ; 4   pair 4   (+10)
-        rts

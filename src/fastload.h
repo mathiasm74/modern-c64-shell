@@ -115,6 +115,9 @@ void __fastcall__ epyx_send_op(unsigned char checksum);
 /* Release the bus and re-enable IRQs.                                        */
 void __fastcall__ epyx_send_end(void);
 
+/* Send n bytes from p over the same wire (disk bank only). */
+void __fastcall__ epyx_send_mem(const unsigned char *p, unsigned int n);
+
 /* Send the "load file" op header the drive expects after install: a 256-byte
  * routine whose only checked property is its 8-bit additive checksum ($86 =
  * "V2 load file"; the bytes are discarded), then the filename length and the

@@ -796,7 +796,7 @@ debug on hardware. `x64sc` emulates EasyFlash banking and the registers, so on
 that target the bank mechanism, the shell and the disk commands are all
 exercisable end to end — against the real path, not a harness-seeded stand-in.
 
-### 8. Fast loading on a REAL 1541 -- WORKS (v0.2.40), but only 2.2x of an expected 5x
+### 8. Fast loading on a REAL 1541 -- WORKS, and matches the Epyx cart in VICE (v0.2.49)
 
 `src/drive1541.s` gives a drive that genuinely runs 6502 -- a stock 1541, a
 Pi1541 -- real drive-side code instead of the 75 bytes of `$EA` a Meatloaf
@@ -1307,7 +1307,77 @@ Adding a counter takes the loop from 9 cycles to 15 and the transfer degrades
 ROM faithfully but not the analogue end (motor spin-up, head settling); the
 loader waits on the job queue for those, so the risk is low but untested.
 
-### 9. `load --slow` -- fold `fload` into `load` (decided, not started)
+**THE GAP IS CLOSED (v0.2.49).** Re-measured on a fresh disk (16KB file, 65
+sectors at c1541's standard interleave), timed exactly -- a store watchpoint on
+the file's last byte stops the emulator and the stopwatch gives the cycles:
+
+| | 16KB | 1 sector |
+|---|---|---|
+| Epyx v3 cartridge | 9.28 s | 2.07 s |
+| fload, v0.2.48 | 21.49 s | 3.25 s |
+| **fload, v0.2.49** | **9.00 s** | **1.90 s** |
+
+Guarded by `test/test_fload_speed.py`. Five changes, in the order they paid:
+
+1. **The controller tick (21.5 -> 13.6 s).** The cartridge's drive code, dumped
+   from drive RAM mid-load (it lives at `$0500`, sector buffer `$0400`, job 1),
+   does one thing ours did not before every read: `ldy #1 / sty $1C05` with the
+   latch high put back after. The 1541 runs its job queue from VIA2 T1's IRQ,
+   latched at `$3A00` = 14.8 ms, so a job posted between ticks sat unseen for
+   up to a whole period; reloading the counter as `$0100` fires the IRQ in
+   256 us. **This was the "50-90 ms unaccounted for" above** -- not DOS
+   bookkeeping. The K-sweeps measured post-to-catch latency and the tick was
+   inside it.
+2. **The badline gate (13.6 -> 10.3 s).** Tracing the drive with breakpoints on
+   job-post and job-done showed the cause directly: we sent a sector in 37 ms
+   against the cartridge's 31.5, and the disk wait alternated 57 / 250 ms --
+   catch, miss, catch, miss. Hops that wrap past the end of the track get the
+   tail gap and a few ms extra; the others do not, and at 37 ms we missed every
+   one of those. The 6 ms was the gate: `badtab` blocked offsets 1..3 and only
+   YSCROLL-1..YSCROLL can reach the badline's DMA from the timed window (~58
+   cycles from the `$D012` read to the last sample). Narrowed, transmit is
+   31.3 ms, the cartridge's figure, and every sector catches. The "resonance"
+   theory above was chasing this.
+3. **No `I0` (setup).** On job error `$0B` the loader copies the header's ID
+   (`$16/$17`) into the controller's (`$12/$13`) and retries -- also the
+   cartridge's method. The `I0` round trip was 1.36 s, although most of that was
+   motor spin-up, which simply moved to the first read (see 5).
+4. **A bootstrap (setup).** M-W runs ~2.4 ms a byte, so the 15 M-Ws of the
+   loader were 1.5 s. Now `src/drive1541_boot.s` (78 bytes, three M-Ws, M-E
+   `$0400`) clocks the loader in over the host->drive Epyx send
+   (`epyx_send_byte`, CLK edge per bit, host-paced so badlines are harmless),
+   straight into `$0500`, and the filename rides in the loader's header. The
+   bulk goes through an asm loop (`epyx_send_mem`); through the C loop it was
+   ~0.7 ms a byte.
+5. **Spin-up overlapped (setup).** Two tiny M-Ws post a SEEK (`$B0`) to track 18
+   into job 0 before the upload, so the controller spins the motor up and
+   positions the head while the bootstrap and loader go up. The loader's first
+   read uses the same job slot and follows it; a job is taken and executed
+   within one controller IRQ, so the overwrite cannot race it.
+
+Two build notes from this. `badtab`'s `.align 256` padded the disk bank by 236
+bytes without aligning anything (the segment is not page-aligned); it is gone,
+since a page cross costs a cycle before the DATA release, where it is harmless.
+And a `git stash`/`pop` inside the same second as a rebuild left a stale
+`bk_fastload.s` that make believed current -- several "no change" measurements
+were that. `make clean` before believing a null result.
+
+**Still open:** real hardware (VICE models the drive's CPU and ROM, not the
+motor or head settling; the loader waits on the DOS's job queue for those, so
+the risk is low), and KLOAD -- the stock-side LOAD wedge -- still has only the
+Meatloaf path, so programs launched with `run` that LOAD more files get stock
+speed on a real 1541. The cartridge speeds those up.
+
+**And KLOAD used to HANG a real 1541 (fixed v0.2.50).** It M-E'd the Meatloaf
+fingerprint with no probe -- the bug `fload` had until v0.2.48 -- so every LOAD
+after `run`/`basic` (`,8`, `,8,1`, `"$"`) crashed the drive, and the stock
+fallback then waited on it for ever. Reproduced in VICE with a hand-patched stock
+KERNAL; the unpatched one loads the same file in 2.6 s. Now the swap probes the
+device first (disk bank entry 5) and pokes the Meatloaf-class device, or 0, into
+KLOAD's `kl_dev` (`$FBA6`); KLOAD compares FA against it and gives everything
+else to the stock loader. `test/test_kload_gate.py`.
+
+### 9. `load --slow` -- fold `fload` into `load` -- DONE (v0.2.52)
 
 Fast by default, `--slow` to force the bit-perfect standard-IEC path: the fast
 one is the more helpful default. Needs a small shared option parser (there is
@@ -1315,6 +1385,19 @@ none -- `parse_line` just splits on whitespace, so `--slow` arrives as an
 ordinary argv entry); it can live in the disk bank, so ~0 resident cost. Worth
 doing AFTER the 1541 drive code works, since "fast by default" is a promise we
 can only keep for drives we can actually go fast on.
+
+**Done, v0.2.52.** `load` tries the fast path and falls back to standard IEC on
+any drive without one, or when the fast load fails -- quietly, so a missing file
+still gets the drive's "62 file not found". `load --slow` forces standard;
+`fload` stays, as the fast path alone. `run <name>` goes through `load` (it used
+to be `fload`, and failed outright on a drive with no fast path). The drive
+loader learned `*`/`?` and takes only closed PRGs, so `load *` is fast and a SEQ
+of the same name is never claimed. Fitting it in the full disk bank took: the
+header send restructured (fastload_drive_install), the loader's variables moved
+to BSS, the block length carried in the link field like the cartridge does (454
+-> 397 bytes, and one handshake fewer a block: 16KB 9.0 -> 8.8 s). Tried and
+reverted: an 8-entry badline table (-248 bytes, +4 cycles a byte, and 16KB went
+to 12.2 s -- over the interleave again).
 
 ### 6. Type-in support (magazine listings)
 

@@ -407,8 +407,18 @@ $(BUILD)/drive1541.bin: $(BUILD)/drive1541.o cfg/drive1541.cfg
 	$(LD) -C cfg/drive1541.cfg -o $@ $< -Ln $(BUILD)/drive1541.labels
 	@echo "  drive1541.bin : $$(wc -c < $@) bytes, runs at \$$0500 in the drive"
 
-# .incbin, so the blob must exist before the bank assembles it.
-$(BUILD)/banks/bk_drive1541_blob.o: $(BUILD)/drive1541.bin
+# Stage 1: the bootstrap that is M-W'd up and fetches the loader over the fast
+# path (src/drive1541_boot.s). Runs at $0400 in the drive.
+# It is told the loader's exact size, so it depends on the loader.
+$(BUILD)/drive1541_boot.o: src/drive1541_boot.s $(BUILD)/drive1541.bin | $(BUILD)
+	$(AS) $(ASFLAGS) -D LDRSIZE=$$(($$(wc -c < $(BUILD)/drive1541.bin))) -o $@ $<
+
+$(BUILD)/drive1541_boot.bin: $(BUILD)/drive1541_boot.o cfg/drive1541_boot.cfg
+	$(LD) -C cfg/drive1541_boot.cfg -o $@ $<
+	@echo "  drive1541_boot.bin : $$(wc -c < $@) bytes, runs at \$$0400 in the drive"
+
+# .incbin, so the blobs must exist before the bank assembles them.
+$(BUILD)/banks/bk_drive1541_blob.o: $(BUILD)/drive1541.bin $(BUILD)/drive1541_boot.bin
 
 # The UTIL BANK: tab completion (src/complete.s), assembled into its own image.
 # Separate from the disk bank because it needs no cc65 runtime at all, so it

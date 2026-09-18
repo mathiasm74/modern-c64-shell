@@ -309,6 +309,9 @@ reset:
         sta LOADADR+1           ; shell's load_start/load_end (the disk-bank
         sta LOADADR+2           ; mailbox, fs.c). Page 3 is power-on garbage, so
         sta LOADADR+3           ; a bare `run` would otherwise launch nonsense
+        sta $03A5               ; KL_MEATDEV (fastload.c): no device is known to
+                                ; be Meatloaf-class until the disk bank probes --
+                                ; garbage here could arm KLOAD for a real 1541
         lda #$FF
         sta LSTX
 
@@ -481,7 +484,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.2.48", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.2.52", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:

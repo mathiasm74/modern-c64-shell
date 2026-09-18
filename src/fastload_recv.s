@@ -383,10 +383,8 @@ DOTS  = $02AE           ; progress dots printed so far (one per 1024 bytes)
 LADRL = $02AF           ; PRG load address, read back by the C wrapper
 LADRH = $02B0
 BIGFL = $03A4           ; set when the stream ran into the bank's own RAM
-RECV_PAD = $03A6        ; 0 = Meatloaf sample timing, nonzero = real-1541 timing
-                        ; (the pad in _epyx_recv_byte). disk_fload sets it per
-                        ; path; the KLOAD build has no drive path and the stock
-                        ; KERNAL leaves page 3 alone, so it is 0 there.
+; ($03A6 was RECV_PAD, a per-path sample pad. Both drive kinds share one
+; timing now, and nothing reads or writes it.)
 ; The destination ceiling, tested on each page crossing. In the bank it is the
 ; bank's own RAM window -- the loader would otherwise overwrite the C stack it is
 ; running on. In the stock-KERNAL patch there is no bank to protect, so the only
@@ -412,6 +410,13 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
         sta TOTH
         sta TMOFL
         sta BIGFL
+.ifdef BANK_BUILD
+        ; block_hdr derives the dot count from DST - LADR, and the first header
+        ; comes BEFORE either is set -- so without this they still held the
+        ; previous load's, and a one-sector fload printed sixteen dots.
+        sta DST+1
+        sta LADRH
+.endif
         ; --- load address: the first two data bytes set the destination ------
         jsr next_byte
         bcs @fail
@@ -633,20 +638,34 @@ BANKPG = $9D            ; first page of the bank RAM window (cfg/disk_bank.cfg).
 
 .ifdef BANK_BUILD
 ; ---------------------------------------------------------------------------
-; badtab - one entry per raster line: $00 = do not START a byte here, anything
-; else is the AND mask that releases DATA. The real cartridge's equivalent is
-; its $8300 table, and the shared trick is that the live entry IS the mask.
+; badtab - one entry per raster line: $00 = do not START a
+; byte here, anything else is the AND mask that releases DATA. The real
+; cartridge's equivalent is a 256-byte table at $8300 indexed by $D012, and the
+; shared trick is that the live entry IS the mask.
 ;
-; A badline is (RASTER & 7) == YSCROLL within $30..$F7. We block offsets 1..3
-; where the cartridge blocks two, and that is not over-caution: its byte is ~63
-; cycles, about one raster line, so it only needs the line it starts on. Ours is
-; longer and spans two to three lines, so a byte begun at offset 1 would still
-; be running when the badline at 3 lands. Offsets 4..7 and 0 give the clear run
-; we need. Shorten the byte and this table should be narrowed to match.
-.align 256
+; A badline is (RASTER & 7) == YSCROLL within $30..$F7, and it steals the CPU
+; for cycles ~12..54 of that line. What must stay clear of it is only the TIMED
+; window: from the DATA release (~14 cycles after the $D012 read) to the last
+; sample (+44 after that), ~58 cycles from the read. The untimed rest of the
+; byte can take the DMA harmlessly. So a byte may not START on the line before
+; the badline (its window runs into the DMA) or on the badline itself (the DMA
+; can still be ahead of it): offsets YSCROLL-1 and YSCROLL, which is what the
+; cartridge blocks too. Any line two or more before the badline ends its window
+; before the DMA begins.
+;
+; This blocked 1..3 until v0.2.49, on the belief that the WHOLE byte had to be
+; clear. The extra line cost ~22 cycles of gate stall a byte, took a sector's
+; transmit from 31 to 37 ms and made us miss the interleave on every other
+; sector: 16KB went 13.6 s -> 10.3 s when it was narrowed, still byte-perfect.
+;
+; 256 entries, indexed by $D012 directly, and it has to stay that way. An
+; 8-entry table indexed by RASTER & 7 would save 248 bytes, and was tried in
+; v0.2.52 when the bank ran out of room. The `and #7 / tay` it needs cost 4
+; cycles a byte, and that alone put sectors back past the interleave: 16KB went
+; 9.0 s -> 12.2 s (test_fload_speed).
 badtab:
 .repeat 256, i
-    .if (i >= $30) && (i <= $F7) && ((i & 7) >= 1) && ((i & 7) <= YSCROLL)
+    .if (i >= $30) && (i <= $F7) && ((i & 7) >= YSCROLL - 1) && ((i & 7) <= YSCROLL)
         .byte $00
     .else
         .byte <~B_DATA

@@ -23,7 +23,7 @@
 .export __STARTUP__ : absolute
 __STARTUP__ = 1
 
-.import _disk_dir, _disk_ls, _disk_pwd, _disk_fload, _disk_load
+.import _disk_dir, _disk_ls, _disk_pwd, _disk_fload, _disk_load, _disk_probe
 .import copydata, zerobss
 .importzp sp
 
@@ -43,6 +43,7 @@ __STARTUP__ = 1
         jmp e_pwd               ; $A00A  entry 2
         jmp e_fload             ; $A00D  entry 3
         jmp e_load              ; $A010  entry 4
+        jmp e_probe             ; $A013  entry 5 (the stock swap, fs.c)
 
 .segment "CODE"
 
@@ -57,6 +58,9 @@ e_fload:
         jmp _disk_fload
 e_load: jsr bank_init
         jmp _disk_load
+e_probe:
+        jsr bank_init
+        jmp _disk_probe
 
 ; Per-entry init: point the bank's own C stack at the top of its RAM window, then
 ; bring that RAM up from nothing -- clear BSS and copy DATA down from ROM. Both

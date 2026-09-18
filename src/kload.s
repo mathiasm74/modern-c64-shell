@@ -81,6 +81,16 @@ kload_entry:
         bcc @illegal                    ; 1,2 = tape / RS-232. Tape is what this
                                         ; code replaced, so it cannot be offered
                                         ; -- and it is a non-goal anyway.
+        ; --- only the device the shell confirmed can do Epyx -----------------
+        ; The fast path ends in an M-E of Meatloaf fingerprint filler. A drive
+        ; that EXECUTES what it is sent -- a real 1541 -- runs 75 bytes of $EA
+        ; off into its stack page and dies, and the fallback below then waits
+        ; on it for ever: every LOAD after `run` or `basic` hung the machine.
+        ; The shell's disk bank probes for that difference (M-R of $FFFC) and
+        ; the swap pokes the one Meatloaf-class device it found into kl_dev,
+        ; 0 if none -- so any other device goes to the stock loader untouched.
+        cmp kl_dev                      ; A = FA still
+        bne @stock
         ; --- device 4+: try the fast path ------------------------------------
         ; Every reason not to ends the same way: jump to the stock serial
         ; loader, which is a complete, working LOAD. That is what makes this
@@ -208,13 +218,18 @@ kl_header:
 
         .segment "KLDATA"
 
+; FIRST in the segment, which pins it at $FBA6 -- the address launch.s pokes,
+; since this link and that one cannot see each other's symbols (the same trick
+; as escape_vec below). 0 here, and in the image, means "no fast path".
+kl_dev:  .byte $00
+
 mw_pfx:  .byte 'M', '-', 'W'
 me_cmd:  .byte 'M', '-', 'E', $A9, $01
 mw_lo:   .byte $80, $99, $B2            ; $0180, $0199, $01B2
 mw_tail: .byte $63, $B6, $9F            ; make the chunk sums $53 / $A6 / $8F
 
 kload_end:
-        .export kload_entry, kload_end, kl_fast
+        .export kload_entry, kload_end, kl_fast, kl_dev
 
 ; ============================================================================
 ; EXIT -- typing it at the stock BASIC prompt comes back to the shell.

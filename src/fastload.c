@@ -147,6 +147,13 @@ static unsigned char epyx_cap[8];
 #define CAP_PRINT 2
 #define CAP_EXEC  3
 
+/* The device the probe last confirmed is Meatloaf-class, or 0. Page 3, not BSS:
+   the bank's BSS is wiped on every entry, and the one reader is the resident
+   stock swap (launch.s), which pokes it into KLOAD's kl_dev. KLOAD fast-loads
+   ONLY that device, because its fast path M-E's fingerprint filler that a real
+   1541 would execute and hang on. reset.s zeroes it. */
+#define KL_MEATDEV (*(unsigned char *)0x03A5)
+
 unsigned char fastload_epyx_capable(void)
 {
     unsigned char buf[2];
@@ -170,6 +177,10 @@ unsigned char fastload_epyx_capable(void)
         else
             epyx_cap[i] = CAP_EXEC;     /* a real ROM vector -> real 6502 */
     }
+    if (epyx_cap[i] == CAP_PRINT)
+        KL_MEATDEV = fl_dev;
+    else if (KL_MEATDEV == fl_dev)
+        KL_MEATDEV = 0;
     return epyx_cap[i] == CAP_PRINT;
 }
 
@@ -183,80 +194,99 @@ unsigned char fastload_drive_executes(void)
     return epyx_cap[fl_dev - 8] == CAP_EXEC;
 }
 
-/* Upload src/drive1541.s and start it. The M-W command buffer is small, so the
-   blob goes up in chunks; the filename follows, into the fixed header at
-   $0503/$0504, and the M-E lands on the jump at $0500. */
-#define FL_DRV_BASE 0x0500
-#define FL_DRV_NLEN 0x0503
-#define FL_DRV_NAME 0x0504
+/* Start src/drive1541.s in the drive, in two stages.
+   M-W is ~2.4 ms a byte, so uploading the 492-byte loader that way cost 1.5 s
+   a load. Only the bootstrap (src/drive1541_boot.s, ~74 bytes) goes up by M-W
+   and is M-E'd at $0400; it then clocks the loader in over the fast host->drive
+   path -- the same epyx_send_byte a Meatloaf takes the filename on -- straight
+   into $0500-$06FF, and jumps to it. The filename rides in that stream, patched
+   into the loader's fixed header ($0503 = length, $0504 = 16 bytes of name), so
+   it needs no M-W of its own either. */
+#define FL_BOOT_BASE 0x0400
 #define FL_DRV_CHUNK 32
+#define FL_HDR_NLEN  3                  /* offsets into the loader's header */
+#define FL_HDR_NAME  4
+#define FL_HDR_END   (FL_HDR_NAME + 16)
 
 unsigned char fastload_wait_drive(void);
 extern unsigned char drive1541_code[];
 extern unsigned int drive1541_size;
+extern unsigned char drive1541_boot[];
+extern unsigned int drive1541_boot_size;
 
-/* Ask the DOS to INITIALISE before we take the machine.
-   The controller's READ job compares each sector header's ID against the one
-   the drive believes is mounted, and nothing has told it since the disk was
-   inserted -- so our first job came back error $0B and find_file gave up
-   before it had read anything. Letting the DOS do it means its own tested code
-   reads the BAM and sets the ID, and our drive code needs no ID handling at
-   all. It costs one command-channel round trip per load. */
-static void fastload_initialize(void)
-{
-    buf[0] = 'I';
-    buf[1] = '0';
-    iec_set_fa(fl_dev);
-    iec_set_fnadr(buf);
-    iec_set_fnlen(2);
-    iec_command_raw();
-}
+/* No `I0` before any of this: it cost 1.36 s a load. The loader adopts the
+   disk's ID itself when its first read reports a mismatch (read_sector in
+   src/drive1541.s), which is what the cartridge does too. */
+/* A SEEK job to the directory track, for buffer 0: track/sector at $06/$07,
+   then the job code at $00, in that order so the controller never starts it
+   with a stale track. */
+static const unsigned char fl_seek_ts[2] = { 18, 0 };
+static const unsigned char fl_seek_job = 0xB0;
 
 unsigned char fastload_drive_install(const char *name, unsigned char namelen)
 {
-    unsigned int off = 0;
-    unsigned char n;
+    unsigned char off, n, boot;
 
-    fastload_initialize();
+    /* Get the MOTOR going first. It only starts for a job, and spinning up
+       costs ~1 s that used to begin after the whole upload, at the loader's
+       first read. Posting a seek to track 18 through M-W lets the controller
+       spin up and put the head where find_file will want it WHILE the
+       bootstrap and loader go up. The loader's own reads use the same buffer
+       and simply follow it. */
+    fastload_mw(0x0006, fl_seek_ts, 2);
+    fastload_mw(0x0000, &fl_seek_job, 1);
     if (iec_status() & (ST_NODEV | ST_TIMEOUT))
         return 1;
 
-    while (off < drive1541_size) {
-        n = FL_DRV_CHUNK;
-        if (drive1541_size - off < FL_DRV_CHUNK)
-            n = (unsigned char)(drive1541_size - off);
-        fastload_mw((unsigned int)(FL_DRV_BASE + off), drive1541_code + off, n);
+    /* The bootstrap is well under a page, so the offsets are bytes. */
+    boot = (unsigned char)drive1541_boot_size;
+    for (off = 0; off < boot; off += n) {
+        n = boot - off;
+        if (n > FL_DRV_CHUNK)
+            n = FL_DRV_CHUNK;
+        fastload_mw(FL_BOOT_BASE + off, drive1541_boot + off, n);
         if (iec_status() & (ST_NODEV | ST_TIMEOUT))
             return 1;
-        off += n;
     }
+    fastload_me(FL_BOOT_BASE);
+
+    /* The bootstrap pulls CLK low when it is listening; begin answers with
+       DATA low and waits for the release. */
+    if (epyx_send_begin())
+        return 1;
+    /* The loader's fixed header, with the name patched in -- jmp, length,
+       name padded with zeros to 16 -- then the rest straight out of ROM. The
+       bootstrap knows the loader's exact length (assembled in), so there is
+       no padding at the end. */
     if (namelen > 16)
         namelen = 16;
-    fastload_mw(FL_DRV_NLEN, &namelen, 1);
-    fastload_mw(FL_DRV_NAME, (const unsigned char *)name, namelen);
-    if (iec_status() & (ST_NODEV | ST_TIMEOUT))
-        return 1;
-    fastload_me(FL_DRV_BASE);
+    epyx_send_mem(drive1541_code, FL_HDR_NLEN);
+    epyx_send_byte(namelen);
+    epyx_send_mem((const unsigned char *)name, namelen);
+    for (off = namelen; off < 16; ++off)
+        epyx_send_byte(0);
+    epyx_send_mem(drive1541_code + FL_HDR_END, drive1541_size - FL_HDR_END);
 
-    /* Now wait for OUR code to take the bus: it pulls CLK low ("not ready")
-       as its first act, but the M-E returns with CLK still released by the
-       DOS, and the receiver's ready-wait is level-triggered -- so without this
-       it read three garbage "bytes" before the drive had done anything. */
+    /* Releases CLK and HOLDS DATA low. The low is what the loader's first byte
+       waits to see released: the M-E used to leave DATA high, and a drive
+       waiting for "high" would have matched at once and transmitted before
+       the host was looking. */
+    epyx_send_end();
+
+    /* Now wait for the LOADER to take the bus: it pulls CLK low ("not ready")
+       as its first act, and the receiver's ready-wait is level-triggered -- so
+       without this it would read garbage "bytes" before the drive had done
+       anything. */
     if (fastload_wait_drive())
         return 1;
-
-    /* Pull DATA low so the drive's first byte has an edge to wait for.
-       Every later byte gets one for free -- the receiver's "got it" leaves
-       DATA low between bytes -- but the M-E leaves the bus idle with DATA
-       high, and a drive waiting for "high" would match instantly and transmit
-       before the host was looking. */
-    *(unsigned char *)0xDD00 |= 0x20;
     return 0;
 }
 
 void fastload_epyx_mark_unsupported(void)
 {
     epyx_cap[fl_dev - 8] = 1;
+    if (KL_MEATDEV == fl_dev)
+        KL_MEATDEV = 0;
 }
 
 void fastload_epyx_install(void)

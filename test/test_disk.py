@@ -78,12 +78,15 @@ def test_ls_colors_names_by_type(v):
     seq = color_at("DOC")
     assert prg is not None and seq is not None, "ls names not found as bare lines"
     assert prg != seq, "PRG and SEQ names share a color (%d vs %d)" % (prg, seq)
-    # Lock the type_color contract (src/overlays/dir.c): PRG light green, SEQ
-    # cyan. The navigable kinds DIR and URL share yellow (0x07) so directories
-    # read like the links you can also cd into -- but a 1541 image has no DIR
-    # entries, so that pairing is hardware-verified, not asserted here.
+    # Lock the type_color contract (src/banks/dir.c): PRG light green, SEQ in
+    # the plain text color -- it is data, not something to run or enter. The
+    # navigable kinds DIR and URL share yellow (0x07) so directories read like
+    # the links you can also cd into -- but a 1541 image has no DIR entries, so
+    # that pairing is hardware-verified, not asserted here.
     assert prg == 0x0D, "PRG should be light green, got %d" % prg
-    assert seq == 0x03, "SEQ should be cyan, got %d" % seq
+    text = v.read_byte(0x0286) & 0x0F
+    assert seq == text, \
+        "SEQ should be the text color (%d), got %d" % (text, seq)
 
 
 def test_pwd_prints_disk_name(v):

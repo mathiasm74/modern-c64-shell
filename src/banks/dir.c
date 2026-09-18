@@ -347,10 +347,16 @@ static char up(char c)
     return c;
 }
 
-/* Color a directory entry by its CBM type token (e.g. "PRG", "DIR"). The
-   navigable kinds -- DIR and URL, both cd-able on a Meatloaf -- share a color
-   (yellow); DEL (a deleted slot) is greyed even though it also starts with 'D',
-   so the second char disambiguates DIR vs DEL. */
+/* Color a directory entry by its CBM type token (e.g. "PRG", "DIR"). The rule
+   is `ls` on Unix: color what you can RUN or ENTER, leave ordinary files in the
+   text color, and grey out what nothing here can use.
+     PRG                           light green  runnable
+     DIR, URL, disk images (D64..) yellow       cd-able on a Meatloaf
+     SEQ, USR                      text color   data: cat / less / edit / cp
+     REL, DEL                      grey         unusable here / a leftover slot
+   0 means "the text color" -- the caller keeps the user's own, which is also
+   the one guaranteed to read on whatever background they chose. The second
+   letter splits the pairs that share a first: DIR/DEL and URL/USR. */
 static unsigned char type_color(const char *type)
 {
     char a = up(type[0]);
@@ -358,13 +364,12 @@ static unsigned char type_color(const char *type)
 
     switch (a) {
     case 'P': return 0x0D;                          /* PRG  light green */
-    case 'S': return 0x03;                          /* SEQ  cyan        */
-    case 'R': return 0x0A;                          /* REL  light red   */
-    case 'U': return 0x07;                          /* USR / URL yellow */
+    case 'U': return (b == 'R') ? 0x07 : 0x00;      /* URL yellow, USR text */
     case 'D': return (b == 'I' || (b >= '0' && b <= '9'))
                      ? 0x07 : 0x0C;     /* DIR + disk images (D64/D71/D81...,
                                            all cd-able) yellow, DEL grey */
-    default:  return 0x00;
+    case 'R': return 0x0C;                          /* REL  grey        */
+    default:  return 0x00;                          /* SEQ and the rest */
     }
 }
 

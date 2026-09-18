@@ -61,8 +61,6 @@ static void puts_bank(const char *s)
  *   $0370       name length        $0399  status (see DM_* below)
  *   $0371-$0398 name (<=40)        $039A  load_start     $039C  load_end
  */
-/* fastload_recv.s: 0 = Meatloaf sample timing, nonzero = real-1541 timing */
-#define RECV_PAD (*(unsigned char *)0x03A6)
 #define VIC_SPREN (*(unsigned char *)0xD015)
 #define CIA1_ICR  (*(unsigned char *)0xDC0D)
 #define DM_NLEN  (*(unsigned char *)0x0370)
@@ -178,18 +176,30 @@ void fastload_epyx_mark_unsupported(void);
 unsigned char fastload_epyx_send_header(const char *name, unsigned char namelen);
 unsigned int __fastcall__ epyx_recv_prg(void);
 
-void disk_fload(void)
+/* Entry 5: probe the current device and record what it is (KL_MEATDEV in
+   fastload.c). The stock swap calls this first, so KLOAD is only ever armed for
+   a drive that has just answered as Meatloaf-class. */
+void disk_probe(void)
+{
+    fastload_set_device(MB_DEV);
+    fastload_epyx_capable();
+}
+
+/* The fast load, shared by `fload` and `load`. The name must already be in
+   DM_NAME/DM_NLEN, fold_name'd. Prints only the progress dots and, on success,
+   the "Fast-loaded" line: every failure is RETURNED, because what to say
+   depends on the caller -- `fload` reports it, `load` quietly falls back to the
+   standard path, which then reports whatever the drive itself says. */
+#define FAST_OK      0
+#define FAST_NONE    1          /* this drive has no fast path: nothing sent */
+#define FAST_FAILED  2          /* tried, and it did not complete */
+#define FAST_TOOBIG  3          /* the program ran into the bank's own RAM */
+#define FAST_NODEV   4          /* nobody on the bus */
+
+static unsigned char fast_load(void)
 {
     unsigned char sprites;
     unsigned int end;
-    char **argv = BD_ARGV;
-
-    DM_STAT = DM_FAILED;
-    if (BD_ARGC < 2) {
-        usage("fload <name>");
-        return;
-    }
-    DM_NLEN = fold_name(DM_NAME, argv[1]);
 
     fastload_set_device(MB_DEV);
     /* Two kinds of drive, two payloads, chosen by the probe.
@@ -204,33 +214,23 @@ void disk_fload(void)
        it is reset: `ls` worked, `fload` reported "not supported", and the
        drive was then dead. dir.c has always probed; this path did not, and it
        is the one `run <name>` uses too. */
-    RECV_PAD = 0;                   /* Meatloaf sample timing by default */
     if (fastload_epyx_capable()) {
         fastload_epyx_install();
-        if (iec_status() & ST_NODEV) {
-            report_no_device();
-            return;
-        }
+        if (iec_status() & ST_NODEV)
+            return FAST_NODEV;
         if (fastload_epyx_send_header((const char *)DM_NAME, DM_NLEN) != 0) {
             fastload_epyx_mark_unsupported();
-            puts_bank("fast load not supported");
-            k_chrout(CR);
-            return;
+            return FAST_NONE;
         }
     } else if (fastload_drive_executes()) {
         /* The name goes up with the code, so there is no header to send: the
            drive never has to receive, only transmit. */
-        if (fastload_drive_install((const char *)DM_NAME, DM_NLEN) != 0) {
-            report_no_device();
-            return;
-        }
-        /* The drive path now speaks the SAME ten-cycle wire as Meatloaf --
-           see src/drive1541.s -- so it uses the same sample offsets and
-           needs no per-byte CLK wait. RECV_PAD stays 0. */
+        if (fastload_drive_install((const char *)DM_NAME, DM_NLEN) != 0)
+            return FAST_NODEV;
+    } else if (iec_status() & ST_NODEV) {
+        return FAST_NODEV;
     } else {
-        puts_bank("fast load not supported");
-        k_chrout(CR);
-        return;
+        return FAST_NONE;
     }
     /* Sprites steal VIC cycles exactly as badlines do, and the byte is
        cycle-locked, so any sprite enabled across a transfer would corrupt it.
@@ -240,24 +240,16 @@ void disk_fload(void)
     sprites = VIC_SPREN;
     VIC_SPREN = 0;
     /* Mask CIA1's timer IRQ for the transfer, as the real cartridge does
-       ($7F -> $DC0D once per load). The receiver masks interrupts per BYTE with
-       php/sei/plp, so BETWEEN bytes they are back on and the 60 Hz keyboard IRQ
-       can land inside a block and stretch it. Killing it at the source costs
-       nothing per byte. Restored to the KERNAL's $81 after. */
+       ($7F -> $DC0D once per load). Restored to the KERNAL's $81 after. */
     CIA1_ICR = 0x7F;
     (void)CIA1_ICR;
     end = epyx_recv_prg();
     CIA1_ICR = 0x81;
     VIC_SPREN = sprites;
-    if (end == 0) {                     /* fewer than 3 bytes -> failure */
+    if (end == 0)                       /* fewer than 3 bytes, or cut short */
         /* $03A4: the receiver stopped because the program reached this bank's
-           own RAM. Say so -- "fast load failed" would send the user hunting a
-           bus problem that isn't there. */
-        puts_bank(*(unsigned char *)0x03A4 ? "program too large"
-                                           : "fast load failed");
-        k_chrout(CR);
-        return;
-    }
+           own RAM -- not a bus problem, and not one a retry would fix. */
+        return *(unsigned char *)0x03A4 ? FAST_TOOBIG : FAST_FAILED;
     DM_START = *(unsigned int *)0x02AF; /* LADRL/LADRH, set by the ASM */
     DM_END = end;
 
@@ -268,27 +260,62 @@ void disk_fload(void)
     iec_set_sa(15);
     iec_chkin();
     iec_clrchn();
-    if (iec_status() & (ST_NODEV | ST_TIMEOUT)) {
-        puts_bank("fast load failed");
-        k_chrout(CR);
-        return;
-    }
+    if (iec_status() & (ST_NODEV | ST_TIMEOUT))
+        return FAST_FAILED;
 
     if (DM_START < 0xCF00 && DM_END > 0xCE00)
         TC_OK = 0;                      /* the load overwrote the cache page */
     DM_STAT = DM_OK;
     report_loaded("Fast-loaded $");
+    return FAST_OK;
+}
+
+/* Say why a fast load did not happen. A failed one may have printed dots with
+   no line end, so start a fresh line first. */
+static void fast_report(unsigned char r)
+{
+    if (r == FAST_NODEV) {
+        report_no_device();
+        return;
+    }
+    if (*(unsigned char *)0x00D3)       /* PNTR: the cursor's column */
+        k_chrout(CR);
+    if (r == FAST_NONE)
+        puts_bank("fast load not supported");
+    else if (r == FAST_TOOBIG)
+        puts_bank("program too large");
+    else if (r == FAST_FAILED)
+        puts_bank("fast load failed");
+    else
+        return;                         /* FAST_OK: already reported */
+    k_chrout(CR);
+}
+
+/* fload <name> -- the fast path ONLY, and it says so when it cannot: the way to
+   find out whether a drive is actually fast-loading, now that `load` falls back
+   without comment. */
+void disk_fload(void)
+{
+    char **argv = BD_ARGV;
+
+    DM_STAT = DM_FAILED;
+    if (BD_ARGC < 2) {
+        usage("fload <name>");
+        return;
+    }
+    DM_NLEN = fold_name(DM_NAME, argv[1]);
+    fast_report(fast_load());
 }
 
 
 /* --- load ------------------------------------------------------------------
  *
- * Standard IEC load: per-byte handshaked, so it is bit-perfect. The Epyx fast
- * path is `fload` above -- its timed 2-bit receiver is only reliable on some
- * drives/links, and on the user's Meatloaf it jitters bits and scatters
- * corruption through the file (bogus BASIC line numbers, mangled tokens),
- * which a per-byte program then trips over. `load` stays the safe, always-
- * correct default, so `run` builds on a clean program.
+ * Fast by default since v0.2.52 (see disk_load). Below the fast attempt is the
+ * standard IEC load: per-byte handshaked, so it is bit-perfect on any drive --
+ * the fallback, and all of `load --slow`. It was the only path `load` had while
+ * the Epyx receiver was unreliable on the user's Meatloaf (it jittered bits
+ * through the file); the badline pacing fixed that, and a real 1541 has had a
+ * fast path since v0.2.48.
  *
  * Moved here from src/commands/fs.c with its two private helpers: the progress
  * dots, and report_drive_status -- which HAS to be here, because reporting the
@@ -359,21 +386,67 @@ static void report_drive_status(void)
    re-fetch.) Refuse cleanly at the boundary instead. */
 #define BANK_RAM_FLOOR 0x9D00
 
+static unsigned char is_slow_flag(const char *a)
+{
+    const char *f = "--slow";
+
+    while (*f && *a == *f) {
+        ++a;
+        ++f;
+    }
+    return *a == 0 && *f == 0;
+}
+
+/* load [--slow] <name> -- FAST BY DEFAULT. The fast path is tried first; if the
+   drive has none, or the fast load does not complete, the standard path below
+   runs instead without comment, and reports whatever the drive says -- so a
+   missing file still reads "62 file not found", not "fast load failed".
+   --slow goes straight to the standard path: per-byte handshaked, bit-perfect
+   on any drive. `fload` is the fast path alone.
+
+   Standard only, also: names longer than a CBM name (a Meatloaf URL or long
+   path), which the fast header's 16 bytes cannot carry. */
 void disk_load(void)
 {
-    unsigned char lo, hi, bc, n = 0;
+    unsigned char lo, hi, bc, i, n = 0, slow = 0;
     unsigned char *p;
+    const char *name = 0;
     char **argv = BD_ARGV;
 
     DM_STAT = DM_REPORTED;
-    if (BD_ARGC < 2) {
-        usage("load <name>");
+    for (i = 1; i < BD_ARGC; ++i) {
+        if (argv[i][0] == '-' && argv[i][1] == '-') {
+            if (!is_slow_flag(argv[i])) {
+                usage("load [--slow] <name>");
+                return;
+            }
+            slow = 1;
+        } else if (!name) {
+            name = argv[i];
+        }
+    }
+    if (!name) {
+        usage("load [--slow] <name>");
         return;
     }
-    /* Not fold_name'd: `load` passes the name as typed (the IEC layer folds it
-       on the way out), and it may be longer than a 16-char CBM name. */
-    while (argv[1][n] && n < 40) {
-        DM_NAME[n] = argv[1][n];
+    while (name[n])
+        ++n;
+    if (!slow && n <= 16) {
+        DM_NLEN = fold_name(DM_NAME, name);
+        i = fast_load();
+        if (i == FAST_OK || i == FAST_NODEV || i == FAST_TOOBIG) {
+            fast_report(i);             /* nothing a slow retry would change */
+            return;
+        }
+        if (*(unsigned char *)0x00D3)   /* dots from a failed attempt */
+            k_chrout(CR);
+        DM_STAT = DM_REPORTED;          /* no fast path, or it failed: */
+    }                                   /* quietly go the standard way */
+    /* Not fold_name'd: the standard path passes the name as typed (the IEC
+       layer folds it on the way out), and it may be longer than a CBM name. */
+    n = 0;
+    while (name[n] && n < 40) {
+        DM_NAME[n] = name[n];
         ++n;
     }
     DM_NAME[n] = 0;

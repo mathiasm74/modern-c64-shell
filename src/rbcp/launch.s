@@ -434,6 +434,22 @@ rbcp_trampoline:
         ldy #$03                        ; piece 1 (descriptor index 3)
         jsr kl_poke_block
         bcs @no_kload
+        ; kl_dev, the first byte of piece 1: the one device the disk bank has
+        ; confirmed is Meatloaf-class (KL_MEATDEV), or 0. KLOAD sends every
+        ; other device to the stock loader -- its fast path M-E's fingerprint
+        ; filler that a real 1541 would EXECUTE, and hang.
+        lda KL_MEATDEV
+        sta rbcp_arg0
+        lda #<KLOAD2_SLOT_OFF
+        sta rbcp_arg1
+        lda #>KLOAD2_SLOT_OFF
+        sta rbcp_arg2
+        lda #$00
+        sta rbcp_arg3
+        lda #RBCP_STOCK_RAM_SLOT
+        sta rbcp_arg4
+        jsr rbcp_cmd_slot_poke
+        bcs @no_kload
         lda #<__KLOAD3_IMG__
         ldx #>__KLOAD3_IMG__
         ldy #$06                        ; piece 2: the EXIT wedge
@@ -562,6 +578,7 @@ kl_desc_hi:
 ; Where kload.s goes in the served stock image: $F8E2, KERNAL-first so offset 0
 ; is $E000. And the two bytes of the ILOAD entry in the stock vector table at
 ; $FD4C, pointed at it.
+KL_MEATDEV      = $03A5         ; set by the disk bank's probe (fastload.c)
 KLOAD_SLOT_OFF  = $F8E2 - $E000
 KLOAD2_SLOT_OFF = $FBA6 - $E000
 KLOAD3_SLOT_OFF = $F533 - $E000
