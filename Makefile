@@ -209,6 +209,20 @@ $(BUILD)/banks/disk_bank_c.o: $(BUILD)/banks/disk_bank.s
 # resident copies through the SVC table -- was rejected for the Epyx paths: they
 # are cycle-counted, and the extra indirection is the kind of jitter the
 # receiver's badline pacing exists to remove.
+# The per-bank object lists. These MUST stay above BOTH sets of link rules --
+# the One ROM ones further down and the EF ones above them -- because make
+# expands a rule's PREREQUISITES as the rule is read, while its recipe expands
+# at run time. Defined after the EF rules (as these three were), the filter-out
+# in their prerequisite lists saw an empty variable, so the EF files/edit/hex
+# banks depended on their crt0 and cfg alone: editing edit.c relinked the One
+# ROM bank but NOT the EF one, and `make ef` then packed a stale bank into the
+# .crt. The symptom was a cartridge whose banner showed the new version while
+# a bank still ran the old code.
+FILES_BANK_OBJ := $(BUILD)/banks/crt0_files_bank.o $(BUILD)/banks/fb_files_entry.o \
+                  $(BUILD)/banks/fb_files.o
+HEX_BANK_OBJ  := $(BUILD)/banks/crt0_hex.o $(BUILD)/banks/fb_hex.o
+EDIT_BANK_OBJ := $(BUILD)/banks/crt0_edit.o $(BUILD)/banks/fb_edit.o
+
 BANK_SHARED_OBJ := $(BUILD)/banks/bk_iec_clkwait.o \
                    $(BUILD)/banks/bk_fastload_recv.o $(BUILD)/banks/bk_fastload_send.o \
                     $(BUILD)/banks/bk_drive1541_blob.o \
@@ -470,17 +484,10 @@ $(BUILD)/banks/fb_%.s: src/banks/%.c | $(BUILD)
 $(BUILD)/banks/fb_%.o: $(BUILD)/banks/fb_%.s
 	$(AS) $(ASFLAGS) -D BANK_BUILD=1 -o $@ $<
 
-FILES_BANK_OBJ := $(BUILD)/banks/crt0_files_bank.o $(BUILD)/banks/fb_files_entry.o \
-                  $(BUILD)/banks/fb_files.o
-
-HEX_BANK_OBJ := $(BUILD)/banks/crt0_hex.o $(BUILD)/banks/fb_hex.o
-
 $(BUILD)/banks/hex_bank.bin: $(HEX_BANK_OBJ) cfg/hex_bank.cfg
 	$(LD) -C cfg/hex_bank.cfg -o $@ $(HEX_BANK_OBJ) $(RTLIB) \
 	      -Ln $(BUILD)/banks/hex_bank.labels -m $(BUILD)/banks/hex_bank.map
 	@echo "  hex_bank.bin  : $$(wc -c < $@) bytes"
-
-EDIT_BANK_OBJ := $(BUILD)/banks/crt0_edit.o $(BUILD)/banks/fb_edit.o
 
 $(BUILD)/banks/edit_bank.bin: $(EDIT_BANK_OBJ) cfg/edit_bank.cfg
 	$(LD) -C cfg/edit_bank.cfg -o $@ $(EDIT_BANK_OBJ) $(RTLIB) \

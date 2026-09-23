@@ -203,3 +203,51 @@ def test_every_crt_bank_carries_an_identical_roml(v):
         assert image == first, \
             "bank %d's ROML differs from bank 0's -- bank_call would be " \
             "switched out from under itself" % bank
+
+
+def test_ef_bank_images_match_the_onerom_banks(v):
+    """The EF banks are RELINKED from the same C objects as the One ROM banks,
+    so their string data must be identical. A mismatch means one set was built
+    from newer objects than the other.
+
+    Regression for a make bug that produced exactly that: FILES/HEX/EDIT_BANK_OBJ
+    were defined BELOW the EF link rules, and make expands prerequisites as a
+    rule is read -- so those three EF banks depended on their crt0 and cfg
+    alone. Editing edit.c relinked the One ROM bank and left the EF one stale,
+    and `make ef` packed the stale bank into the .crt. The banner showed the new
+    version while the bank ran old code, which reads like a source/hardware
+    contradiction rather than a build fault.
+    """
+    (void) = v
+    banks = ["disk_bank", "util_bank", "files_bank", "edit_bank", "hex_bank"]
+    base = os.path.join(_HERE, "..", "build", "banks")
+    efd = os.path.join(_HERE, "..", "build", "ef", "banks")
+
+    def strings(path, least=6):
+        out, cur = set(), bytearray()
+        for b in open(path, "rb").read():
+            if 32 <= b < 127:
+                cur.append(b)
+                continue
+            if len(cur) >= least:
+                out.add(bytes(cur))
+            cur = bytearray()
+        if len(cur) >= least:
+            out.add(bytes(cur))
+        return out
+
+    checked = 0
+    for name in banks:
+        a = os.path.join(base, name + ".bin")
+        b = os.path.join(efd, name + ".bin")
+        if not (os.path.exists(a) and os.path.exists(b)):
+            continue
+        only_onerom = strings(a) - strings(b)
+        only_ef = strings(b) - strings(a)
+        assert not (only_onerom or only_ef), (
+            "%s differs between the targets -- one is stale.\n"
+            "  only in the One ROM bank: %s\n"
+            "  only in the EF bank:      %s" % (name, sorted(only_onerom)[:6],
+                                                sorted(only_ef)[:6]))
+        checked += 1
+    assert checked >= 4, "expected to compare the banks, compared %d" % checked
