@@ -123,6 +123,12 @@ static unsigned char dir_fast, fdir_left, fdir_eof;
 static unsigned int dbuf_len, dbuf_pos, dbuf_w; /* replay len/pos, slurp write idx */
 static unsigned char dir_buffered;
 
+/* Did the drive give us a single directory line? Even a freshly formatted,
+   empty disk yields its header, so "none at all" means the drive handed over
+   nothing -- no disk in it, the usual cause. Without this ls simply printed
+   nothing and returned to the prompt, which reads like a bug in ls. */
+static unsigned char dir_any;
+
 static void puts_raw(const char *s)
 {
     while (*s)
@@ -240,6 +246,7 @@ static unsigned char dir_line(unsigned int *blocks)
             dir_buf[n++] = b;
     }
     dir_buf[n] = 0;
+    dir_any = 1;
     return 1;
 }
 
@@ -269,6 +276,7 @@ static void dir_end(void)
    incrementally with no buffering (the old path, no $0800 clobber). */
 static unsigned char dir_open(void)
 {
+    dir_any = 0;
     dir_buffered = 0;
     dbuf_w = 0;
     if (!dir_begin(1))                      /* fast if capable; reads 2 load-addr bytes */
@@ -294,6 +302,10 @@ static void dir_close(void)
 {
     if (!dir_buffered)                      /* fast free-scroll or standard: drive still open */
         dir_end();
+    if (!dir_any) {
+        puts_raw("no disk");
+        k_chrout(CR);
+    }
 }
 
 /* Page the listing like `less`. Pressing CTRL at ANY point during the listing

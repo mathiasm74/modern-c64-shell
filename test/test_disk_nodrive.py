@@ -31,3 +31,19 @@ def test_ls_without_disk_stays_responsive(v):
             ok = True
             break
     assert ok, "shell did not respond after `ls` with no disk (it wedged)"
+
+
+def test_ls_without_disk_says_no_disk(v):
+    """An empty drive answers the "$" open and then hands over nothing, so the
+    listing ended before it began and ls printed NOTHING -- indistinguishable
+    from a broken ls. Even a freshly formatted disk yields a header line, so
+    "no lines at all" is the signal."""
+    seed_disk_bank(v)
+    _type(v, "ls")
+    said = False
+    for _ in range(16):
+        v.run_for(0.4)
+        if "no disk" in v.screen_text():
+            said = True
+            break
+    assert said, "ls said nothing about the empty drive\n%s" % v.screen_text()
