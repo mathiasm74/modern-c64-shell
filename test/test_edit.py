@@ -350,9 +350,10 @@ def test_edit_lists_a_basic_program(v):
     Two things this proves beyond "it expanded something":
       - the keyword INSIDE the quoted string stays literal, because BASIC does
         not tokenize inside strings and neither may we;
-      - the editor refuses to save it. There is no tokenizer yet, so writing
-        the listing back would replace a working program with its own source
-        text -- data loss, silently.
+      - it round-trips: test_edit_basic_roundtrip_is_byte_exact saves it back
+        out through the tokenizer and compares the bytes. (This docstring used
+        to say the editor refused to save a listing, which stopped being true
+        when the tokenizer landed in v0.2.04.)
     """
     v.run_for(0.3)
     _seed(v)
@@ -368,6 +369,23 @@ def test_edit_lists_a_basic_program(v):
         "last line missing (link chain walk stopped early?)\n%s" % txt
 
     # leave the editor so the next test in this module starts from the prompt
+    _keys(v, [CTRL_X])
+    _wait(v, "8>")
+
+
+def test_edit_basic_status_does_not_claim_read_only(v):
+    """The status line said "basic (read-only)" long after the tokenizer made
+    saving work -- so it told you the opposite of the truth, on a file the
+    round-trip test proves is writable."""
+    _seed(v)
+    _keys(v, "edit bas")
+    _keys(v, [CR])
+    assert _wait(v, "10 PRINT"), \
+        "BASIC program was not detokenized\n%s" % v.screen_text()
+    assert "read-only" not in _row(v, 24), \
+        "status still claims a BASIC listing is read-only\n%s" % v.screen_text()
+    assert "basic" in _row(v, 24), \
+        "status no longer says the file is BASIC\n%s" % v.screen_text()
     _keys(v, [CTRL_X])
     _wait(v, "8>")
 

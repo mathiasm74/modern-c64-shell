@@ -447,8 +447,11 @@ static unsigned char prompt_name(void)
 }
 
 /* Set when the buffer holds a listing expanded from a tokenized BASIC program
-   (see load_file). save_file refuses while it is set: there is no tokenizer
-   yet, so writing the listing back would replace the program with its source. */
+   (see load_file). save_file TOKENIZES on the way back out and writes ",p,w",
+   so the program round-trips as a program -- it was read-only only until the
+   tokenizer landed (v0.2.04). Set by load_file alone: a BASIC listing TYPED
+   into a new document is still saved as SEQ text, because nothing sniffs the
+   buffer's contents. */
 /* ^V pressed: the NEXT key is inserted as text rather than obeyed. */
 static unsigned char literal_next;
 
@@ -884,7 +887,7 @@ static void load_file(void)
     if (doclen() == 0)
         msg("new file");
     else if (basic_mode)
-        msg("basic (read-only)");
+        msg("basic (saves as program)");
 }
 
 /* --- key handling ----------------------------------------------------------- */
