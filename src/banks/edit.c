@@ -48,6 +48,10 @@ unsigned char k_chrin(void);
    filename straight out, so `edit` needs no resident thunk at all -- just its
    dispatch-table row. */
 #define BD_ARGC  (*(unsigned char *)0x03A0)
+/* The shell's current device, published by bank_dispatch (fs.c) -- the same
+   mailbox files.c/hex.c/dir.c read. This file used to hardcode 8, so `device
+   9` then `edit` still talked to unit 8. */
+#define MB_DEV   (*(unsigned char *)0x02D1)
 #define BD_ARGV  (*(char ***)0x03A1)
 
 #define CR_CH    0x0D
@@ -722,6 +726,48 @@ static unsigned int tokenize(unsigned char *dst, unsigned int room)
 
 static char msgbuf[24];
 
+/* The drive's own account of a failed write. Our ST byte cannot tell "write
+   protect on" from "disk full" or "file exists", and those are what actually
+   stop a save -- so ask channel 15, the way `status` does. The code and
+   message are kept; the trailing track/sector fields are dropped so the text
+   fits the message row. Falls back to the raw ST when the drive says nothing.
+   Call this only once the data channel is closed. */
+static void show_drive_error(void)
+{
+    unsigned char n = 0, commas = 0, b;
+
+    STREG = 0;
+    k_setlfs(MB_DEV, 15);
+    k_setnam("", 0);
+    if (!k_open()) {
+        k_chkin();
+        for (;;) {
+            b = k_chrin();
+            if (STREG & 0x02)           /* read timeout: drive said nothing */
+                break;
+            if (b == ',' && ++commas == 2)
+                break;                  /* stop before ",track,sector" */
+            if (b != CR_CH && b != 0 && n < 23)
+                msgbuf[n++] = b;
+            if (STREG & 0x40)           /* EOI on the last byte */
+                break;
+        }
+        k_clrchn();
+    }
+    k_close();
+    if (n) {
+        msgbuf[n] = 0;
+        msg(msgbuf);
+        return;
+    }
+    msgbuf[0] = 'w'; msgbuf[1] = 'r'; msgbuf[2] = 'i'; msgbuf[3] = 't';
+    msgbuf[4] = 'e'; msgbuf[5] = ' '; msgbuf[6] = 'e'; msgbuf[7] = 'r';
+    msgbuf[8] = 'r'; msgbuf[9] = 'o'; msgbuf[10] = 'r'; msgbuf[11] = ',';
+    msgbuf[12] = ' '; msgbuf[13] = 's'; msgbuf[14] = 't'; msgbuf[15] = ' ';
+    print_u16(msgbuf + 16, STREG);
+    msg(msgbuf);
+}
+
 static unsigned char save_file(void)
 {
     unsigned int i, dl = doclen();
@@ -745,7 +791,7 @@ static unsigned char save_file(void)
     }
     n = build_iocmd(basic_mode ? ",p,w" : ",s,w", 1);
     STREG = 0;
-    k_setlfs(8, 2);
+    k_setlfs(MB_DEV, 2);
     k_setnam((const char *)iocmd, n);
     if (k_open()) {
         msg("open failed");
@@ -769,7 +815,7 @@ static unsigned char save_file(void)
     k_clrchn();
     k_close();
     if (STREG & 0x83) {
-        msg("write error");
+        show_drive_error();
         return 0;
     }
     modified = 0;
@@ -793,7 +839,7 @@ static void load_file(void)
        over whatever it is, and we decide below. */
     n = build_iocmd("", 0);
     STREG = 0;
-    k_setlfs(8, 2);
+    k_setlfs(MB_DEV, 2);
     k_setnam((const char *)iocmd, n);
     if (k_open())
         return;
@@ -930,14 +976,20 @@ void edit_main(void)
                 if (c == 'y' || c == 'Y') {
                     if (save_file())
                         goto out;
-                    break;                  /* save failed: stay */
+                    /* Save failed: stay, and KEEP the reason on screen. The
+                       blanket msg_hold = 0 that used to sit after this loop
+                       cleared it, and the render below then drew the help row
+                       over it -- so the one path that can fail was the one
+                       path whose error you could never read. */
+                    break;
                 }
                 if (c == 'n' || c == 'N')
                     goto out;
-                if (c)
-                    break;                  /* anything else: cancel */
+                if (c) {
+                    msg_hold = 0;           /* cancelled: drop the question */
+                    break;
+                }
             }
-            msg_hold = 0;
             break;
         case 0x0F:                          /* ^O save */
             save_file();

@@ -293,6 +293,32 @@ def test_edit_typing_on_the_last_line_takes_the_light_path(v):
     v.run_for(0.3)
 
 
+def test_edit_save_on_exit_returns_to_the_shell(v):
+    # Every other exit test answers 'n'. The 'y' path -- save, then leave --
+    # had no coverage at all, and it is the one that can fail: save_file()
+    # returning 0 keeps the editor open, which is right, but it must not
+    # happen on a good save.
+    _seed(v)
+    _keys(v, "edit sv")
+    _keys(v, [CR])
+    _wait(v, "edit: sv")
+    _keys(v, "hi there")
+    v.run_for(0.3)
+    _keys(v, [CTRL_X])
+    v.run_for(0.4)
+    assert "save modified buffer" in _row(v, 24), \
+        "no save prompt on exit\n%s" % v.screen_text()
+    _keys(v, "y")
+    assert _wait(v, "8>"), \
+        "editor did not exit after saving\n%s" % v.screen_text()
+    # and the shell is alive, not just showing a stale prompt
+    _keys(v, "ver")
+    _keys(v, [CR])
+    v.run_for(0.5)
+    assert "Tardis DOS" in v.screen_text(), \
+        "shell dead after save-and-exit\n%s" % v.screen_text()
+
+
 def test_saved_file_appears_in_ls(v):
     # Companion to the user-reported Meatloaf issue where an editor-saved
     # file showed in `dir` but not `ls` (ls hid lines whose type token it
