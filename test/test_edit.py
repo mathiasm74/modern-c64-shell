@@ -236,6 +236,63 @@ def test_edit_lightpath_repaints_only_current_line(v):
     v.run_for(0.3)
 
 
+def _cursor_cell(v):
+    """(row, col) of the editor's inverted cursor cell, searching the text
+    window only (the title/help rows are never reversed)."""
+    cells = v.screen_cells()
+    for i in range(40, 24 * 40):
+        if cells[i] & 0x80:
+            return divmod(i, 40)
+    return None
+
+
+def test_edit_cursor_follows_typing_on_the_last_line(v):
+    # Regression: row_start() walked PAST the row when the cursor sat at the
+    # end of a line that ends the document without a CR -- the everyday case
+    # of typing into a new file. The character landed correctly but the
+    # cursor was drawn at column 0 of the row BELOW it.
+    _seed(v)
+    _keys(v, "edit")
+    _keys(v, [CR])
+    _wait(v, "edit: (new)")
+    assert _cursor_cell(v) == (1, 0), \
+        "cursor not at the start of an empty document\n%s" % v.screen_text()
+    _keys(v, "hello")
+    v.run_for(0.3)
+    assert "hello" in _row(v, 1), "typed text missing\n%s" % v.screen_text()
+    assert _cursor_cell(v) == (1, 5), \
+        "cursor not after the typed text\n%s" % v.screen_text()
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    _keys(v, "n")
+    v.run_for(0.3)
+
+
+def test_edit_typing_on_the_last_line_takes_the_light_path(v):
+    # Same bug's other half: because row_start(gs) never matched cur_ls, every
+    # keystroke on the last line fell through to the full 23-row redraw, which
+    # is what made the editor flicker and feel slow. Detect it by planting a
+    # marker in an untouched window row -- a full redraw wipes it, the
+    # one-row light path does not.
+    _seed(v)
+    _keys(v, "edit")
+    _keys(v, [CR])
+    _wait(v, "edit: (new)")
+    _keys(v, "ab")
+    v.run_for(0.3)
+    v.write_memory(0x0400 + 5 * 40, [0x17, 0x13, 0x0A])      # "wsj" on row 5
+    _keys(v, "c")
+    v.run_for(0.3)
+    assert "abc" in _row(v, 1), "typed text missing\n%s" % v.screen_text()
+    assert list(v.read_memory(0x0400 + 5 * 40, 3)) == [0x17, 0x13, 0x0A], \
+        "a full redraw wiped the marker row: typing took the heavy path\n%s" \
+        % v.screen_text()
+    _keys(v, [CTRL_X])
+    v.run_for(0.3)
+    _keys(v, "n")
+    v.run_for(0.3)
+
+
 def test_saved_file_appears_in_ls(v):
     # Companion to the user-reported Meatloaf issue where an editor-saved
     # file showed in `dir` but not `ls` (ls hid lines whose type token it
@@ -398,7 +455,10 @@ def test_edit_wraps_long_lines(v):
     assert row1[39] != 0x20, "first row is not full -- did it wrap early?"
     assert row2[0] != 0x20, \
         "long line did not continue on the next row (truncated at 40?)"
-    assert row2[9] != 0x20 and row2[10] == 0x20, \
+    # Mask the reverse-video bit: the cursor now correctly rests ON the
+    # continuation row at column 10 (a reversed space), rather than a row
+    # lower. What this asserts is that no 11th CHARACTER wrapped down.
+    assert row2[9] != 0x20 and row2[10] & 0x7F == 0x20, \
         "continuation row holds the wrong number of characters"
 
     _keys(v, [CTRL_X])

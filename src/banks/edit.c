@@ -214,11 +214,21 @@ static unsigned int row_next(unsigned int rs)
 /* Start of the display row containing p. */
 static unsigned int row_start(unsigned int p)
 {
+    unsigned int dl = doclen();
     unsigned int rs = line_start(p), nx;
 
     for (;;) {
         nx = row_next(rs);
         if (nx > p || nx == rs)
+            return rs;
+        /* nx == p: the cursor sits where this row ENDS, which is normally the
+           start of the next row (the row wrapped at 40 columns, or ended on a
+           CR). But a row that simply ran out of document starts no next row --
+           the cursor is still on this one. Advancing anyway put the cursor at
+           column 0 one row too low while typing on an unterminated last line,
+           and, because cur_ls then never matched, sent every keystroke down
+           the full-redraw path (flicker + slow). */
+        if (nx == dl && nx - rs != COLS && chat(dl - 1) != CR_CH)
             return rs;
         rs = nx;
     }
