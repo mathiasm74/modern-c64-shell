@@ -36,7 +36,7 @@ make clean
 Raw 16KB blob: `cat build/basic.bin build/kernal.bin > build/rom16k.bin`. `./run.sh -warp` forwards VICE args; `SKIP_BUILD=1` skips the build. True drive emulation is mandatory: VICE's virtual-device traps hook the stock KERNAL, which we replaced.
 
 **Build gotchas**
-- `.include` is invisible to make. Every object that includes `rbcp_defs.s`/`rbcp_config.s`/`bank_cstack.inc`/`kernal_shims.inc` needs an explicit Makefile dependency (`grep -rn '^\s*\.include' src --include='*.s'`). A stale bank image packed into firmware fails only on hardware (`ls` → "bank unavailable"). **If hardware contradicts the source, `make clean` and reflash before believing the source.**
+- Header dependencies (`#include` and ca65 `.include`) are tracked automatically: both tools write `.d` files next to their output (`--create-dep`) and the Makefile `-include`s them. Nothing to maintain by hand. Before that, an edited header left objects stale, and `src/shell.h` carries the bank ids and `BANK_CMD` packing — so a stale `shell.o` dispatched to the wrong bank and the only symptom was "bank unavailable (N)", which `make clean` then "fixed", hiding the cause. **If hardware contradicts the source, `make clean` and reflash before believing the source.**
 - Make's 1-second mtime granularity can skip a rebuild after a scripted edit. `make clean` when in doubt.
 - C128/C64C builds share `build/` and compile with `TARGET_C128`, so run `make clean` before a plain breadbin build.
 

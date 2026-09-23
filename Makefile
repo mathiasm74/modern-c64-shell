@@ -59,13 +59,13 @@ VERSION := $(shell grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' src/reset.s | head -1)
 # c64-tardis-dos-<version>-for-onerom-<board>.bin.
 ONEROM_STOCK_OUT := $(BUILD)/c64-tardis-dos-$(VERSION)-for-onerom-$(ONEROM_BOARD).bin
 
-ASFLAGS   := --cpu 6502 -I src
+ASFLAGS_BASE := --cpu 6502 -I src
 # `make TRACE=1` builds the RBCP swap with border-color stage stamps
 # (RBCP_BOOT_TRACE, src/rbcp/launch.s) for timing the stock-ROM handoff on
 # hardware -- $D020 shows even while the display is blanked. Debug builds
 # only; make does not track the flag, so `make clean` when toggling it.
 ifeq ($(TRACE),1)
-ASFLAGS += -D RBCP_BOOT_TRACE
+ASFLAGS_BASE += -D RBCP_BOOT_TRACE
 endif
 # Optional extra ca65/cc65 defines. `make EXTRA_DEFS='-D NO_RBCP'` builds the
 # C128 C64-mode variant, which strips ALL boot/idle One ROM RBCP (reset.s +
@@ -73,10 +73,10 @@ endif
 # boot before the display comes up. make doesn't track the flag, so `make clean`
 # when toggling it.
 EXTRA_DEFS ?=
-ASFLAGS += $(EXTRA_DEFS)
+ASFLAGS_BASE += $(EXTRA_DEFS)
 # -I src so a C file can include a header by its path under src/, e.g.
 # "commands/builtins.h", from anywhere in the tree.
-CC65FLAGS := -t none -O --cpu 6502 -I src -I $(BUILD) $(EXTRA_DEFS)
+CC65FLAGS_BASE := -t none -O --cpu 6502 -I src -I $(BUILD) $(EXTRA_DEFS)
 
 # cc65 data dir (asminc, include, cfg, target libs). The tools normally find this
 # relative to their own binary, but a cc65 built from source and installed to a
@@ -99,10 +99,29 @@ export CC65_HOME := $(abspath $(dir $(shell command -v cc65))../share/cc65)
 # the git compiler; full suite green. Re-enabled v0.43 after the from-source swap.
 CC65_IS_GIT := $(shell cc65 --version 2>&1 | grep -c Git)
 ifeq ($(CC65_IS_GIT),1)
-CC65FLAGS_RESIDENT := $(CC65FLAGS) -Cl
+CC65FLAGS_RESIDENT = $(CC65FLAGS) -Cl
 else
-CC65FLAGS_RESIDENT := $(CC65FLAGS)
+CC65FLAGS_RESIDENT = $(CC65FLAGS)
 endif
+
+# --- automatic header/include dependencies -----------------------------------
+# Neither `#include` nor ca65's `.include` is visible to make, so an edited
+# header left every object that pulls it in stale. That is not cosmetic here:
+# src/shell.h carries the BANK ids and BANK_CMD packing, so a stale shell.o
+# dispatches a command to the wrong bank and the only symptom is "bank
+# unavailable (N)" -- which a `make clean` then "fixes", hiding the cause.
+#
+# Both tools can write the dependencies out themselves, so make tracks them
+# for real instead of a hand-kept list going quietly out of step. The flags
+# name $@, which only has a value inside a recipe, hence the recursively
+# expanded wrappers over the accumulated _BASE variables above.
+#
+# Both tools also emit the bare "prereqs:" line after the rule, so a header
+# that is later DELETED does not strand make on "No rule to make target".
+ASFLAGS    = $(ASFLAGS_BASE) --create-dep $@.d
+CC65FLAGS  = $(CC65FLAGS_BASE) --create-dep $@.d --dep-target $@
+
+-include $(shell find $(BUILD) -name '*.d' 2>/dev/null)
 
 # cc65 runtime library: the `none` target carries the runtime helpers (stack,
 # zerobss, copydata, ...) without any platform startup or conio. Located
@@ -152,13 +171,11 @@ $(BUILD)/%.o: src/%.s | $(BUILD)
 	@mkdir -p $(@D)
 	$(AS) $(ASFLAGS) -o $@ $<
 
-# ca65 resolves `.include` itself; make does not track it, so an edited include
-# leaves every object that pulls it in stale. That is not a cosmetic hazard
-# here: a stale BANK image is packed into the One ROM firmware and the mismatch
-# only shows up on real hardware, as a bank command failing for no visible
-# reason. (One such case cost a debugging session; `make clean` fixed it.)
-# Every include therefore gets an explicit dependency. Keep this list in step --
-# `grep -rn '^\s*\.include' src --include='*.s'` lists them all.
+# These were the hand-kept include dependencies, from before --create-dep did
+# the job properly (see "automatic header/include dependencies" above). They
+# are redundant now and need no upkeep; they stay as a backstop for a ca65
+# old enough to lack --create-dep, where the .d files would never appear and
+# a stale bank image would again reach the firmware silently.
 $(BUILD)/rbcp/rbcp.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 $(BUILD)/rbcp/launch.o: src/rbcp/rbcp_defs.s src/rbcp/rbcp_config.s
 
