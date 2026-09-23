@@ -151,6 +151,7 @@ ROM16K := $(BUILD)/rom16k.bin
 # test afterwards silently measured a STALE cartridge. .SECONDARY keeps them.
 .SECONDARY:
 
+.PHONY: release
 .PHONY: all banks clean check-tools run test test-verbose onerom onerom-flash onerom-stock onerom-pure-stock-flash onerom-c128 onerom-c128-flash onerom-c64c onerom-c64c-flash memtest memtest-flash sizes
 
 all: $(ROM16K)
@@ -644,7 +645,7 @@ onerom-c128:
 # so the flash just programs and tells you to power-cycle by hand.
 onerom-c128-flash: onerom-c128
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
-		--firmware $(BUILD)/tardis-c128-$(C128_BOARD).bin
+		--firmware $(BUILD)/tardis-c128-$(VERSION)-for-onerom-$(C128_BOARD).bin
 	@echo ""
 	@echo "Flashed. COLD-BOOT the One ROM: power the C128 fully off AND briefly"
 	@echo "unplug the One ROM's USB, then reconnect and power on. Then type GO64."
@@ -659,7 +660,6 @@ onerom-c128-flash: onerom-c128
 # port" section in CLAUDE.md. Shares build/ with the C64 build, so the script
 # cleans first -- and you must `make clean` before a subsequent plain C64 build.
 C64C_BOARD ?= fire-28-a
-C64C_VERSION := $(shell grep -o 'v0\.1\.[0-9]*' src/commands/builtins.c | head -1)
 onerom-c64c:
 	ONEROM_BOARD=$(C64C_BOARD) tools/build_c64c.sh
 
@@ -668,7 +668,7 @@ onerom-c64c:
 # and tells you to power-cycle by hand.
 onerom-c64c-flash: onerom-c64c
 	$(ONEROM) $(if $(ONEROM_SERIAL),--serial '$(ONEROM_SERIAL)') program \
-		--firmware $(BUILD)/c64c-tardis-dos-$(C64C_VERSION)-for-onerom-$(C64C_BOARD).bin
+		--firmware $(BUILD)/c64c-tardis-dos-$(VERSION)-for-onerom-$(C64C_BOARD).bin
 	@echo ""
 	@echo "Flashed. COLD-BOOT the One ROM: power the C64C fully off AND briefly"
 	@echo "unplug the One ROM's USB, then reconnect and power on."
@@ -712,3 +712,61 @@ test-verbose: all
 
 clean:
 	rm -rf $(BUILD)
+
+# --- release -----------------------------------------------------------------
+# Every published image, into releases/<version>/ (gitignored: the binaries are
+# GitHub Release assets, not history). Publishing stays a separate, manual step;
+# the last lines print the command.
+#
+#   make release                   the full thing
+#   RELEASE_SKIP_TESTS=1 ...       skip the suite (it takes a few minutes)
+#   RELEASE_DIRTY=1 ...            allow uncommitted changes
+#
+# The images need three different builds of the same tree -- breadbin, and the
+# combined-ROM TARGET_C128 mode for C64C and C128 -- which share build/, so it
+# cleans between them and ends on a clean breadbin build. JiffyDOS is swapped
+# for a hidden placeholder by tools/make_release_cfg.py, and every image is
+# checked afterwards for JiffyDOS and for the version it claims.
+RELEASE_DIR    := releases/$(VERSION)
+RELEASE_BOARDS := fire-24-e fire-24-f
+RELEASE_C64C   := fire-28-a fire-28-c
+RELEASE_C128   := fire-28-c
+
+release:
+	@set -e; \
+	if [ -z "$(RELEASE_DIRTY)" ] && [ -n "$$(git status --porcelain)" ]; then \
+		echo "release: the working tree is not clean (RELEASE_DIRTY=1 to override)"; exit 1; fi; \
+	for f in src/reset.s src/ef/platform.s src/commands/builtins.c test/test_builtins.py; do \
+		grep -q '"[^"]*$(VERSION)' $$f || { echo "release: $$f does not say $(VERSION) -- bump all four (CLAUDE.md, Version)"; exit 1; }; done; \
+	rm -rf $(RELEASE_DIR); mkdir -p $(RELEASE_DIR); \
+	$(PYTHON) tools/make_release_cfg.py $(ONEROM_STOCK_CFG) $(RELEASE_DIR)/onerom-release.json
+	$(MAKE) clean
+	$(MAKE) all ef
+	@if [ -z "$(RELEASE_SKIP_TESTS)" ]; then VICE_JOBS=$${VICE_JOBS:-3} $(MAKE) test; fi
+	cp $(BUILD)/ef/tardis.crt $(RELEASE_DIR)/tardis-dos-$(VERSION)-easyflash.crt
+	@set -e; for b in $(RELEASE_BOARDS); do \
+		$(MAKE) onerom-stock ONEROM_BOARD=$$b ONEROM_STOCK_CFG=$(RELEASE_DIR)/onerom-release.json; \
+		cp $(BUILD)/c64-tardis-dos-$(VERSION)-for-onerom-$$b.bin $(RELEASE_DIR)/; done
+	@set -e; for b in $(RELEASE_C64C); do \
+		$(MAKE) clean; $(MAKE) onerom-c64c C64C_BOARD=$$b; \
+		cp $(BUILD)/c64c-tardis-dos-$(VERSION)-for-onerom-$$b.bin $(RELEASE_DIR)/; done
+	@set -e; for b in $(RELEASE_C128); do \
+		$(MAKE) clean; $(MAKE) onerom-c128 C128_BOARD=$$b; \
+		cp $(BUILD)/tardis-c128-$(VERSION)-for-onerom-$$b.bin $(RELEASE_DIR)/; done
+	$(MAKE) clean
+	$(MAKE) all ef
+	@# The checks. One ROM firmware stores its ROMs rearranged for the board's
+	@# wiring, so their CONTENT is invisible to strings -- but the set labels are
+	@# plain text, and the dev build's says "JiffyDOS". The cart stores its code
+	@# as-is, so it can be checked for the version too.
+	@set -e; cd $(RELEASE_DIR); n=0; \
+	for f in *.bin *.crt; do \
+		if strings -n 4 $$f | grep -qi jiffy; then echo "release: $$f carries JiffyDOS"; exit 1; fi; \
+		n=$$((n+1)); done; \
+	strings *.crt | grep -q 'Tardis DOS $(VERSION)' || { echo "release: the cart does not say $(VERSION)"; exit 1; }; \
+	[ $$n -eq 6 ] || { echo "release: expected 6 images, found $$n"; exit 1; }; \
+	echo ""; echo "Release $(VERSION): $$n images in $(RELEASE_DIR), no JiffyDOS"; \
+	ls -l *.bin *.crt; echo ""; \
+	echo "To publish (tag first; release notes go in a file):"; \
+	echo "  git tag -a $(VERSION) -m 'Tardis DOS $(VERSION)' && git push origin main $(VERSION)"; \
+	echo "  gh release create $(VERSION) --title 'Tardis DOS $(VERSION)' --notes-file NOTES.md $(RELEASE_DIR)/*.bin $(RELEASE_DIR)/*.crt"

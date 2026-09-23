@@ -30,6 +30,10 @@ make onerom-flash    # build + flash onerom-stock + reboot into running (ONEROM_
 make onerom-c128 / onerom-c64c [-flash]   # combined-ROM targets (see below)
 make ef / ef-run     # EasyFlash .crt / run it in VICE
 make memtest[-flash] # standalone bus-diagnostic ROM (docs/MEMTEST.md)
+make release         # every published image into releases/<version>/: checks the tree is clean and the four
+                     # version strings agree, runs the suite, swaps JiffyDOS for a hidden placeholder
+                     # (tools/make_release_cfg.py), builds all six, prints the tag/gh commands.
+                     # RELEASE_SKIP_TESTS=1 / RELEASE_DIRTY=1. Publishing stays manual.
 make clean
 ```
 
