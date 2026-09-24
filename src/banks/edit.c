@@ -164,7 +164,12 @@ static void fill_color(void)
 static void draw_help(void)
 {
     clear_row(SCREEN + 24 * COLS);
-    put_str(SCREEN + 24 * COLS, "^x exit ^o save ^k cut ^c copy ^v literal");
+    /* Exactly 40 columns is the budget, and put_str does not clip -- the old
+       line was 41 and wrote a byte past the end of screen RAM, which is also
+       why its last entry only ever read "^v litera". ^V keeps working and is
+       documented in CLAUDE.md; ^D earns the slot because nothing else tells
+       you a document can BE a program. The title row shows which it is. */
+    put_str(SCREEN + 24 * COLS, "^x exit ^o save ^k cut ^c copy ^d mode");
 }
 
 static void msg(const char *s)
@@ -173,6 +178,16 @@ static void msg(const char *s)
     put_str(SCREEN + 24 * COLS, s);
     msg_hold = 1;
 }
+
+/* Set when the buffer holds a listing expanded from a tokenized BASIC program
+   (see load_file). save_file TOKENIZES on the way back out and writes ",p,w",
+   so the program round-trips as a program -- it was read-only only until the
+   tokenizer landed (v0.2.04). Set by load_file alone: a BASIC listing TYPED
+   into a new document is still saved as SEQ text, because nothing sniffs the
+   buffer's contents. Toggled by ^D. Neither ^M ($0D, which IS RETURN) nor
+   ^T ($14, DEL) can be bound -- CTRL+letter emits $01-$1A, so both collide
+   with keys the editor already reads. */
+static unsigned char basic_mode;
 
 static void draw_title(void)
 {
@@ -186,6 +201,7 @@ static void draw_title(void)
             t[6 + i] = scrc(fname[i]);
     else
         put_str(t + 6, "(new)");
+    put_str(t + 26, basic_mode ? "basic" : "text");
     if (modified)
         put_str(t + 32, "modified");
 }
@@ -446,16 +462,8 @@ static unsigned char prompt_name(void)
     return 1;
 }
 
-/* Set when the buffer holds a listing expanded from a tokenized BASIC program
-   (see load_file). save_file TOKENIZES on the way back out and writes ",p,w",
-   so the program round-trips as a program -- it was read-only only until the
-   tokenizer landed (v0.2.04). Set by load_file alone: a BASIC listing TYPED
-   into a new document is still saved as SEQ text, because nothing sniffs the
-   buffer's contents. */
 /* ^V pressed: the NEXT key is inserted as text rather than obeyed. */
 static unsigned char literal_next;
-
-static unsigned char basic_mode;
 
 
 /* --- BASIC V2 detokenizer ---------------------------------------------------
@@ -925,6 +933,12 @@ void edit_main(void)
     msg_hold = 0;
     chain = 0;
     literal_next = 0;
+    /* basic_mode too: nothing zeroes this bank's BSS (see the header), and
+       load_file -- which used to be its only writer -- is not called for a
+       NAMELESS new document. So a new file opened after editing a BASIC
+       program inherited basic mode and was silently tokenized on save. ^D
+       made that reachable in one keystroke. */
+    basic_mode = 0;
     fnlen = 0;
     if (BD_ARGC > 1) {
         char **argv = BD_ARGV;
@@ -968,6 +982,12 @@ void edit_main(void)
             literal_next = 1;
             msg("literal: next key");
             continue;           /* NOT return -- that is how ^X quits */
+
+        case 0x04:                          /* ^D document mode: text <-> basic */
+            basic_mode = !basic_mode;
+            msg(basic_mode ? "saves as a basic program"
+                           : "saves as a text file");
+            break;
 
         case 0x18:                          /* ^X exit */
             if (!modified)

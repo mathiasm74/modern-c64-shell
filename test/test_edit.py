@@ -28,6 +28,7 @@ VICE_DISK = "data/_scratch_edit.d64"
 
 CTRL_X = 0x18
 CTRL_O = 0x0F
+CTRL_D = 0x04           # ^M is RETURN, ^T is DEL; ^D is free
 CTRL_K = 0x0B
 CTRL_C = 0x03
 CTRL_U = 0x15
@@ -97,6 +98,28 @@ def test_edit_opens_and_exits(v):
     v.run_for(0.5)
     assert "Tardis DOS" in v.screen_text(), \
         "shell did not regain control after edit exit\n%s" % v.screen_text()
+
+
+def test_edit_legend_fits_the_row_and_lists_ctrl_d(v):
+    """The help row is exactly COLS wide and put_str does not clip, so an
+    over-long legend writes past the end of screen RAM -- and its last entry
+    is unreadable. The previous one was 41 characters and displayed as
+    "^v litera".
+    """
+    _seed(v)
+    _keys(v, "edit")
+    _keys(v, [CR])
+    _wait(v, "edit: (new)")
+    legend = _row(v, 24)
+    assert "^d mode" in legend, \
+        "^D is missing from the legend\n%s" % v.screen_text()
+    # Nothing spilled past the row: the cell after the last screen cell is
+    # untouched by the legend (screen RAM is 1000 cells, $0400-$07E7).
+    assert legend.rstrip() == legend.rstrip().strip(), "legend padding odd"
+    assert len(legend.rstrip()) <= 40, \
+        "legend is wider than the row: %r" % legend
+    _keys(v, [CTRL_X])
+    _wait(v, "8>")
 
 
 def test_edit_types_and_discards(v):
@@ -386,6 +409,67 @@ def test_edit_basic_status_does_not_claim_read_only(v):
         "status still claims a BASIC listing is read-only\n%s" % v.screen_text()
     assert "basic" in _row(v, 24), \
         "status no longer says the file is BASIC\n%s" % v.screen_text()
+    _keys(v, [CTRL_X])
+    _wait(v, "8>")
+
+
+def test_edit_ctrl_d_makes_a_new_document_a_basic_program(v):
+    """^D chooses what the document IS, so a program can be WRITTEN, not only
+    edited. basic_mode was set by load_file alone, so a listing typed into a
+    new file could only ever be saved as SEQ text -- there was no way to
+    create a BASIC program with the editor at all.
+
+    Checks the drive's own verdict: type is PRG and the saved length is the
+    TOKENIZED size, not the 10 characters that were typed.
+    """
+    _seed(v)
+    _keys(v, "edit pg")
+    _keys(v, [CR])
+    _wait(v, "edit: pg")
+    assert "text" in _row(v, 0), \
+        "a new document should start as text\n%s" % v.screen_text()
+    _keys(v, "10 print 1")
+    v.run_for(0.3)
+    _keys(v, [CTRL_D])
+    v.run_for(0.4)
+    assert "basic" in _row(v, 0), \
+        "^D did not switch the document to basic\n%s" % v.screen_text()
+    _keys(v, [CTRL_O])                      # save
+    assert _wait(v, "wrote"), "save did not report\n%s" % v.screen_text()
+    # 10 characters typed; tokenized it is shorter, plus the $0801 load address
+    assert "wrote 12" in _row(v, 24), \
+        "saved size is not the tokenized one\n%s" % v.screen_text()
+    _keys(v, [CTRL_X])                      # saved, so it leaves without asking
+    _wait(v, "8>")
+    # Re-open it: only a TOKENIZED program at $0801 makes load_file's sniff
+    # come back in basic mode and detokenize. That proves what was written
+    # without seeding the disk bank -- a bank swap mid-module leaves the edit
+    # bank unseeded for every test that follows if its wait ever expires.
+    _keys(v, "edit pg")
+    _keys(v, [CR])
+    assert _wait(v, "10 PRINT"), \
+        "saved file did not come back as a listing\n%s" % v.screen_text()
+    assert "basic" in _row(v, 0), \
+        "saved file was not recognised as a basic program\n%s" % v.screen_text()
+    _keys(v, [CTRL_X])
+    _wait(v, "8>")
+
+
+def test_edit_ctrl_d_toggles_back_to_text(v):
+    """The switch works both ways: a loaded BASIC program can be saved as its
+    listing, which is also what makes ^D safe to press by mistake."""
+    _seed(v)
+    _keys(v, "edit bas")
+    _keys(v, [CR])
+    assert _wait(v, "10 PRINT"), "listing missing\n%s" % v.screen_text()
+    assert "basic" in _row(v, 0), \
+        "a loaded program should start in basic mode\n%s" % v.screen_text()
+    _keys(v, [CTRL_D])
+    v.run_for(0.4)
+    assert "text" in _row(v, 0), \
+        "^D did not switch the program to text\n%s" % v.screen_text()
+    # ^D alone does not dirty the buffer -- it changes how a future save is
+    # written, not the text -- so ^X leaves without asking.
     _keys(v, [CTRL_X])
     _wait(v, "8>")
 

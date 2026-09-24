@@ -182,7 +182,7 @@ Single-file model (most recent SETLFS is the current file). LOAD always uses bus
 
 **Editors.**
 - `edit <name>` sniffs the file (resident, fs.c): tokenized BASIC (`$0801` + forward link) or text goes to the edit bank, binary to the hex bank; no name opens a new document.
-- The text editor wraps long lines and lists and saves BASIC with its own keyword table. Tokenizing is first-match in table order and suspended in quotes, after REM, and after DATA until the next colon. It refuses out-of-order lines. `^V` inserts the next key literally.
+- The text editor wraps long lines and lists and saves BASIC with its own keyword table. `^D` switches the document between text and BASIC, shown in the title row; it is the only way to CREATE a program, since `basic_mode` is otherwise set solely by `load_file`'s sniff. (`^M` would have been the mnemonic, but $0D is RETURN; `^T` is DEL.) The help row is already 40 columns, so it now shows `^d mode` in place of the truncated `^v litera`. Tokenizing is first-match in table order and suspended in quotes, after REM, and after DATA until the next colon. It refuses out-of-order lines. `^V` inserts the next key literally.
 - The hex editor loads the whole file into `$0800`, is overwrite-only, marks edited bytes yellow with a sparse chunk map past the document, and has `^Z` undo (128 records; clears marks when no remaining record touches the byte), `^B/^F/^G/^W`, and `^` to switch panes. Bindings must be control codes.
 - Both editors ask nano's exit question (`y` save, `n` discard, other = cancel); `test_hex::test_both_editors_ask_the_same_question_on_exit`. Tests answer `n`.
 
