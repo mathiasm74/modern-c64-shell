@@ -100,7 +100,7 @@ def test_ef_files_bank_commands(v):
         # (in VICE a bank runs from RAM, where both halves are readable); here
         # the bank really is served, so this is a genuine check.
         got = _run(sv, "help", "Commands:")
-        for name in ("about", "border", "disk", "ver"):
+        for name in ("about", "color", "disk", "ver"):
             assert name in got, "help lost %r:\n%s" % (name, got)
 
 

@@ -53,6 +53,7 @@
 #define HIST_N   8              /* commands remembered for up/down recall   */
 
 static void cmd_disk(int argc, char *argv[]);
+static void cmd_color(int argc, char *argv[]);
 
 /* The command table: name -> handler, walked in order both for dispatch and
    by `help`. A row is either a resident function or a BANK_CMD(n) entry index
@@ -65,11 +66,10 @@ static void cmd_disk(int argc, char *argv[]);
 const struct command shell_commands[] = {
     { "about",  BANK_CMD(BANK_UTIL, 1) },
     { "basic",  cmd_basic  },
-    { "bg",     BANK_CMD(BANK_UTIL, 4) },
-    { "border", BANK_CMD(BANK_UTIL, 3) },
     { "cat",    BANK_CMD(BANK_FILES, 0) },
     { "cd",     BANK_CMD(BANK_FILES, 6) },
     { "clear",  cmd_clear  },
+    { "color",  cmd_color  },
     { "cp",     BANK_CMD(BANK_FILES, 2) },
     { "debug",  BANK_CMD(BANK_UTIL, 2) },
     { "device", BANK_CMD(BANK_FILES, 10) },
@@ -92,14 +92,14 @@ const struct command shell_commands[] = {
     { "rm",     BANK_CMD(BANK_FILES, 4) },
     { "run",    cmd_run    },
     { "sys",    cmd_sys    },
-    { "text",   BANK_CMD(BANK_UTIL, 5) },
     { "ver",    cmd_ver    },
     /* UNLISTED: these work but `help` does not show them (it lists only the
        first shell_help_count rows). `dev` is an alias of `device`; `fload` is
        the Epyx fast path alone -- `load` is fast by default and falls back by
-       itself, so fload is a diagnostic, not something to offer. The last four
-       are `disk`'s subcommands (cmd_disk re-dispatches to them), still
-       reachable directly -- the @ wedge relies on `status`. Dispatch
+       itself, so fload is a diagnostic, not something to offer. The rest are
+       the members of the `disk` and `color` groups (run_group re-dispatches
+       to them), still reachable directly -- the @ wedge relies on `status`.
+       Dispatch
        walks the whole table, so nothing here needs sorting. */
     { "dev",    BANK_CMD(BANK_FILES, 10) },
     { "fload",  BANK_CMD(BANK_DISK, 3) },
@@ -107,8 +107,11 @@ const struct command shell_commands[] = {
     { "init",   BANK_CMD(BANK_FILES, 14) },     /* disk init */
     { "status", BANK_CMD(BANK_FILES, 5) },      /* disk status (and @) */
     { "validate", BANK_CMD(BANK_FILES, 15) },   /* disk validate */
+    { "bg",     BANK_CMD(BANK_UTIL, 4) },       /* color bg */
+    { "border", BANK_CMD(BANK_UTIL, 3) },       /* color border */
+    { "text",   BANK_CMD(BANK_UTIL, 5) },       /* color text */
 };
-#define UNLISTED 6
+#define UNLISTED 9
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);
 const unsigned char shell_help_count =
@@ -540,23 +543,24 @@ static void dispatch(struct command_line *cl)
         run_command(cl->argc, cl->argv);
 }
 
-/* disk <status|init|validate|format ...> -- the drive's housekeeping under one
-   name, so `help` lists one command instead of four. `disk format x` simply
-   runs `format x`: the subcommands are ordinary commands in the files bank,
-   kept in the table's unlisted tail. Resident rather than in that bank because
-   the bank is nearly full and this is only a name check and a re-dispatch --
-   the lookup is already here. Bare `disk`, or an unknown word, lists them. */
-/* Its strings are resident-only, so they go to the BASIC half's RODATA, not
+/* Command GROUPS: `disk` and `color` put several commands under one name, so
+   `help` lists one line instead of three or four. `disk format x` simply runs
+   `format x`: the members are ordinary commands, kept in the table's unlisted
+   tail. Resident rather than in a bank because it is only a name check and a
+   re-dispatch -- the lookup is already here -- and the files bank is nearly
+   full. A bare group name, or an unknown member, prints the group's list.
+
+   Its strings are resident-only, so they go to the BASIC half's RODATA, not
    the RODATA2 this file otherwise stays in for the command names. They are
    named arrays, not literals: cc65 pools LITERALS at the end of the file, in
    whatever segment is current there (RODATA2), whatever is pushed here. */
 #pragma rodata-name (push, "RODATA")
-static const char disk_sub_status[]   = "status";
-static const char disk_sub_init[]     = "init";
-static const char disk_sub_validate[] = "validate";
-static const char disk_sub_format[]   = "format";
+static const char sub_status[]   = "status";
+static const char sub_init[]     = "init";
+static const char sub_validate[] = "validate";
+static const char sub_format[]   = "format";
 static const char *const disk_subs[] = {
-    disk_sub_status, disk_sub_init, disk_sub_validate, disk_sub_format
+    sub_status, sub_init, sub_validate, sub_format
 };
 static const char disk_usage[] =
     "usage: disk <command>\r"
@@ -564,19 +568,41 @@ static const char disk_usage[] =
     "  init      re-read the disk (after a swap)\r"
     "  validate  rebuild the free-block map\r"
     "  format    <name>[,<id>]  erase the disk\r";
+
+static const char sub_border[] = "border";
+static const char sub_bg[]     = "bg";
+static const char sub_text[]   = "text";
+static const char *const color_subs[] = { sub_border, sub_bg, sub_text };
+static const char color_usage[] =
+    "usage: color <what> [0-15]\r"
+    "  border    the border colour\r"
+    "  bg        the background colour\r"
+    "  text      the text colour\r"
+    "with no number, a picker opens\r";
 #pragma rodata-name (pop)
 
-static void cmd_disk(int argc, char *argv[])
+static void run_group(int argc, char *argv[], const char *const *subs,
+                      unsigned char n, const char *usage)
 {
     unsigned char i;
 
     if (argc >= 2)
-        for (i = 0; i < 4; ++i)
-            if (streq(argv[1], disk_subs[i])) {
+        for (i = 0; i < n; ++i)
+            if (streq(argv[1], subs[i])) {
                 run_command(argc - 1, argv + 1);
                 return;
             }
-    puts_raw(disk_usage);
+    puts_raw(usage);
+}
+
+static void cmd_disk(int argc, char *argv[])
+{
+    run_group(argc, argv, disk_subs, 4, disk_usage);
+}
+
+static void cmd_color(int argc, char *argv[])
+{
+    run_group(argc, argv, color_subs, 3, color_usage);
 }
 
 /* --- Persistent settings (colors + history) in the One ROM NV flash --------
