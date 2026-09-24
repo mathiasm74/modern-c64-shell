@@ -52,6 +52,8 @@
 #define LINEMAX  80             /* one 40-col line wraps to two; 80 is plenty */
 #define HIST_N   8              /* commands remembered for up/down recall   */
 
+static void cmd_disk(int argc, char *argv[]);
+
 /* The command table: name -> handler, walked in order both for dispatch and
    by `help`. A row is either a resident function or a BANK_CMD(n) entry index
    (see shell.h) -- the bank commands have NO resident code, only their row.
@@ -73,13 +75,12 @@ const struct command shell_commands[] = {
     { "device", BANK_CMD(BANK_FILES, 10) },
     { "devices", BANK_CMD(BANK_FILES, 11) },
     { "dir",    BANK_CMD(BANK_DISK, 0) },
+    { "disk",   cmd_disk   },
     { "dos",    BANK_CMD(BANK_FILES, 13) },
     { "edit",   cmd_edit },
-    { "format", BANK_CMD(BANK_FILES, 16) },
     { "font",   cmd_font   },
     { "help",   BANK_CMD(BANK_FILES, 9) },
     { "hex",    BANK_CMD(BANK_HEX, 0) },
-    { "init",   BANK_CMD(BANK_FILES, 14) },
     { "less",   BANK_CMD(BANK_FILES, 1) },
     { "load",   BANK_CMD(BANK_DISK, 4) },
     { "ls",     BANK_CMD(BANK_DISK, 1) },
@@ -90,20 +91,24 @@ const struct command shell_commands[] = {
     { "reset",  cmd_reset  },
     { "rm",     BANK_CMD(BANK_FILES, 4) },
     { "run",    cmd_run    },
-    { "status", BANK_CMD(BANK_FILES, 5) },
     { "sys",    cmd_sys    },
     { "text",   BANK_CMD(BANK_UTIL, 5) },
-    { "validate", BANK_CMD(BANK_FILES, 15) },
     { "ver",    cmd_ver    },
     /* UNLISTED: these work but `help` does not show them (it lists only the
        first shell_help_count rows). `dev` is an alias of `device`; `fload` is
        the Epyx fast path alone -- `load` is fast by default and falls back by
-       itself, so fload is a diagnostic, not something to offer. Dispatch
+       itself, so fload is a diagnostic, not something to offer. The last four
+       are `disk`'s subcommands (cmd_disk re-dispatches to them), still
+       reachable directly -- the @ wedge relies on `status`. Dispatch
        walks the whole table, so nothing here needs sorting. */
     { "dev",    BANK_CMD(BANK_FILES, 10) },
     { "fload",  BANK_CMD(BANK_DISK, 3) },
+    { "format", BANK_CMD(BANK_FILES, 16) },     /* disk format */
+    { "init",   BANK_CMD(BANK_FILES, 14) },     /* disk init */
+    { "status", BANK_CMD(BANK_FILES, 5) },      /* disk status (and @) */
+    { "validate", BANK_CMD(BANK_FILES, 15) },   /* disk validate */
 };
-#define UNLISTED 2
+#define UNLISTED 6
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);
 const unsigned char shell_help_count =
@@ -506,30 +511,72 @@ static void capture_basic_tail(void)
         BASIC_CACHE_OK = 0;             /* we just wrote over the name cache */
 }
 
-static void dispatch(struct command_line *cl)
+static void run_command(int argc, char *argv[])
 {
     unsigned char i;
 
-    if (cl->argc == 0)
-        return;
-
     for (i = 0; i < shell_command_count; ++i) {
-        if (streq(cl->argv[0], shell_commands[i].name)) {
+        if (streq(argv[0], shell_commands[i].name)) {
             /* Data-driven dispatch: a row can name a BANK entry instead of a
                resident function, in which case there is no resident code for
                the command at all -- just this row. */
             if (IS_BANK_CMD(shell_commands[i].handler))
                 bank_dispatch((unsigned char)(unsigned int)shell_commands[i].handler,
-                              cl->argc, cl->argv);
+                              argc, argv);
             else
-                shell_commands[i].handler(cl->argc, cl->argv);
+                shell_commands[i].handler(argc, argv);
             return;
         }
     }
 
     puts_raw("Command not found: ");
-    puts_raw(cl->argv[0]);
+    puts_raw(argv[0]);
     chrout(CR);
+}
+
+static void dispatch(struct command_line *cl)
+{
+    if (cl->argc)
+        run_command(cl->argc, cl->argv);
+}
+
+/* disk <status|init|validate|format ...> -- the drive's housekeeping under one
+   name, so `help` lists one command instead of four. `disk format x` simply
+   runs `format x`: the subcommands are ordinary commands in the files bank,
+   kept in the table's unlisted tail. Resident rather than in that bank because
+   the bank is nearly full and this is only a name check and a re-dispatch --
+   the lookup is already here. Bare `disk`, or an unknown word, lists them. */
+/* Its strings are resident-only, so they go to the BASIC half's RODATA, not
+   the RODATA2 this file otherwise stays in for the command names. They are
+   named arrays, not literals: cc65 pools LITERALS at the end of the file, in
+   whatever segment is current there (RODATA2), whatever is pushed here. */
+#pragma rodata-name (push, "RODATA")
+static const char disk_sub_status[]   = "status";
+static const char disk_sub_init[]     = "init";
+static const char disk_sub_validate[] = "validate";
+static const char disk_sub_format[]   = "format";
+static const char *const disk_subs[] = {
+    disk_sub_status, disk_sub_init, disk_sub_validate, disk_sub_format
+};
+static const char disk_usage[] =
+    "usage: disk <command>\r"
+    "  status    the drive's last message\r"
+    "  init      re-read the disk (after a swap)\r"
+    "  validate  rebuild the free-block map\r"
+    "  format    <name>[,<id>]  erase the disk\r";
+#pragma rodata-name (pop)
+
+static void cmd_disk(int argc, char *argv[])
+{
+    unsigned char i;
+
+    if (argc >= 2)
+        for (i = 0; i < 4; ++i)
+            if (streq(argv[1], disk_subs[i])) {
+                run_command(argc - 1, argv + 1);
+                return;
+            }
+    puts_raw(disk_usage);
 }
 
 /* --- Persistent settings (colors + history) in the One ROM NV flash --------

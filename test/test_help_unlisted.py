@@ -1,8 +1,9 @@
 """help lists the commands to use, not every row of the dispatch table.
 
 `fload` (the Epyx fast path alone -- `load` is fast by default and falls back
-by itself) and `dev` (an alias of `device`) sit in the table's unlisted tail:
-they still run, but help leaves them out.
+by itself), `dev` (an alias of `device`) and `disk`'s four subcommands
+(status/init/validate/format) sit in the table's unlisted tail: they still
+run, but help leaves them out and lists `disk` instead.
 """
 
 import re
@@ -43,9 +44,9 @@ def test_help_leaves_out_the_unlisted_commands(v):
     rows = v.screen_rows()
     top = max(i for i, r in enumerate(rows) if "Commands:" in r)
     words = set(re.findall(r"[a-z]+", " ".join(rows[top + 1:])))
-    for gone in ("fload", "dev"):
+    for gone in ("fload", "dev", "status", "init", "validate", "format"):
         assert gone not in words, "help still lists %s" % gone
-    for name in ("load", "device", "dos", "format", "init", "validate", "ver"):
+    for name in ("load", "device", "dos", "disk", "ver"):
         assert name in words, "help no longer lists %s" % name
 
 
