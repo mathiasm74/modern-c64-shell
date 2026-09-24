@@ -101,7 +101,17 @@ unsigned int __fastcall__ basic_detokenize(struct detok_args *a)
         while (off < n && (c = raw[off++]) != 0) {
             if (c == '"')
                 quoted ^= 1;
-            if (!quoted && c >= TOK_FIRST && c <= TOK_LAST) {
+            if (quoted && !dst && (c < 0x20 || (c >= 0x80 && c < 0xA0))) {
+                /* A control code in a string, printed: CHROUT would ACT on it
+                   (a {clr} would wipe the listing), so show it the way LIST
+                   does -- reversed, with the glyph scr_display (screen.s)
+                   draws for it in the editor: screen code c for $00-$1F,
+                   (c & $1F) + $40 for $80-$9F. The PETSCII that CHROUT maps
+                   to those is c + $60 and c + $40 ($C0-$DF). */
+                k_chrout(0x12);                         /* RVS ON */
+                k_chrout((unsigned char)(c < 0x20 ? c + 0x60 : c + 0x40));
+                k_chrout(0x92);                         /* RVS OFF */
+            } else if (!quoted && c >= TOK_FIRST && c <= TOK_LAST) {
                 kw = basic_kw;
                 for (k = c - TOK_FIRST; k; --k)   /* skip to entry k */
                     while ((*kw++ & 0x80) == 0)

@@ -17,6 +17,9 @@ PNTR   = $D3            ; cursor column (0-39)
 TBLX   = $D6            ; cursor row (0-24)
 USER   = $F3            ; $F3/$F4: pointer to start of the current color line
 COLOR  = $0286          ; current text color
+RVS    = $C7            ; reverse mode, the KERNAL's own cell: $80 = draw reversed
+                        ; (a mask, so drawing costs one ORA), 0 = off. $12 sets
+                        ; it, $92 and RETURN clear it, as on the stock KERNAL
 
 SAVE_X = $F5            ; CHROUT register save slots (not touched by the IRQ)
 SAVE_Y = $F6
@@ -46,31 +49,20 @@ chrout_impl:
         sta (PNT),y
 
         lda SAVE_A
-        cmp #$0D
-        beq @cr
-        cmp #$14
-        beq @bs
-        cmp #$93
-        beq @clr
-        cmp #$13
-        beq @home
-        cmp #$1D
-        beq @cright             ; cursor right
-        cmp #$9D
-        bne @notcleft
-        jmp @cleft              ; cursor left (jmp: handler is out of branch range)
-@notcleft:
         cmp #$20
-        bcc @done               ; other $00-$1F control codes: ignore
+        bcc @control            ; $00-$1F: control codes
         cmp #$80
         bcc @draw               ; $20-$7F: printable
         cmp #$A0
-        bcc @done               ; $80-$9F: control codes (colours etc.), ignore
+        bcs @draw               ; $A0-$FF: the PETSCII graphics (which include
+                                ; the uppercase Swedish Ae/Oe/Aring at $DB-$DD)
+@control:                       ; $80-$9F and $00-$1F
+        jsr chrout_control
+        jmp @done
 
-        ; printable $20-$7F, plus the PETSCII graphics $A0-$FF (which include
-        ; the uppercase Swedish Ae/Oe/Aring at $DB-$DD)
 @draw:
         jsr pet2scr
+        ora RVS                 ; $80 while RVS is on: the reversed glyph
         ldy PNTR
         sta (PNT),y             ; screen code
         lda COLOR
@@ -94,14 +86,45 @@ chrout_impl:
         lda SAVE_A              ; restore original character into A
         rts
 
+; -------------------------------------------------------------------------
+; chrout_control - act on the control code in A (chrout_impl has lifted the
+; cursor and redraws it afterwards). A routine of its own so its handlers sit
+; within branch range of this compare chain; they used to share chrout_impl's,
+; with the drawing code in between, and had run out of room.
+; -------------------------------------------------------------------------
+chrout_control:
+        cmp #$0D
+        beq @cr
+        cmp #$14
+        beq @bs
+        cmp #$93
+        beq @clr
+        cmp #$13
+        beq @home
+        cmp #$1D
+        beq @cright             ; cursor right
+        cmp #$9D
+        beq @cleft              ; cursor left
+        cmp #$92
+        beq @rvsoff
+        cmp #$12
+        bne @rts                ; every other code (colours etc.) is ignored
+        lda #$80                ; RVS ON
+        bne @rvsset             ; always
 @cr:
-        jsr do_newline
-        jmp @done
+        jsr do_newline          ; RETURN also ends reverse mode, as on the stock
+@rvsoff:                        ; KERNAL (a column wrap does not)
+        lda #0
+@rvsset:
+        sta RVS
+@rts:   rts
+@clr:
+        jmp screen_clear
 @bs:
         lda PNTR
         bne @bs_same            ; not at column 0: step left within the row
         lda TBLX                ; at column 0: wrap to column 39 of the prev row
-        beq @done               ; top-left corner: nothing to delete
+        beq @rts                ; top-left corner: nothing to delete
         dec TBLX
         lda #39
         sta PNTR
@@ -113,44 +136,38 @@ chrout_impl:
         ldy PNTR
         lda #SPACE
         sta (PNT),y
-        jmp @done
-@clr:
-        jsr screen_clear
-        jmp @done
+        rts
 @home:
         lda #$00
         sta PNTR
         sta TBLX
-        jsr set_line_ptrs
-        jmp @done
+        jmp set_line_ptrs
 @cright:                        ; move the cursor one column right
         lda PNTR
         cmp #39
         bcc @cr_same            ; not at the last column: just step right
         lda TBLX                ; at column 39: wrap to column 0 of the next row
         cmp #24
-        bcs @done               ; bottom-right corner: stay put
+        bcs @rts                ; bottom-right corner: stay put
         inc TBLX
         lda #$00
         sta PNTR
-        jsr set_line_ptrs
-        jmp @done
+        jmp set_line_ptrs
 @cr_same:
         inc PNTR
-        jmp @done
+        rts
 @cleft:                         ; move the cursor one column left
         lda PNTR
         bne @cl_same            ; not at column 0: just step left
         lda TBLX                ; at column 0: wrap to column 39 of the prev row
-        beq @done               ; top-left corner: stay put
+        beq @rts                ; top-left corner: stay put
         dec TBLX
         lda #39
         sta PNTR
-        jsr set_line_ptrs
-        jmp @done
+        jmp set_line_ptrs
 @cl_same:
         dec PNTR
-        jmp @done
+        rts
 
 ; -------------------------------------------------------------------------
 ; do_newline - column 0, advance one row, scrolling if past the bottom.

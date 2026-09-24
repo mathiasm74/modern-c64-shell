@@ -20,6 +20,7 @@ tools/onerom.*.bak
 
 # Throwaway disk copies the mutating disk tests (rm/cp) work on
 test/data/_scratch*.d64
+test/data/_*.prg
 test/data/_bigprog.prg
 
 # Python

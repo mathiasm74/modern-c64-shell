@@ -312,6 +312,8 @@ reset:
         sta $03A5               ; KL_MEATDEV (fastload.c): no device is known to
                                 ; be Meatloaf-class until the disk bank probes --
                                 ; garbage here could arm KLOAD for a real 1541
+        sta $C7                 ; RVS (screen.s): zero page is garbage too, and
+                                ; nonzero would draw everything reversed
         lda #$FF
         sta LSTX
 
@@ -484,7 +486,7 @@ restore_colors:
         rts
 
 version:
-        .byte "v0.3.07", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
+        .byte "v0.3.08", 0        ; right-aligned, starts col 32 (7 chars, ends col 38)
 brand:
         .byte "Tardis DOS - your C64 power shell", 0
 banner2:
