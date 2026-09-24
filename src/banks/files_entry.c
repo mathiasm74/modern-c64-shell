@@ -148,16 +148,16 @@ void fb_cd(void)
     files_main();
 }
 
-/* ---- drive commands: dos / init / validate / format ------------------------
+/* ---- drive commands: @ / init / validate / format --------------------------
  * Each builds its command in the $0340 scratch cd uses (commands outgrow the
  * 16-char mailbox args: "n:<16-char name>,<id>" alone is 21) and has files.c
  * send it on the command channel and print the drive's reply. The `@` wedge
- * (shell.c) turns any other "@<text>" into `dos "<text>`, as JiffyDOS sends
- * it: @i, @v, @n:name,id, @"uj".
- *
- * The words are joined with one space, so `dos n:my disk,id` sends
- * "n:my disk,id"; quote a command that needs its exact spacing. SETNAM folds
- * the letters to the drive's upper case.
+ * (shell.c) turns any "@<text>" other than @, @$ and @# into `@ "<text>`,
+ * which lands on fb_dos through an unlisted "@" row -- the JiffyDOS spelling:
+ * @i, @v, @n:name,id, @"uj". The wedge quotes the rest of the line, so its
+ * spacing survives; format's arguments are joined with one space, so
+ * `format my disk` names the disk "my disk". SETNAM folds the letters to the
+ * drive's upper case.
  */
 #define DOS_CMD ((unsigned char *)0x0340)
 
@@ -168,7 +168,7 @@ void __fastcall__ dos_send(unsigned char first);
 void fb_dos(void)
 {
     if (BD_ARGC < 2) {
-        usage("dos <drive command>");
+        usage("@<drive command>");
         return;
     }
     A1L = 0;

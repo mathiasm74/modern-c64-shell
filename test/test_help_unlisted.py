@@ -51,9 +51,9 @@ def test_help_leaves_out_the_unlisted_commands(v):
         listing.append(r)
     words = set(re.findall(r"[a-z]+", " ".join(listing)))
     for gone in ("fload", "dev", "status", "init", "validate", "format",
-                 "border", "bg", "text"):
+                 "border", "bg", "text", "dos"):
         assert gone not in words, "help still lists %s" % gone
-    for name in ("load", "device", "dos", "disk", "color", "ver"):
+    for name in ("load", "device", "disk", "color", "ver"):
         assert name in words, "help no longer lists %s" % name
 
 

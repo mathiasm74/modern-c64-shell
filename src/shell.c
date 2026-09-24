@@ -76,7 +76,6 @@ const struct command shell_commands[] = {
     { "devices", BANK_CMD(BANK_FILES, 11) },
     { "dir",    BANK_CMD(BANK_DISK, 0) },
     { "disk",   cmd_disk   },
-    { "dos",    BANK_CMD(BANK_FILES, 13) },
     { "edit",   cmd_edit },
     { "font",   cmd_font   },
     { "help",   BANK_CMD(BANK_FILES, 9) },
@@ -110,8 +109,12 @@ const struct command shell_commands[] = {
     { "bg",     BANK_CMD(BANK_UTIL, 4) },       /* color bg */
     { "border", BANK_CMD(BANK_UTIL, 3) },       /* color border */
     { "text",   BANK_CMD(BANK_UTIL, 5) },       /* color text */
+    /* The @ wedge's target: "@i" becomes `@ "i`, and this row sends the rest
+       of the line to the drive. It has no other name -- `@` is the command --
+       and a name nobody would type as a word. */
+    { "@",      BANK_CMD(BANK_FILES, 13) },
 };
-#define UNLISTED 9
+#define UNLISTED 10
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);
 const unsigned char shell_help_count =
@@ -391,14 +394,14 @@ static unsigned char readline(void)
 #pragma code-name (push, "CODE")
 #pragma rodata-name (push, "RODATA2")
 /* JiffyDOS-style wedge aliases: rewrite the line in place before parsing.
- * "@" = status, "@$" = dir, "@#<n>" = device <n>, "@<cmd>" = dos <cmd>,
+ * "@" = status, "@$" = dir, "@#<n>" = device <n>, "@<cmd>" = drive command,
  * "/x" and "%x" = load x
  * (load always honors the file's embedded address, so / and % coincide),
  * "^x" = run x. The load/run forms quote the whole rest of the line, so
  * "/my game" loads MY GAME (JiffyDOS whole-rest semantics; the parser
  * accepts an unclosed quote). Runs after history_add, so recall shows what
  * was typed.
- * Anything else after "@" is a drive command -> `dos` (@i, @v, @n:name,id).
+ * Anything else after "@" is a drive command (@i, @v, @n:name,id).
  * "<-file" save still has no command. */
 static void wedge_rewrite(void)
 {
@@ -429,11 +432,15 @@ static void wedge_rewrite(void)
             skip = 2;
         } else {
             /* anything else is a drive command, sent as JiffyDOS sends it:
-               @i, @n:name,id, @"uj". Quoted like the load forms so its
-               spacing survives; an opening quote typed after @ is the same
-               quote, not a second one. */
-            cmd = "dos \"";
-            skip = (line[1] == '"') ? 2 : 1;
+               @i, @n:name,id, @"uj" -- to the unlisted "@" row. Quoted like
+               the load forms so its spacing survives; spaces after the @ are
+               skipped, and an opening quote typed there is the same quote,
+               not a second one. */
+            cmd = "@ \"";
+            while (line[skip] == ' ')
+                ++skip;
+            if (line[skip] == '"')
+                ++skip;
         }
         break;
     default:

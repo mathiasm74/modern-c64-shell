@@ -1,9 +1,10 @@
-"""Drive commands: dos / init / validate / format, and the @ wedge.
+"""Drive commands: the @ wedge, init / validate / format.
 
-`dos <cmd>` sends any drive (CBM DOS) command on channel 15 and prints the
-drive's reply as `status` does; `@<cmd>` is the JiffyDOS spelling of the same
-thing (@i, @v, @n:name,id, @"s:file"). init, validate and format are named
-shortcuts; format asks before erasing. They run against a scratch copy of the
+`@<cmd>` sends any drive (CBM DOS) command on channel 15 and prints the
+drive's reply as `status` does, as JiffyDOS does (@i, @v, @n:name,id,
+@"s:file"). There is no `dos` command any more: the wedge lands on an unlisted
+"@" row. init, validate and format are named shortcuts; format asks before
+erasing. They run against a scratch copy of the
 fixture, since validate and format write to it.
 """
 
@@ -77,14 +78,19 @@ def _run(v, cmd, want):
         "%r: no %r\n%s" % (cmd, want, v.screen_text())
 
 
-def test_dos_sends_a_command_and_prints_the_reply(v):
+def test_at_sends_a_command_and_prints_the_reply(v):
     _ready(v)
-    _run(v, "dos i", "00 OK")
+    _run(v, "@i", "00 OK")
 
 
-def test_dos_without_a_command_prints_usage(v):
+def test_at_skips_spaces_before_the_command(v):
     _ready(v)
-    _run(v, "dos", "usage: dos")
+    _run(v, "@ i", "00 OK")
+
+
+def test_dos_is_gone(v):
+    _ready(v)
+    _run(v, "dos i", "Command not found")
 
 
 def test_init_and_validate(v):
