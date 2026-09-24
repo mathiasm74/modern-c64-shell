@@ -1,10 +1,10 @@
 /* basic_tok.h - the BASIC V2 (de)tokenizer SERVICES in the util bank.
  *
  * The edit bank filled up, so the tokenizer and its keyword table moved to the
- * util bank, which the editor reaches with a far call (src/far.inc). Both sides
- * include this header: the util bank implements the two functions, the edit
- * bank declares them as far_* stubs (src/banks/far_util.s) with the same
- * signatures.
+ * util bank, which the editor -- and cat/less in the files bank -- reach with a
+ * far call (src/far.inc). Every side includes this header: the util bank
+ * implements the two functions, the callers link the far_* stubs
+ * (src/banks/far_util.s) with the same signatures.
  *
  * A far call takes exactly one argument, so each takes a block of arguments.
  * The block lives in the CALLER's RAM (its C stack or BSS) and every pointer in
@@ -24,7 +24,7 @@
 struct detok_args {
     const unsigned char *raw;   /* the file, load address first      */
     unsigned int n;             /* its length                        */
-    unsigned char *dst;         /* where the listing goes            */
+    unsigned char *dst;         /* where the listing goes; 0 = print */
     unsigned int room;          /* bytes available at dst            */
 };
 
@@ -41,8 +41,9 @@ struct tok_args {
 #define TOK_ERR_ORDER      2    /* lines out of ascending order      */
 #define TOK_ERR_TOO_LARGE  3
 
-/* Both return the number of bytes written to dst. detokenize stops short
-   rather than overflow; tokenize returns 0 and sets err instead. */
+/* Both return the number of bytes written to dst (a printing detokenize
+   returns 0). detokenize stops short rather than overflow; tokenize returns 0
+   and sets err instead. */
 unsigned int __fastcall__ basic_detokenize(struct detok_args *a);
 unsigned int __fastcall__ basic_tokenize(struct tok_args *a);
 

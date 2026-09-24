@@ -265,7 +265,7 @@ ef_puts:
 @done:  rts
 
 ef_version:
-        .byte "v0.3.06", 0
+        .byte "v0.3.07", 0
 ef_brand:
         .byte "Tardis DOS - your C64 power shell", 0
 ef_ready:

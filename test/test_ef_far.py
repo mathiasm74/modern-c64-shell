@@ -86,3 +86,20 @@ def test_ef_editor_lists_and_saves_basic_through_the_util_bank(v):
             "the saved program does not list back\n%s" % sv.screen_text()
         _type(sv, "\x18")
         assert _wait(sv, "8: ")
+
+
+def test_ef_cat_lists_basic_through_the_util_bank(v):
+    """cat runs in the files bank (ROMH 3) and far-calls util (ROMH 2) per line."""
+    (void) = v
+    if not _HAVE:
+        print("      (skipped: no tardis.crt, stock ROMs or disk)")
+        return
+    with _vice() as sv:
+        _boot(sv)
+        _type(sv, "cat bas\r")
+        assert _wait(sv, "30 REM DONE"), \
+            "cat did not list the program\n%s" % sv.screen_text()
+        assert '10 PRINT "HI PRINT"' in sv.screen_text()
+        assert sv.read_byte(FAR_DEPTH) == 0, "FAR_DEPTH left set"
+        _type(sv, "cat doc\r")                # the files bank is itself again
+        assert _wait(sv, "l29"), "cat doc after a far call\n%s" % sv.screen_text()

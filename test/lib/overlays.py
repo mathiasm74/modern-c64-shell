@@ -41,6 +41,7 @@ def seed_files(v):
     present.
     """
     _seed_bank(v, "files_bank.bin")
+    seed_far_bank(v, "util_bank.bin")   # cat/less list BASIC through util
 
 
 def _bank_image(name):

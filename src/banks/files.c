@@ -31,6 +31,8 @@ unsigned char k_chkout(void);
 void k_clrchn(void);
 unsigned char k_chrin(void);
 
+#include "basic_tok.h"
+
 #define STREG    (*(volatile unsigned char *)0x90)
 #define BUF      ((unsigned char *)0x0800)   /* cp staging, below the $8800 code */
 #define BUFMAX   0x7800U                     /* $0800..$7FFF */
@@ -72,9 +74,102 @@ static void crlf(void)
 #define TC_OK  (*(unsigned char *)0xCE00)
 
 /* ---- cat (dump) / less (page) ------------------------------------------- */
-static void pager(unsigned char paged)
+static unsigned char paged, lines, last, eof;
+
+/* One byte of the open file into *b; 0 once there are no more. The EOI byte
+   itself is data (a 1541 sends its real last byte with EOI); only the NEXT read
+   is refused. eof = 2 means a read timeout. */
+static unsigned char rd(unsigned char *b)
 {
-    unsigned char b, last = CR, lines = 0, c;
+    if (eof)
+        return 0;
+    *b = k_chrin();
+    if (STREG & ST_TIMEOUT) {
+        eof = 2;
+        return 0;
+    }
+    if (STREG & ST_EOI)
+        eof = 1;
+    return 1;
+}
+
+/* A line has ended on screen: count it, and page when less's screen is full.
+   Returns 1 if the reader quit. */
+static unsigned char line_done(void)
+{
+    unsigned char c;
+
+    last = CR;
+    if (!paged || ++lines < PAGE_LINES)
+        return 0;
+    puts_raw("-- more --");
+    do { c = k_getin(); } while (c == 0);
+    if (c == 'q')
+        return 1;
+    k_chrout(CLEAR);
+    lines = 0;
+    return 0;
+}
+
+static unsigned char out(unsigned char b)
+{
+    k_chrout(b);
+    last = b;
+    return b == CR ? line_done() : 0;
+}
+
+/* A tokenized BASIC program, LISTed rather than dumped as bytes. The util bank
+   has the keyword table (basic_tok.c); it is far-called once per line, printing
+   straight to the screen, so neither the program nor its listing ever has to
+   fit in RAM -- and a program loaded at $0801 is left alone. The line is handed
+   over as a one-line program: a dummy load address, a non-zero link, the line,
+   and the $0000 end link. 250 bytes holds any line BASIC's own editor can
+   enter (its input buffer is 88 characters, and tokenizing only shrinks it);
+   the rest of a longer, machine-made line is dropped. */
+#define LB_MAX 250
+static unsigned char lb[LB_MAX];
+
+static void list_basic(unsigned int link)
+{
+    struct detok_args a;
+    unsigned char i, b;
+
+    while (link) {
+        lb[0] = lb[1] = 0;              /* load address: skipped */
+        lb[2] = lb[3] = 1;              /* any non-zero link */
+        if (!rd(lb + 4) || !rd(lb + 5)) /* line number */
+            return;
+        i = 6;
+        while (rd(&b) && b)
+            if (i < LB_MAX - 3)
+                lb[i++] = b;
+        lb[i++] = 0;                    /* end of line */
+        lb[i++] = 0;                    /* end of program */
+        lb[i++] = 0;
+        a.raw = lb;
+        a.n = i;
+        a.dst = 0;                      /* print it */
+        a.room = 0;
+        if (far_detokenize(&a) == FAR_FAILED) {
+            puts_raw("no basic support (util bank)");
+            crlf();
+            return;
+        }
+        if (line_done())
+            return;
+        if (!rd(&b))
+            return;
+        link = b;
+        if (!rd(&b))
+            return;
+        link |= (unsigned int)b << 8;
+    }
+}
+
+static void pager(unsigned char paged_mode)
+{
+    unsigned char head[4], n = 0, i, b;
+    unsigned int link;
 
     k_setnam(A1, A1L);
     k_setlfs(dev, 2);                   /* read data channel */
@@ -85,27 +180,30 @@ static void pager(unsigned char paged)
         return;
     }
     k_chkin();
-    for (;;) {
-        b = k_chrin();
-        if (STREG & ST_TIMEOUT)
-            break;
-        k_chrout(b);
-        last = b;
-        if (paged && b == CR && ++lines >= PAGE_LINES) {
-            puts_raw("-- more --");
-            do { c = k_getin(); } while (c == 0);
-            if (c == 'q')
+    paged = paged_mode;
+    lines = 0;
+    last = CR;
+    eof = 0;
+
+    /* Is it a tokenized BASIC program? The same test the editor applies: load
+       address $0801 AND a first link pointing forward past it. */
+    while (n < 4 && rd(head + n))
+        ++n;
+    link = head[2] | ((unsigned int)head[3] << 8);
+    if (n == 4 && head[0] == 0x01 && head[1] == 0x08 && link > 0x0801) {
+        list_basic(link);
+    } else {
+        for (i = 0; i < n; ++i)
+            if (out(head[i]))
+                goto done;
+        while (rd(&b))
+            if (out(b))
                 break;
-            k_chrout(CLEAR);
-            lines = 0;
-            last = CR;
-        }
-        if (STREG & ST_EOI)
-            break;
     }
+done:
     k_close();
     k_clrchn();
-    if (STREG & ST_TIMEOUT) {
+    if (eof == 2) {
         puts_raw("read error");
         crlf();
     } else if (last != CR) {            /* leave the prompt on a fresh line */

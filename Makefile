@@ -220,7 +220,7 @@ $(BUILD)/banks/disk_bank_c.o: $(BUILD)/banks/disk_bank.s
 # .crt. The symptom was a cartridge whose banner showed the new version while
 # a bank still ran the old code.
 FILES_BANK_OBJ := $(BUILD)/banks/crt0_files_bank.o $(BUILD)/banks/fb_files_entry.o \
-                  $(BUILD)/banks/fb_files.o
+                  $(BUILD)/banks/fb_files.o $(BUILD)/banks/far_util.o
 HEX_BANK_OBJ  := $(BUILD)/banks/crt0_hex.o $(BUILD)/banks/fb_hex.o
 EDIT_BANK_OBJ := $(BUILD)/banks/crt0_edit.o $(BUILD)/banks/fb_edit.o $(BUILD)/banks/far_util.o
 

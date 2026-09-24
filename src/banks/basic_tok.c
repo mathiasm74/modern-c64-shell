@@ -55,7 +55,14 @@ static const unsigned int pow10[5] = { 10000, 1000, 100, 10, 1 };
  * so the walk tracks quote state and passes those through untouched. Output
  * that would pass `room` is dropped, never written.
  */
-#define EMIT(ch) do { if (o < room) dst[o++] = (unsigned char)(ch); } while (0)
+unsigned char __fastcall__ k_chrout(unsigned char c);
+
+/* dst == 0 prints instead (cat/less): the listing goes straight to CHROUT, so
+   the caller needs no buffer for text that can be 7x its tokens. */
+#define EMIT(ch) do {                                           \
+        if (!dst) k_chrout((unsigned char)(ch));                \
+        else if (o < room) dst[o++] = (unsigned char)(ch);      \
+    } while (0)
 
 unsigned int __fastcall__ basic_detokenize(struct detok_args *a)
 {

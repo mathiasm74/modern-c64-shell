@@ -1,4 +1,5 @@
-; far_util.s - the edit bank's doors into the util bank's services.
+; far_util.s - the doors into the util bank's services, linked into every
+; bank that uses them (edit, and files for cat/less).
 ;
 ; Each stub is a cc65 __fastcall__ function of one argument (A/X), so the C side
 ; calls it like any other function (src/banks/basic_tok.h has the prototypes).
@@ -6,7 +7,7 @@
 ; the util bank, runs the entry, serves this bank again and returns the
 ; entry's A/X -- or $FFFF when no util bank answered (src/far.inc).
 ;
-; far_svc is bound to $FFA7 by cfg/edit_bank.cfg (EF: $9FA7, rebound by
+; far_svc is bound to $FFA7 by each caller's cfg (EF: $9FA7, rebound by
 ; tools/make_ef_bank_cfg.py). The ids must match BANK_UTIL in src/shell.h and
 ; the entry order in crt0_util.s; test_far checks the entries.
 
