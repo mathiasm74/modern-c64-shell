@@ -207,7 +207,7 @@ unsigned char bank_try(unsigned char entry, int argc, char *argv[])
        only the resident side knows where the table is. (Shares bytes with
        mailbox arg 2; commands that use that arg do not read this.) */
     *(const void **)0x02E4 = (const void *)shell_commands;
-    *(unsigned char *)0x02E6 = shell_command_count;
+    *(unsigned char *)0x02E6 = shell_help_count;   /* help skips the unlisted */
 
     DB_DEV = default_device;
     name = current_device_name();

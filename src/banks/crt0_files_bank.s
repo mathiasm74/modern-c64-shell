@@ -17,6 +17,7 @@ __STARTUP__ = 1
 .import _fb_cat, _fb_less, _fb_cp, _fb_mv, _fb_rm, _fb_status, _fb_cd
 .import _fb_border, _fb_bg, _fb_text, _fb_peek, _fb_poke, _fb_help
 .import _fb_device, _fb_devices, _fb_identify
+.import _fb_dos, _fb_init, _fb_validate, _fb_format
 .import copydata, zerobss
 .importzp sp
 
@@ -43,6 +44,10 @@ __STARTUP__ = 1
         jmp e_device            ; $A022  entry 10
         jmp e_devices           ; $A025  entry 11
         jmp e_identify          ; $A028  entry 12 (boot-time, not a command)
+        jmp e_dos               ; $A02B  entry 13
+        jmp e_init              ; $A02E  entry 14
+        jmp e_validate          ; $A031  entry 15
+        jmp e_format            ; $A034  entry 16
 
 .segment "CODE"
 
@@ -72,6 +77,14 @@ e_devices:  jsr bank_init
             jmp _fb_devices
 e_identify: jsr bank_init
             jmp _fb_identify
+e_dos:      jsr bank_init
+            jmp _fb_dos
+e_init:     jsr bank_init
+            jmp _fb_init
+e_validate: jsr bank_init
+            jmp _fb_validate
+e_format:   jsr bank_init
+            jmp _fb_format
 
 ; Per-entry init: point the bank's C stack at the top of its RAM window, clear
 ; BSS and copy DATA down from ROM. Both run on EVERY entry because the shell, a

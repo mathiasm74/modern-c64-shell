@@ -50,6 +50,7 @@ unsigned char bank_try(unsigned char entry, int argc, char *argv[]);
    keep in sync. */
 extern const struct command shell_commands[];
 extern const unsigned char shell_command_count;
+extern const unsigned char shell_help_count;   /* rows help lists */
 
 /* KERNAL I/O via the asm shims in c_io.s. */
 void chrout(unsigned char c);

@@ -323,15 +323,21 @@ static int read_status(char *buf, char **f)
     return (f[0][0] - '0') * 10 + (f[0][1] ? f[0][1] - '0' : 0);
 }
 
-/* ---- status: read + reformat the drive error channel (15) (cmd 6) -------- */
-static void status_read(void)
+/* ---- status: read + reformat the drive error channel (15) (cmd 6) --------
+   With a command (dos/init/validate/format, cmd 19) the OPEN sends it first,
+   so what comes back is that command's own result -- which is why a command
+   prints its status rather than succeeding silently like mv/rm: "00, ok" is
+   the only way to see that an init or a validate did anything. The command
+   waits as long as the drive does (a full format runs well over a minute):
+   only reads time out, and the drive does not answer until it is done. */
+static void status_read(const char *cmd, unsigned char len)
 {
     char buf[64];
     char *f[4];
     char *msg;
     int code;
 
-    k_setnam("", 0);
+    k_setnam(cmd, len);
     k_setlfs(dev, 15);                  /* command/error channel */
     k_open();
     if (STREG & ST_NODEV) {
@@ -347,6 +353,8 @@ static void status_read(void)
         crlf();
         return;
     }
+    if (len)
+        TC_OK = 0;                      /* any command may change the directory */
 
     /* "code message", appending "@ track,sector" only on a real disk error. */
     msg = f[1];
@@ -797,7 +805,9 @@ void files_main(void)
     else if (cmd == 3)
         rename_file();                  /* mv */
     else if (cmd == 6)
-        status_read();
+        status_read("", 0);
+    else if (cmd == 19)                 /* dos/init/validate/format: $0340 */
+        status_read((const char *)0x0340, A1L);
     else if (cmd == 7)
         cd_path();
     else if (cmd == 12)

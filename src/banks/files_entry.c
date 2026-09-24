@@ -16,6 +16,7 @@
 
 void files_main(void);                  /* src/banks/files.c */
 void __fastcall__ k_chrout(unsigned char c);
+unsigned char k_getin(void);
 
 #define CR 0x0D
 
@@ -145,4 +146,74 @@ void fb_cd(void)
     A1L = i;                            /* prebuilt-command length (cmd at $0340) */
     MB_CMD = 7;
     files_main();
+}
+
+/* ---- drive commands: dos / init / validate / format ------------------------
+ * Each builds its command in the $0340 scratch cd uses (commands outgrow the
+ * 16-char mailbox args: "n:<16-char name>,<id>" alone is 21) and has files.c
+ * send it on the command channel and print the drive's reply. The `@` wedge
+ * (shell.c) turns any other "@<text>" into `dos "<text>`, as JiffyDOS sends
+ * it: @i, @v, @n:name,id, @"uj".
+ *
+ * The words are joined with one space, so `dos n:my disk,id` sends
+ * "n:my disk,id"; quote a command that needs its exact spacing. SETNAM folds
+ * the letters to the drive's upper case.
+ */
+#define DOS_CMD ((unsigned char *)0x0340)
+
+/* files_dos.s: append argv[first..] (0xFF: none) to the A1L bytes already in
+   the command, then send it. */
+void __fastcall__ dos_send(unsigned char first);
+
+void fb_dos(void)
+{
+    if (BD_ARGC < 2) {
+        usage("dos <drive command>");
+        return;
+    }
+    A1L = 0;
+    dos_send(1);
+}
+
+void fb_init(void)
+{
+    DOS_CMD[0] = 'i';
+    A1L = 1;
+    dos_send(0xFF);                     /* no arguments appended */
+}
+
+void fb_validate(void)
+{
+    DOS_CMD[0] = 'v';
+    A1L = 1;
+    dos_send(0xFF);
+}
+
+/* format <name>[,<id>] -- with an id a full format, without one a quick
+   re-format of an already formatted disk (a new name and an empty directory).
+   Either erases every file, so it asks first; only 'y' goes ahead. */
+void fb_format(void)
+{
+    unsigned char c, d = MB_DEV;
+
+    if (BD_ARGC < 2) {
+        usage("format <name>[,<id>]");
+        return;
+    }
+    puts_bank("erase the disk in ");
+    if (d >= 10) {
+        k_chrout('1');
+        d -= 10;
+    }
+    k_chrout('0' + d);
+    puts_bank("? (y/n) ");
+    do { c = k_getin(); } while (c == 0);
+    k_chrout(c);
+    k_chrout(CR);
+    if (c != 'y')
+        return;
+    DOS_CMD[0] = 'n';
+    DOS_CMD[1] = ':';
+    A1L = 2;
+    dos_send(1);
 }

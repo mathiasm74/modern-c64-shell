@@ -54,8 +54,9 @@
 
 /* The command table: name -> handler, walked in order both for dispatch and
    by `help`. A row is either a resident function or a BANK_CMD(n) entry index
-   (see shell.h) -- the bank commands have NO resident code, only their row. Sorted alphabetically so `help` (which displays it column-major
-   over three columns) reads naturally down each column. Lives in ROM and
+   (see shell.h) -- the bank commands have NO resident code, only their row.
+   Sorted alphabetically so `help` (which displays it column-major over three
+   columns) reads naturally down each column; the unlisted rows go last. Lives in ROM and
    spends its bytes in the KERNAL ROM (RODATA2) to leave room in the smaller
    BASIC ROM, where the rest of the cc65 output sits. */
 #pragma rodata-name (push, "RODATA2")
@@ -69,15 +70,16 @@ const struct command shell_commands[] = {
     { "clear",  cmd_clear  },
     { "cp",     BANK_CMD(BANK_FILES, 2) },
     { "debug",  BANK_CMD(BANK_UTIL, 2) },
-    { "dev",    BANK_CMD(BANK_FILES, 10) },
     { "device", BANK_CMD(BANK_FILES, 10) },
     { "devices", BANK_CMD(BANK_FILES, 11) },
     { "dir",    BANK_CMD(BANK_DISK, 0) },
+    { "dos",    BANK_CMD(BANK_FILES, 13) },
     { "edit",   cmd_edit },
-    { "fload",  BANK_CMD(BANK_DISK, 3) },
+    { "format", BANK_CMD(BANK_FILES, 16) },
     { "font",   cmd_font   },
     { "help",   BANK_CMD(BANK_FILES, 9) },
     { "hex",    BANK_CMD(BANK_HEX, 0) },
+    { "init",   BANK_CMD(BANK_FILES, 14) },
     { "less",   BANK_CMD(BANK_FILES, 1) },
     { "load",   BANK_CMD(BANK_DISK, 4) },
     { "ls",     BANK_CMD(BANK_DISK, 1) },
@@ -91,10 +93,21 @@ const struct command shell_commands[] = {
     { "status", BANK_CMD(BANK_FILES, 5) },
     { "sys",    cmd_sys    },
     { "text",   BANK_CMD(BANK_UTIL, 5) },
+    { "validate", BANK_CMD(BANK_FILES, 15) },
     { "ver",    cmd_ver    },
+    /* UNLISTED: these work but `help` does not show them (it lists only the
+       first shell_help_count rows). `dev` is an alias of `device`; `fload` is
+       the Epyx fast path alone -- `load` is fast by default and falls back by
+       itself, so fload is a diagnostic, not something to offer. Dispatch
+       walks the whole table, so nothing here needs sorting. */
+    { "dev",    BANK_CMD(BANK_FILES, 10) },
+    { "fload",  BANK_CMD(BANK_DISK, 3) },
 };
+#define UNLISTED 2
 const unsigned char shell_command_count =
     sizeof(shell_commands) / sizeof(shell_commands[0]);
+const unsigned char shell_help_count =
+    sizeof(shell_commands) / sizeof(shell_commands[0]) - UNLISTED;
 #pragma rodata-name (pop)
 
 /* The current command line, NUL-terminated by readline() and then carved into
@@ -370,14 +383,15 @@ static unsigned char readline(void)
 #pragma code-name (push, "CODE")
 #pragma rodata-name (push, "RODATA2")
 /* JiffyDOS-style wedge aliases: rewrite the line in place before parsing.
- * "@" = status, "@$" = dir, "@#<n>" = device <n>, "/x" and "%x" = load x
+ * "@" = status, "@$" = dir, "@#<n>" = device <n>, "@<cmd>" = dos <cmd>,
+ * "/x" and "%x" = load x
  * (load always honors the file's embedded address, so / and % coincide),
  * "^x" = run x. The load/run forms quote the whole rest of the line, so
  * "/my game" loads MY GAME (JiffyDOS whole-rest semantics; the parser
  * accepts an unclosed quote). Runs after history_add, so recall shows what
  * was typed.
- * Anything else after "@" (raw DOS commands, "<-file" save) has no matching
- * command and is left alone -> "Command not found". */
+ * Anything else after "@" is a drive command -> `dos` (@i, @v, @n:name,id).
+ * "<-file" save still has no command. */
 static void wedge_rewrite(void)
 {
     const char *cmd;
@@ -406,7 +420,12 @@ static void wedge_rewrite(void)
             cmd = "device ";
             skip = 2;
         } else {
-            return;
+            /* anything else is a drive command, sent as JiffyDOS sends it:
+               @i, @n:name,id, @"uj". Quoted like the load forms so its
+               spacing survives; an opening quote typed after @ is the same
+               quote, not a second one. */
+            cmd = "dos \"";
+            skip = (line[1] == '"') ? 2 : 1;
         }
         break;
     default:
