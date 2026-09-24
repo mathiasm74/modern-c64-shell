@@ -572,9 +572,10 @@ static const char *const disk_subs[] = {
 static const char disk_usage[] =
     "usage: disk <command>\r"
     "  status    the drive's last message\r"
-    "  init      re-read the disk (after a swap)\r"
+    "  init      re-read the disk\r"
     "  validate  rebuild the free-block map\r"
-    "  format    <name>[,<id>]  erase the disk\r";
+    "  format <name>[,<id>]\r"
+    "            erase the disk\r";
 
 static const char sub_border[] = "border";
 static const char sub_bg[]     = "bg";
