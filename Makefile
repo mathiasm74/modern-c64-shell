@@ -222,7 +222,7 @@ $(BUILD)/banks/disk_bank_c.o: $(BUILD)/banks/disk_bank.s
 FILES_BANK_OBJ := $(BUILD)/banks/crt0_files_bank.o $(BUILD)/banks/fb_files_entry.o \
                   $(BUILD)/banks/fb_files.o
 HEX_BANK_OBJ  := $(BUILD)/banks/crt0_hex.o $(BUILD)/banks/fb_hex.o
-EDIT_BANK_OBJ := $(BUILD)/banks/crt0_edit.o $(BUILD)/banks/fb_edit.o
+EDIT_BANK_OBJ := $(BUILD)/banks/crt0_edit.o $(BUILD)/banks/fb_edit.o $(BUILD)/banks/far_util.o
 
 BANK_SHARED_OBJ := $(BUILD)/banks/bk_iec_clkwait.o \
                    $(BUILD)/banks/bk_fastload_recv.o $(BUILD)/banks/bk_fastload_send.o \
@@ -311,12 +311,12 @@ $(BUILD)/ef/banks/crt0_%.o: src/banks/crt0_%.s src/bank_cstack.inc \
 $(BUILD)/ef/banks/util_bank.bin: $(BUILD)/ef/banks/crt0_util.o \
                                  $(BUILD)/banks/bk_complete.o \
                                  $(BUILD)/banks/about.o $(BUILD)/banks/kbdiag.o \
-                                 $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
+                                 $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o $(BUILD)/banks/ub_basic_tok.o \
                                  $(BUILD)/ef/cfg/util_bank.cfg
 	$(LD) -C $(BUILD)/ef/cfg/util_bank.cfg -o $@ $(BUILD)/ef/banks/crt0_util.o \
 	      $(BUILD)/banks/bk_complete.o $(BUILD)/banks/kbdiag.o \
 	      $(BUILD)/banks/about.o \
-	      $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
+	      $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o $(BUILD)/banks/ub_basic_tok.o \
 	      $(RTLIB) -Ln $(BUILD)/ef/banks/util_bank.labels \
 	      -m $(BUILD)/ef/banks/util_bank.map
 	@echo "  ef util_bank  : $$(wc -c < $@) bytes"
@@ -457,12 +457,12 @@ $(BUILD)/banks/bk_drive1541_blob.o: $(BUILD)/drive1541.bin $(BUILD)/drive1541_bo
 # costs nothing out of the program load area (cfg/util_bank.cfg).
 $(BUILD)/banks/util_bank.bin: $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
                               $(BUILD)/banks/about.o $(BUILD)/banks/kbdiag.o \
-                              $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
+                              $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o $(BUILD)/banks/ub_basic_tok.o \
                               cfg/util_bank.cfg
 	$(LD) -C cfg/util_bank.cfg -o $@ $(BUILD)/banks/crt0_util.o $(BUILD)/banks/bk_complete.o \
 	      $(BUILD)/banks/kbdiag.o \
 	      $(BUILD)/banks/about.o \
-	      $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o \
+	      $(BUILD)/banks/ub_colour.o $(BUILD)/banks/ub_picker.o $(BUILD)/banks/ub_basic_tok.o \
 	      $(RTLIB) -Ln $(BUILD)/banks/util_bank.labels -m $(BUILD)/banks/util_bank.map
 	@echo "  util_bank.bin : $$(wc -c < $@) bytes"
 

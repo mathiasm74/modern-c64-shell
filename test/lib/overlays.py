@@ -14,8 +14,9 @@ There are no RAM overlays left: every command lives in a bank, served as ROM at
 $A000 and seeded into the RAM underneath it. The names here are kept as they
 were so callers read naturally ("seed the thing behind these commands").
 
-Only ONE bank can be seeded at a time -- they all link to $A000 -- so a test
-crossing banks must re-seed between them.
+Only ONE bank can be seeded at $A000 at a time -- they all link there -- so a
+test crossing banks must re-seed between them. The exception is a far call's
+callee, which waits in the shadow at $E000 (seed_far_bank).
 """
 
 import os
@@ -40,6 +41,30 @@ def seed_files(v):
     present.
     """
     _seed_bank(v, "files_bank.bin")
+
+
+def _bank_image(name):
+    path = os.path.join(_HERE, "..", "..", "build", "banks", name)
+    with open(path, "rb") as f:
+        img = f.read()
+    end = len(img)
+    while end > 0 and img[end - 1] == 0xFF:
+        end -= 1
+    return img[:end]
+
+
+def seed_far_bank(v, name):
+    """Leave a bank in the SHADOW -- the RAM under the KERNAL at $E000 -- for
+    far calls (src/far.inc) out of the bank seeded at $A000.
+
+    VICE has no One ROM to serve the callee, and $A000 holds the caller, so
+    far_call's fallback exchanges the two 8KB images for the length of the
+    call. Writes to $E000-$FFFF always land in that RAM, as they do under
+    $A000. The image is written in full: the exchange swaps all 8KB, and a
+    stale tail from an earlier seed would come back as the callee's."""
+    path = os.path.join(_HERE, "..", "..", "build", "banks", name)
+    with open(path, "rb") as f:
+        v.write_memory(0xE000, list(f.read()))
 
 
 def _seed_bank(v, name):
@@ -90,11 +115,10 @@ def seed_hex(v):
 
 
 def seed_edit(v):
-    """edit bank -> the RAM under the $A000 ROM.
-
-    The editor outgrew the $8800 overlay region and became a bank; only `about`
-    is still an overlay."""
+    """edit bank -> the RAM under the $A000 ROM, and the util bank into the
+    shadow, because the editor far-calls the util bank's BASIC tokenizer."""
     _seed_bank(v, "edit_bank.bin")
+    seed_far_bank(v, "util_bank.bin")
 
 
 def seed_picker(v):

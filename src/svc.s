@@ -9,8 +9,8 @@
 ;
 ; The entries' addresses ARE the ABI: src/overlays/svc.h hardcodes them. Keep
 ; this order and the start address ($FF80) in sync with the cfg, and don't let
-; CODE2 grow past $FF80 (cfg/rom.cfg pins this segment there). 13 entries,
-; $FF80-$FFA6, sitting in the KERNAL ROM gap below the $FFBA file-I/O stubs.
+; CODE2 grow past $FF80 (cfg/rom.cfg pins this segment there). 14 entries,
+; $FF80-$FFA9, sitting in the KERNAL ROM gap below the $FFBA file-I/O stubs.
 ;
 ; CONSTRAINT: an svc routine may take AT MOST ONE argument. The bank and the
 ; resident shell run on SEPARATE cc65 C stacks (bank sp in ZP $40-$5F, resident
@@ -23,6 +23,7 @@
 .import _iec_chkin, _iec_getbyte, _iec_close, _iec_clrchn
 .import _iec_set_fnadr, _iec_set_fnlen, _iec_command_raw
 .import scr_display
+.import far_call
 
 .segment "SVC_TABLE"
 
@@ -47,4 +48,8 @@
         ; --- display ------------------------------------------------------
         ; PETSCII -> screen code for ANY byte (screen.s). Both editors draw
         ; through this instead of carrying a table each.
-        jmp scr_display                     ; $FFA4  svc 12  (table ends $FFA6)
+        jmp scr_display                     ; $FFA4  svc 12
+        ; --- cross-bank call -----------------------------------------------
+        ; A bank calling a SERVICE entry in another bank and returning to
+        ; itself (src/far.inc). Y = target, A/X = the one argument.
+        jmp far_call                        ; $FFA7  svc 13  (table ends $FFA9)

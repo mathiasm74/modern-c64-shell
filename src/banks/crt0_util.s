@@ -21,6 +21,7 @@
 .import about_main
 .import kbdiag_main
 .import _ub_border, _ub_bg, _ub_text
+.import _basic_detokenize, _basic_tokenize
 .import copydata, zerobss
 .importzp sp
 
@@ -34,6 +35,11 @@
         jmp e_border            ; $A00D  entry 3: border colour (value or picker)
         jmp e_bg                ; $A010  entry 4: background colour
         jmp e_text              ; $A013  entry 5: text colour
+        ; SERVICES (src/far.inc): reached by far_call from another bank, not
+        ; from the dispatch table. They jump straight in -- NO bank_init, which
+        ; would wipe the calling bank's RAM -- and run on the caller's C stack.
+        jmp _basic_detokenize   ; $A016  entry 6: BASIC program -> listing
+        jmp _basic_tokenize     ; $A019  entry 7: listing -> BASIC program
 
 ; `about` rides in THIS bank rather than one of its own: it is self-contained
 ; assembly needing no cc65 runtime, exactly like the completion matcher, and

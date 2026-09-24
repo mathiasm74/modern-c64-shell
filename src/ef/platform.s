@@ -17,6 +17,7 @@
 ; ============================================================================
 
 EF_BANK  = $DE00
+.include "far.inc"              ; far_call's cells
 EF_CTRL  = $DE02
 EF_RAM   = $DF00
 
@@ -264,7 +265,7 @@ ef_puts:
 @done:  rts
 
 ef_version:
-        .byte "v0.3.05", 0
+        .byte "v0.3.06", 0
 ef_brand:
         .byte "Tardis DOS - your C64 power shell", 0
 ef_ready:
@@ -297,6 +298,8 @@ ef_irq:
 ; packs it that way). Break that and the CPU's next fetch after `sta EF_BANK`
 ; comes from a different image at the same address.
 _bank_call:
+        ldx #0                  ; a command is never inside a far call; page 3
+        stx FAR_DEPTH           ; is garbage at power-on (src/far.inc)
         pha
         ; Plant the "jsr <bank entry> / rts" stub in the cartridge's RAM first;
         ; the copy is free to use A and X because the argument is on the stack.
@@ -348,6 +351,83 @@ _bank_call:
         rts
 
 BANK_ENTRY  = $A004             ; the bank ABI's JMP table
+
+; --- far_call -------------------------------------------------------------
+; A running bank calls a SERVICE entry in another bank (SVC 13, src/far.inc):
+; Y = (bank << 5) | entry, A/X = the one argument; A/X = the result, or $FFFF.
+; The One ROM version (src/rbcp/launch.s) has the full story. Here mapping is a
+; $DE00 write, so the caller is re-served by writing its bank back -- which
+; bank_call's "back to 0" could not do.
+;
+; The caller is whatever $A003 says: this is only reachable from a bank, and
+; bank_call checked that bank's identity before calling in. The entry goes
+; through an indirect JMP on a page-3 vector, which is not self-modifying code,
+; so it can run from ROML and leaves bank_call's $DF00 stub alone.
+.export far_call
+far_call:
+        sta FAR_ARG
+        stx FAR_ARG+1
+        lda FAR_DEPTH
+        bne @refuse             ; one level only, as on the One ROM
+        inc FAR_DEPTH
+        lda BANK_ENTRY - 1      ; $A003: the caller's bank id
+        sta FAR_CALLER
+        tya
+        and #$1F                ; entry
+        sta FAR_VEC
+        asl a
+        clc
+        adc FAR_VEC             ; entry*3
+        clc
+        adc #<BANK_ENTRY
+        sta FAR_VEC
+        lda #>BANK_ENTRY
+        adc #0
+        sta FAR_VEC+1
+        tya
+        lsr a
+        lsr a
+        lsr a
+        lsr a
+        lsr a                   ; A = the callee's bank id
+        pha
+        clc
+        adc #EF_FIRST_BANK
+        sta EF_BANK
+        pla
+        cmp BANK_ENTRY - 1      ; identity: "bnk" and the id we asked for
+        bne @fail
+        lda $A000
+        cmp #'b'
+        bne @fail
+        lda $A001
+        cmp #'n'
+        bne @fail
+        lda $A002
+        cmp #'k'
+        bne @fail
+        lda FAR_ARG
+        ldx FAR_ARG+1
+        jsr @go
+        sta FAR_ARG
+        stx FAR_ARG+1
+@back:  lda FAR_CALLER
+        clc
+        adc #EF_FIRST_BANK
+        sta EF_BANK
+        dec FAR_DEPTH
+        lda FAR_ARG
+        ldx FAR_ARG+1
+        rts
+@fail:  lda #$FF
+        sta FAR_ARG
+        sta FAR_ARG+1
+        bne @back               ; always
+@refuse:
+        lda #$FF
+        tax
+        rts
+@go:    jmp (FAR_VEC)
 
 ; The call into the bank cannot be a self-modifying JSR in ROML: the store lands
 ; in the RAM underneath and the fetch still comes from flash. It runs from the

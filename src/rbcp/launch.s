@@ -23,6 +23,7 @@
 .export rbcp_trampoline               ; exported for tests / inspection only
 
 .include "rbcp_defs.s"          ; constants only (ZP/arg locations, addresses)
+.include "far.inc"              ; far_call's cells (cross-bank calls)
 
 .import rbcp_reset
 .import rbcp_cmd_enter_cmd_resp
@@ -1033,27 +1034,9 @@ bank_flash_set:
 
 .export _bank_call
 _bank_call:
-        pha                     ; id = (bank << 5) | entry
-        lsr a
-        lsr a
-        lsr a
-        lsr a
-        lsr a
-        sta BANK_ID             ; bank
-        pla
-        and #$1F                ; entry
-
-        ; target = BANK_TABLE + 3*entry
-        sta BANK_VEC
-        asl a                   ; 2*entry
-        clc
-        adc BANK_VEC            ; 3*entry
-        clc
-        adc #<BANK_TABLE
-        sta BANK_VEC
-        lda #>BANK_TABLE
-        adc #0
-        sta BANK_VEC+1
+        ldx #0                  ; a command is never inside a far call; page 3
+        stx FAR_DEPTH           ; is power-on garbage, so say so on every one
+        jsr bank_decode
 
         ; --- path 1: served ROM (One ROM) --------------------------------
         lda #1
@@ -1105,6 +1088,31 @@ _bank_call:
         ldx #0
         rts
 
+; A = (bank << 5) | entry  ->  BANK_ID = bank, BANK_VEC = its JMP-table slot.
+bank_decode:
+        pha
+        lsr a
+        lsr a
+        lsr a
+        lsr a
+        lsr a
+        sta BANK_ID             ; bank
+        pla
+        and #$1F                ; entry
+
+        ; target = BANK_TABLE + 3*entry
+        sta BANK_VEC
+        asl a                   ; 2*entry
+        clc
+        adc BANK_VEC            ; 3*entry
+        clc
+        adc #<BANK_TABLE
+        sta BANK_VEC
+        lda #>BANK_TABLE
+        adc #0
+        sta BANK_VEC+1
+        rts
+
 ; bank_ensure_base: GUARANTEE the base BASIC half is served again before we
 ; return to shell code.
 ;
@@ -1152,10 +1160,11 @@ bank_ensure_base:
 BASE_SLOT = $02CE
 
 bank_restore:
-        lda #0
-        sta FONT_MB_LOAD        ; SWITCH only -- the slot already holds the base
         lda BASE_SLOT
+bank_switch:                    ; A = the RAM slot to serve; it is already loaded
         sta FONT_MB_RAM
+        lda #0
+        sta FONT_MB_LOAD        ; SWITCH only -- the slot already holds the image
         jmp _font_apply
 
 ; Carry clear if the mapped $A000 window really holds the bank we asked for:
@@ -1193,6 +1202,168 @@ bank_gosub:
 
 bank_jmp:
         jmp (BANK_VEC)
+
+; -------------------------------------------------------------------------
+; far_call: a running bank calls a SERVICE entry in another bank (SVC 13).
+;
+; In:  Y = (bank << 5) | entry, A/X = the one 16-bit argument.
+; Out: A/X = the service's result, or $FFFF if the call could not be made.
+; src/far.inc has the ABI and the rules a service must keep.
+;
+; bank_call returns to the BASE; this returns to the CALLER, a bank. The callee
+; is served from a RAM slot of its own (FAR_SLOT), not the scratch slot 1 the
+; caller is running from, so the return is a SWITCH, not a reload. That is also
+; why a far call cannot nest: a second one would load over the first callee
+; while it runs, so it is refused.
+;
+; Two ways to get the callee mapped, mirroring bank_call:
+;  1. SERVED (One ROM): LOAD_SLOT its set into FAR_SLOT, SWITCH, and afterwards
+;     SWITCH back to slot 1, verified the same way bank_ensure_base verifies the
+;     base -- by the caller's own identity at $A000, never the protocol status.
+;  2. SHADOW (VICE, no One ROM): the caller is running from the RAM under
+;     $A000, and there is room for only one image there, so the test harness
+;     leaves the callee's in the RAM under the KERNAL and the two are exchanged
+;     for the length of the call. On real hardware this path is only reached if
+;     the swap failed; the exchange then trades two RAM areas the shell does not
+;     use, the magic check fails against the still-served caller, and the call
+;     reports $FFFF.
+; -------------------------------------------------------------------------
+FAR_SLOT = 3                    ; not 0 (base), 1 (the caller), 2 (font B)
+
+.export far_call
+far_call:
+        sta FAR_ARG
+        stx FAR_ARG+1
+        lda FAR_DEPTH
+        bne far_refuse          ; one level only -- see above
+        inc FAR_DEPTH
+        lda BANK_ID             ; the running bank: bank_call set BANK_ID and
+        sta FAR_CALLER          ; checked its identity before calling in
+        tya
+        jsr bank_decode         ; BANK_ID/BANK_VEC = the callee
+
+        ; --- path 1: served ROM (One ROM) --------------------------------
+        lda #1
+        sta FONT_MB_LOAD        ; LOAD the callee's set, then SWITCH to it
+        ldx BANK_ID
+        lda bank_flash_set,x
+        sta FONT_MB_FLASH
+        lda #FAR_SLOT
+        sta FONT_MB_RAM
+        jsr _font_apply
+        cmp #0
+        bne far_shadow          ; no One ROM / RBCP error
+        jsr bank_magic_ok
+        bcs far_fail            ; served, but not the bank we asked for
+        jsr far_run
+far_return:
+        lda FAR_CALLER
+        sta BANK_ID
+        jsr bank_ensure_caller
+        dec FAR_DEPTH
+        lda FAR_ARG
+        ldx FAR_ARG+1
+        rts
+
+far_fail:
+        lda #$FF
+        sta FAR_ARG
+        sta FAR_ARG+1
+        bne far_return          ; always
+
+far_refuse:
+        lda #$FF
+        tax
+        rts
+
+        ; --- path 2: the shadow image (VICE) -----------------------------
+far_shadow:
+        ; The swap-in reported failure, but a glitched frame may have switched
+        ; anyway: settle that before trusting what $A000 holds.
+        lda BANK_ID
+        pha
+        lda FAR_CALLER
+        sta BANK_ID
+        jsr bank_ensure_caller
+        pla
+        sta BANK_ID
+        jsr far_exchange
+        jsr bank_magic_ok
+        bcs @none
+        jsr far_run
+        jsr far_exchange        ; the caller back at $A000, the callee away
+        jmp far_return
+@none:  jsr far_exchange        ; no shadow: put the caller back as it was
+        jmp far_fail
+
+far_run:
+        lda FAR_ARG
+        ldx FAR_ARG+1
+        jsr bank_jmp            ; the entry is a JMP to a cc65 __fastcall__
+        sta FAR_ARG
+        stx FAR_ARG+1
+        rts
+
+; Serve the CALLER again -- the far-call counterpart of bank_ensure_base, and
+; just as unable to fail: returning into a bank that is not there runs garbage.
+; BANK_ID = the caller; its identity at $A000 is the only thing trusted.
+bank_ensure_caller:
+        ldy #BANK_RESTORE_TRIES
+@try:   jsr bank_magic_ok
+        bcc @ok
+        tya
+        pha
+        lda #BANK_RAM_SLOT
+        jsr bank_switch
+        pla
+        tay
+        dey
+        bne @try
+        jmp ($FFFC)             ; unrecoverable -- reboot beats a garbage hang
+@ok:    rts
+
+; Exchange the 8KB at $A000 with the 8KB at FAR_SHADOW. With HIRAM off both are
+; RAM, so the loop cannot run from either ROM half: it is copied to the tape
+; buffer each time, which also resets the operands it increments as it goes.
+far_exchange:
+        ldx #(xchg_end - xchg - 1)
+@cp:    lda xchg,x
+        sta XCHG_RUN,x
+        dex
+        bpl @cp
+        jmp XCHG_RUN
+
+; Runs at XCHG_RUN. Branches are PC-relative; the four page increments name
+; their operands at the RUN address, since the copy is what executes.
+xchg:   php
+        sei                     ; the vectors under $FFFA are the image's bytes
+        lda $01
+        pha
+        lda #$35                ; HIRAM off: RAM at $A000 and $E000, I/O kept
+        sta $01
+        ldx #$20                ; 32 pages
+        ldy #0
+xchg_l:
+xa1:    lda $A000,y
+        pha
+xe1:    lda FAR_SHADOW,y
+xa2:    sta $A000,y
+        pla
+xe2:    sta FAR_SHADOW,y
+        iny
+        bne xchg_l
+        inc XCHG_RUN + (xa1 - xchg) + 2
+        inc XCHG_RUN + (xe1 - xchg) + 2
+        inc XCHG_RUN + (xa2 - xchg) + 2
+        inc XCHG_RUN + (xe2 - xchg) + 2
+        dex
+        bne xchg_l
+        pla
+        sta $01
+        plp
+        rts
+xchg_end:
+.assert xchg_end - xchg <= $03FC - XCHG_RUN, error, "far_call exchange loop overflows the tape buffer"
 
 .segment "RBCP_CODE"
 rbcp_font_tramp:
