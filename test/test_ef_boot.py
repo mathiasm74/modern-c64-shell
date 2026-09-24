@@ -58,6 +58,26 @@ def test_ef_build_boots_to_the_tardis_prompt(v):
         assert "Free ROM bytes" in got, "free-bytes line missing:\n%s" % got
 
 
+def test_ef_banner_names_the_halves_like_the_one_rom(v):
+    """The free-bytes line says BASIC and KERNAL, as on the One ROM, not the
+    cart's ROMH/ROML -- and BASIC's figure is ROMH bank 0's (the shell half),
+    KERNAL's ROML's. tools/patch_freemem.py fills the fields in that order."""
+    (void) = v
+    if not _HAVE:
+        print("      (skipped: no tardis.crt or no stock ROMs)")
+        return
+    import re
+    with _vice() as sv:
+        got = _boot(sv)
+    m = re.search(r"Free ROM bytes: BASIC +(\d+) KERNAL +(\d+)", got)
+    assert m, "free-bytes line does not name BASIC/KERNAL:\n%s" % got
+    assert "ROML" not in got and "ROMH" not in got, got
+    # ROML carries far more free space than bank 0's ROMH today; if the two
+    # fields were swapped, BASIC would show the bigger number.
+    assert int(m.group(1)) < int(m.group(2)), \
+        "BASIC/KERNAL figures look swapped: %s" % m.group(0)
+
+
 def test_ef_build_runs_a_resident_command(v):
     (void) = v
     if not _HAVE:

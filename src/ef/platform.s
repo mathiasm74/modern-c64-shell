@@ -265,16 +265,18 @@ ef_puts:
 @done:  rts
 
 ef_version:
-        .byte "v0.3.14", 0
+        .byte "v0.3.15", 0
 ef_brand:
         .byte "Tardis DOS - your C64 power shell", 0
 ef_ready:
         .byte "Ready.", 0
 ; Patched after the link with the real figures (tools/patch_freemem.py); the
-; string keeps its length, so the image size is unchanged.
+; string keeps its length, so the image size is unchanged. It names the halves
+; as the One ROM banner does: BASIC is ROMH bank 0 (the shell) and KERNAL is
+; ROML (the always-mapped half), so the two targets' boot screens read alike.
 .export ef_freemem
 ef_freemem:
-        .byte "Free ROM bytes: ROML ---- ROMH ----", 0
+        .byte "Free ROM bytes: BASIC ---- KERNAL ----", 0
 
 ; --- the IRQ, arriving the stock way --------------------------------------
 ; $FF48 has already pushed A/X/Y and dispatched through $0314, so this must NOT

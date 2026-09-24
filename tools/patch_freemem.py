@@ -23,7 +23,7 @@ ef = "--ef" in sys.argv[2:]
 # areas the banner reports, and where the patched string physically lives.
 if ef:
     CFG, MAP, LABELS = "cfg/ef_rom.cfg", "ef/tardis.map", "ef/tardis.labels"
-    AREAS = ("ROML", "ROMH0")
+    AREAS = ("ROMH0", "ROML")   # filled in the banner's order: BASIC, KERNAL
     LABEL, BIN, BASE = "ef_freemem", "ef/tardis-roml.bin", 0x8000
 else:
     CFG, MAP, LABELS = "cfg/rom.cfg", "rom.map", "labels.txt"
