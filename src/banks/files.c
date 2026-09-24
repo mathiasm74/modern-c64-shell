@@ -589,12 +589,18 @@ static void do_help(void)
     }
     /* The line-editor features nothing else advertises. Filename completion
        especially: the C64 has no TAB key, so it is bound to a bare CTRL tap
-       (irq.s ctrl_tap), which nobody would guess. Kept to two short lines --
-       the command list already fills most of the screen. */
+       (irq.s ctrl_tap), which nobody would guess. Kept to short lines -- the
+       command list already fills most of the screen. */
     crlf();
     puts_raw("Tap CTRL to complete a file name.");
     crlf();
     puts_raw("Cursor up/down recalls commands.");
+    crlf();
+    /* The @ wedges (shell.c wedge_rewrite) are not commands, so the list
+       above cannot show them; JiffyDOS users will try them anyway. */
+    puts_raw("@ status, @$ dir, @#n device n,");
+    crlf();
+    puts_raw("@<cmd> sends <cmd> to the drive.");
     crlf();
 }
 

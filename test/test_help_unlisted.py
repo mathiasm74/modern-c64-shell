@@ -44,7 +44,12 @@ def test_help_leaves_out_the_unlisted_commands(v):
     assert _wait(v, "recalls"), "help did not finish\n%s" % v.screen_text()
     rows = v.screen_rows()
     top = max(i for i, r in enumerate(rows) if "Commands:" in r)
-    words = set(re.findall(r"[a-z]+", " ".join(rows[top + 1:])))
+    listing = []
+    for r in rows[top + 1:]:                # the columns end at the blank row;
+        if not r.strip():                   # the footer below names "@ status"
+            break
+        listing.append(r)
+    words = set(re.findall(r"[a-z]+", " ".join(listing)))
     for gone in ("fload", "dev", "status", "init", "validate", "format",
                  "border", "bg", "text"):
         assert gone not in words, "help still lists %s" % gone
@@ -61,3 +66,17 @@ def test_unlisted_commands_still_run(v):
     txt = v.screen_text()
     assert "Command not found" not in txt, \
         "an unlisted command no longer dispatches\n%s" % txt
+
+
+def test_help_mentions_the_at_wedge(v):
+    """The @ wedges are not table rows, so help names them in its footer --
+    and the whole screenful must still fit: the header may not scroll off."""
+    assert _wait(v, "8>", tries=80)
+    seed_files(v)
+    _type(v, "clear")
+    _type(v, "help")
+    assert _wait(v, "to the drive"), "help did not finish\n%s" % v.screen_text()
+    txt = v.screen_text()
+    assert "@ status, @$ dir, @#n device n," in txt, txt
+    assert "@<cmd> sends <cmd> to the drive." in txt, txt
+    assert "Commands:" in txt, "help no longer fits on one screen\n%s" % txt
