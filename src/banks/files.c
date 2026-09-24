@@ -602,6 +602,7 @@ static void do_help(void)
     crlf();
     puts_raw("@<cmd> sends <cmd> to the drive.");
     crlf();
+    crlf();                             /* a gap before the prompt */
 }
 
 /* device <n> [name] (cmd 16): switch the default IEC unit. default_device and

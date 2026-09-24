@@ -80,3 +80,17 @@ def test_help_mentions_the_at_wedge(v):
     assert "@ status, @$ dir, @#n device n," in txt, txt
     assert "@<cmd> sends <cmd> to the drive." in txt, txt
     assert "Commands:" in txt, "help no longer fits on one screen\n%s" % txt
+
+
+def test_help_ends_with_a_blank_line(v):
+    """A gap between help's last line and the prompt that follows it."""
+    assert _wait(v, "8>", tries=80)
+    seed_files(v)
+    _type(v, "clear")
+    _type(v, "help")
+    assert _wait(v, "to the drive"), v.screen_text()
+    rows = [r.rstrip() for r in v.screen_rows()]
+    last = max(i for i, r in enumerate(rows) if r.endswith("to the drive."))
+    assert rows[last + 1] == "", "no blank line after help\n%s" % v.screen_text()
+    assert rows[last + 2].startswith("8>"), \
+        "the prompt does not follow the blank line\n%s" % v.screen_text()
