@@ -37,9 +37,21 @@ def _after(v, marker):
     return "\n".join(rows[hits[-1] + 1:]) if hits else ""
 
 
+def _idle(v, tries=60):
+    """A bare prompt on the last non-blank row: nothing is still running, so
+    seeding a bank over $A000 is safe (see test_dos._idle)."""
+    for _ in range(tries):
+        rows = [r.rstrip() for r in v.screen_rows() if r.strip()]
+        if rows and rows[-1] == "8>":
+            return
+        v.run_for(0.3)
+    raise AssertionError("the shell never went idle\n%s" % v.screen_text())
+
+
 def _run(v, cmd, want, tries=60):
     """Type cmd and wait for `want` BELOW its own row: the screen keeps the
     earlier tests' output (a typed CLR does not clear it)."""
+    _idle(v)
     seed_files(v)
     _type(v, cmd)
     for _ in range(tries):

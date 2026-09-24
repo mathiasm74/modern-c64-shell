@@ -67,11 +67,24 @@ def _wait_after(v, marker, needle, tries=60):
     return False
 
 
+def _idle(v, tries=60):
+    """Wait until the shell sits at a bare prompt: the last non-blank row is
+    just "8>". Seeding a bank over $A000 while another is still running --
+    the tail of a dir listing -- runs half of each ("no device", a hang)."""
+    for _ in range(tries):
+        rows = [r.rstrip() for r in v.screen_rows() if r.strip()]
+        if rows and rows[-1] == "8>":
+            return
+        v.run_for(0.3)
+    raise AssertionError("the shell never went idle\n%s" % v.screen_text())
+
+
 def _ready(v):
     assert _wait(v, "8>", tries=80), "no prompt\n%s" % v.screen_text()
 
 
 def _run(v, cmd, want):
+    _idle(v)
     seed_files(v)
     _type(v, cmd)
     assert _wait_after(v, "8> " + cmd, want), \
@@ -110,6 +123,7 @@ def test_the_at_wedge_sends_drive_commands(v):
 def test_the_other_at_wedges_still_work(v):
     _ready(v)
     _run(v, "@", "00")                      # bare @ is still status
+    _idle(v)
     seed_disk_bank(v)
     _type(v, "@$")
     # Wait for THIS listing to end: seeding the next test's bank over $A000
@@ -120,6 +134,7 @@ def test_the_other_at_wedges_still_work(v):
 
 def test_format_asks_and_n_keeps_the_disk(v):
     _ready(v)
+    _idle(v)
     seed_files(v)
     _type(v, "format blank")
     assert _wait_after(v, "format blank", "erase the disk in 8? (y/n)"), \
@@ -127,6 +142,7 @@ def test_format_asks_and_n_keeps_the_disk(v):
     _key(v, "n")
     v.run_for(1.0)
     assert "00 OK" not in _after(v, "(y/n) n"), "format ran after n"
+    _idle(v)
     seed_disk_bank(v)
     _type(v, "dir")
     assert _wait_after(v, "8> dir", "BLOCKS FREE"), v.screen_text()
@@ -138,12 +154,14 @@ def test_zz_format_y_quick_formats_with_a_spaced_name(v):
     words are joined into one name. (Erases the scratch disk, so it runs last;
     the runner sorts by name.)"""
     _ready(v)
+    _idle(v)
     seed_files(v)
     _type(v, "format my disk")
     assert _wait_after(v, "format my disk", "(y/n)"), v.screen_text()
     _key(v, "y")
     assert _wait_after(v, "format my disk", "00 OK", tries=120), \
         "quick format did not report 00 OK\n%s" % v.screen_text()
+    _idle(v)
     seed_disk_bank(v)
     _type(v, "dir")
     assert _wait_after(v, "8> dir", "BLOCKS FREE"), v.screen_text()
